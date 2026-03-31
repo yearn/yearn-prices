@@ -1,0 +1,23 @@
+{
+  "name": "price-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "migrate": "bun run scripts/migrate.ts",
+    "warmup": "bun run scripts/warmup-prices.ts"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.4",
+    "viem": "^2.21.54"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.29",
+    "@cloudflare/workers-types": "^4.20260327.0",
+    "typescript": "^5.8.3",
+    "wrangler": "^4.8.0"
+  }
+}

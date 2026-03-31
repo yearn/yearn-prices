@@ -1,0 +1,13 @@
+DATABASE_URL=postgres://user:password@host/dbname?sslmode=require
+API_KEY_KONG=replace-me
+API_KEY_FRONTEND=replace-me
+RPC_URL_1=https://example-rpc
+RPC_URL_10=https://example-rpc
+RPC_URL_100=https://example-rpc
+RPC_URL_137=https://example-rpc
+RPC_URL_146=https://example-rpc
+RPC_URL_250=https://example-rpc
+RPC_URL_8453=https://example-rpc
+RPC_URL_42161=https://example-rpc
+RPC_URL_80094=https://example-rpc
+RPC_URL_747474=https://example-rpc

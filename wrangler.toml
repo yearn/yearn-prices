@@ -1,0 +1,6 @@
+name = "chrono-prices"
+main = "src/index.ts"
+compatibility_date = "2026-03-30"
+
+[observability.logs]
+enabled = true
