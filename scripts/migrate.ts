@@ -1,7 +1,7 @@
+import { config as loadEnv } from 'dotenv'
 import { createPool } from '../src/db'
-import { loadDevVars } from './load-dev-vars'
 
-loadDevVars()
+loadEnv({ path: '.dev.vars', override: false })
 
 const databaseUrl = process.env.DATABASE_URL
 if (!databaseUrl) {

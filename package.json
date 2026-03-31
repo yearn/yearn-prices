@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@neondatabase/serverless": "^0.10.4",
+    "dotenv": "^16.6.1",
     "viem": "^2.21.54"
   },
   "devDependencies": {

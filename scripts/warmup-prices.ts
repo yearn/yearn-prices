@@ -1,3 +1,4 @@
+import { config as loadEnv } from 'dotenv'
 import { createPool } from '../src/db'
 import { DefiLlamaClient } from '../src/defillama'
 import { insertTokenPrices, getBatchHistoricalPrices, getExistingExactTimestamps } from '../src/queries'
@@ -5,9 +6,8 @@ import { createChainClient, estimateBlockByTimestamp, readVaultSharePrice } from
 import { chainIdToName, normalizeTokenAddress } from '../src/chains'
 import { normalizeToEndOfDay, nowUnix, parseCliDate, normalizedDaysInRange } from '../src/time'
 import type { HistoricalRequestTuple, KongVaultListItem, TokenPriceWrite } from '../src/types'
-import { loadDevVars } from './load-dev-vars'
 
-loadDevVars()
+loadEnv({ path: '.dev.vars', override: false })
 
 const databaseUrl = process.env.DATABASE_URL
 if (!databaseUrl) {
