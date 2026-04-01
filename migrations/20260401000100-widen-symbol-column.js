@@ -16,7 +16,8 @@ exports.up = function (db) {
 exports.down = function (db) {
   return db.runSql(`
     ALTER TABLE token_prices
-      ALTER COLUMN symbol TYPE VARCHAR(20);
+      ALTER COLUMN symbol TYPE VARCHAR(20)
+      USING LEFT(symbol, 20);
   `);
 };
 

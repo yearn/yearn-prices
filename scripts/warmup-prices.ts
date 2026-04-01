@@ -284,32 +284,32 @@ async function warmDerivedVaultPrices(
   )
 
   await runInGroups(missingVaults, async ({ vault, timestamp }) => {
-    const underlying = underlyingMap.get(`${vault.chain}:${vault.underlyingToken}:${timestamp}`)
-    if (!underlying) {
-      console.warn(`gap:derived-underlying ${vault.chain}:${vault.underlyingToken} ${timestamp}`)
-      return
-    }
-
-    const rpcUrl = process.env[`RPC_URL_${vault.chainId}`]
-    if (!rpcUrl) {
-      console.warn(`gap:missing-rpc chainId=${vault.chainId}`)
-      return
-    }
-
-    let client = rpcClients.get(vault.chainId)
-    if (!client) {
-      client = createChainClient(vault.chainId, rpcUrl)
-      rpcClients.set(vault.chainId, client)
-    }
-
-    const blockCacheKey = `${vault.chainId}:${timestamp}`
-    let blockNumber = blockNumbers.get(blockCacheKey)
-    if (!blockNumber) {
-      blockNumber = await estimateBlockByTimestamp(client, vault.chainId, timestamp)
-      blockNumbers.set(blockCacheKey, blockNumber)
-    }
-
     try {
+      const underlying = underlyingMap.get(`${vault.chain}:${vault.underlyingToken}:${timestamp}`)
+      if (!underlying) {
+        console.warn(`gap:derived-underlying ${vault.chain}:${vault.underlyingToken} ${timestamp}`)
+        return
+      }
+
+      const rpcUrl = process.env[`RPC_URL_${vault.chainId}`]
+      if (!rpcUrl) {
+        console.warn(`gap:missing-rpc chainId=${vault.chainId}`)
+        return
+      }
+
+      let client = rpcClients.get(vault.chainId)
+      if (!client) {
+        client = createChainClient(vault.chainId, rpcUrl)
+        rpcClients.set(vault.chainId, client)
+      }
+
+      const blockCacheKey = `${vault.chainId}:${timestamp}`
+      let blockNumber = blockNumbers.get(blockCacheKey)
+      if (!blockNumber) {
+        blockNumber = await estimateBlockByTimestamp(client, vault.chainId, timestamp)
+        blockNumbers.set(blockCacheKey, blockNumber)
+      }
+
       const sharePrice = await readVaultSharePrice(
         client,
         vault.vaultToken,
