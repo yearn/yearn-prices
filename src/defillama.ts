@@ -1,7 +1,7 @@
 import { ApiError } from './errors'
 import type { DefiLlamaBatchResponse, DefiLlamaHistoricalResponse } from './types'
 
-const BASE_URL = 'https://api.llama.fi'
+const BASE_URL = 'https://coins.llama.fi'
 
 function sleep(milliseconds: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, milliseconds))
