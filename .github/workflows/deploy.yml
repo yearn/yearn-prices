@@ -12,6 +12,27 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
+      - name: Upload secrets
+        run: |
+          echo '${{ toJSON(secrets) }}' | \
+          jq '{
+            DATABASE_URL: .DATABASE_URL,
+            API_KEY_KONG: .API_KEY_KONG,
+            API_KEY_FRONTEND: .API_KEY_FRONTEND,
+            RPC_URL_1: .RPC_URL_1,
+            RPC_URL_10: .RPC_URL_10,
+            RPC_URL_100: .RPC_URL_100,
+            RPC_URL_137: .RPC_URL_137,
+            RPC_URL_146: .RPC_URL_146,
+            RPC_URL_250: .RPC_URL_250,
+            RPC_URL_8453: .RPC_URL_8453,
+            RPC_URL_42161: .RPC_URL_42161,
+            RPC_URL_80094: .RPC_URL_80094,
+            RPC_URL_747474: .RPC_URL_747474
+          }' | npx wrangler secret:bulk
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       - run: bun run deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
