@@ -1,17 +1,13 @@
-import { config as loadEnv } from 'dotenv'
-import { createPool } from '../src/db'
+'use strict';
 
-loadEnv({ path: '.dev.vars', override: false })
+var dbm;
 
-const databaseUrl = process.env.DATABASE_URL
-if (!databaseUrl) {
-  throw new Error('DATABASE_URL is required')
-}
+exports.setup = function (options) {
+  dbm = options.dbmigrate;
+};
 
-const pool = createPool(databaseUrl)
-
-try {
-  await pool.query(`
+exports.up = function (db) {
+  return db.runSql(`
     CREATE TABLE IF NOT EXISTS token_prices (
       chain      VARCHAR(20)  NOT NULL,
       token      VARCHAR(60)  NOT NULL,
@@ -23,14 +19,19 @@ try {
       created_at TIMESTAMP DEFAULT NOW(),
       PRIMARY KEY (chain, token, timestamp, source)
     );
-  `)
 
-  await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_token_prices_range
       ON token_prices (chain, token, timestamp);
-  `)
+  `);
+};
 
-  console.info('Migration complete')
-} finally {
-  await pool.end()
-}
+exports.down = function (db) {
+  return db.runSql(`
+    DROP INDEX IF EXISTS idx_token_prices_range;
+    DROP TABLE IF EXISTS token_prices;
+  `);
+};
+
+exports._meta = {
+  version: 1
+};

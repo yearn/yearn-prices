@@ -7,7 +7,9 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "migrate": "bun run scripts/migrate.ts",
+    "migrate": "db-migrate up --config ./database.json",
+    "migrate:create": "db-migrate create --config ./database.json --sql-file",
+    "migrate:down": "db-migrate down --config ./database.json",
     "warmup": "bun run scripts/warmup-prices.ts"
   },
   "dependencies": {
@@ -16,8 +18,11 @@
     "viem": "^2.21.54"
   },
   "devDependencies": {
-    "@types/node": "^22.15.29",
     "@cloudflare/workers-types": "^4.20260327.0",
+    "@types/node": "^22.15.29",
+    "db-migrate": "^0.11.14",
+    "db-migrate-pg": "^1.5.2",
+    "pg": "^8.20.0",
     "typescript": "^5.8.3",
     "wrangler": "^4.8.0"
   }
