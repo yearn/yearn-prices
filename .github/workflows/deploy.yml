@@ -29,7 +29,7 @@ jobs:
             RPC_URL_42161: .RPC_URL_42161,
             RPC_URL_80094: .RPC_URL_80094,
             RPC_URL_747474: .RPC_URL_747474
-          }' | npx wrangler secret:bulk
+          }' | bunx wrangler secret bulk
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
