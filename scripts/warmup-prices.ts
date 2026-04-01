@@ -37,7 +37,7 @@ const defiLlama = new DefiLlamaClient(undefined, () => {
 
 const REQUEST_GROUP_SIZE = 5
 const REQUEST_GROUP_DELAY_MS = 200
-const DEFI_LLAMA_TOKEN_BATCH = 10
+const DEFI_LLAMA_TOKEN_BATCH = 5
 const DEFI_LLAMA_TIMESTAMP_BATCH = 20
 
 interface NormalizedVault {
