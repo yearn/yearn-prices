@@ -10,18 +10,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Fetch secrets from Vaultwarden
+        uses: matiuhart/vaultwarden-replace-secrets-action@master
+        with:
+          BW_CLIENTID: ${{ secrets.BW_CLIENTID }}
+          BW_CLIENTSECRET: ${{ secrets.BW_CLIENTSECRET }}
+          BW_PASSWORD: ${{ secrets.BW_PASSWORD }}
+          BW_SERVER: ${{ vars.BW_SERVER }}
+          FILES_TO_REPLACE: |
+            .env.example
+
+      - name: Load secrets into environment
+        run: |
+          while IFS='=' read -r key value; do
+            echo "::add-mask::$value"
+            echo "$key=$value" >> "$GITHUB_ENV"
+          done < .env.example.replaced
+
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run warmup
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          RPC_URL_1: ${{ secrets.RPC_URL_1 }}
-          RPC_URL_10: ${{ secrets.RPC_URL_10 }}
-          RPC_URL_100: ${{ secrets.RPC_URL_100 }}
-          RPC_URL_137: ${{ secrets.RPC_URL_137 }}
-          RPC_URL_146: ${{ secrets.RPC_URL_146 }}
-          RPC_URL_250: ${{ secrets.RPC_URL_250 }}
-          RPC_URL_8453: ${{ secrets.RPC_URL_8453 }}
-          RPC_URL_42161: ${{ secrets.RPC_URL_42161 }}
-          RPC_URL_80094: ${{ secrets.RPC_URL_80094 }}
-          RPC_URL_747474: ${{ secrets.RPC_URL_747474 }}
