@@ -17,8 +17,8 @@ jobs:
           BW_CLIENTID: ${{ secrets.BW_CLIENTID }}
           BW_CLIENTSECRET: ${{ secrets.BW_CLIENTSECRET }}
           BW_PASSWORD: ${{ secrets.BW_PASSWORD }}
-          BW_SERVER: ${{ vars.BW_SERVER }}
-          VAULT_ITEM: ${{ vars.BW_VAULT_ITEM }}
+          BW_SERVER: ${{ secrets.BW_SERVER }}
+          VAULT_ITEM: ${{ secrets.BW_VAULT_ITEM }}
           FILES_TO_REPLACE: |
             .env.example
 
