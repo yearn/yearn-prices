@@ -1,4 +1,5 @@
 import type { ParsedTokenKey } from './types'
+import { getAddress } from 'viem'
 
 export const CHAIN_ID_TO_NAME = {
   1: 'ethereum',
@@ -26,7 +27,7 @@ export function normalizeTokenAddress(token: string): `0x${string}` {
     throw new Error(`Unsupported token address: ${token}`)
   }
 
-  return token.toLowerCase() as `0x${string}`
+  return getAddress(token)
 }
 
 export function parseTokenKey(tokenKey: string): ParsedTokenKey {
