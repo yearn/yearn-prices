@@ -12,6 +12,23 @@ function buildTokenKey(chain: string, token: string): string {
   return `${chain}:${token}`
 }
 
+function buildOriginalKeyMap(raw: string): Map<string, string> {
+  const map = new Map<string, string>()
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    for (const originalKey of Object.keys(parsed)) {
+      try {
+        const { chain, token } = parseTokenKey(originalKey)
+        const normalizedKey = buildTokenKey(chain, token)
+        if (!map.has(normalizedKey)) {
+          map.set(normalizedKey, originalKey)
+        }
+      } catch {}
+    }
+  } catch {}
+  return map
+}
+
 export async function handleHistorical(
   request: Request,
   _env: Env,
@@ -31,7 +48,7 @@ export async function handleHistorical(
   return jsonResponse(
     {
       coins: {
-        [tokenKey]: {
+        [tokenKeySegment]: {
           price: record.price,
           symbol: record.symbol,
           timestamp: record.timestamp,
@@ -51,12 +68,15 @@ export async function handleHistorical(
 export async function handleBatchHistorical(request: Request, _env: Env, pool: Pool): Promise<Response> {
   const url = new URL(request.url)
   const source = parseOptionalSource(url.searchParams.get('source'))
-  const requests = parseBatchCoins(url.searchParams.get('coins'))
+  const rawCoins = url.searchParams.get('coins')
+  const requests = parseBatchCoins(rawCoins)
+  const originalKeyMap = buildOriginalKeyMap(rawCoins!)
   const rows = await getBatchHistoricalPrices(pool, requests, source)
 
   const coins = new Map<string, BatchHistoricalResponseCoin>()
   for (const row of rows) {
-    const tokenKey = buildTokenKey(row.chain, row.token)
+    const normalizedKey = buildTokenKey(row.chain, row.token)
+    const tokenKey = originalKeyMap.get(normalizedKey) ?? normalizedKey
     const current = coins.get(tokenKey) ?? { symbol: row.symbol, prices: [] }
     current.prices.push({
       timestamp: row.timestamp,
@@ -89,12 +109,15 @@ export async function handleBatchHistorical(request: Request, _env: Env, pool: P
 export async function handleRangeHistorical(request: Request, _env: Env, pool: Pool): Promise<Response> {
   const url = new URL(request.url)
   const source = parseOptionalSource(url.searchParams.get('source'))
-  const requests = parseRangeCoins(url.searchParams.get('coins'))
+  const rawCoins = url.searchParams.get('coins')
+  const requests = parseRangeCoins(rawCoins)
+  const originalKeyMap = buildOriginalKeyMap(rawCoins!)
   const rows = await getRangeHistoricalPrices(pool, requests, source)
 
   const grouped = new Map<string, BatchHistoricalResponseCoin>()
   for (const row of rows) {
-    const tokenKey = buildTokenKey(row.chain, row.token)
+    const normalizedKey = buildTokenKey(row.chain, row.token)
+    const tokenKey = originalKeyMap.get(normalizedKey) ?? normalizedKey
     const current = grouped.get(tokenKey) ?? { symbol: row.symbol, prices: [] }
     current.prices.push({
       timestamp: row.timestamp,
