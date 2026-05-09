@@ -1,17 +1,14 @@
+import type { Pool } from '@neondatabase/serverless'
 import { SOURCE_PRIORITY, type DbPriceRow, type ExactPriceRecord, type HistoricalRequestTuple, type PriceSource, type RangeRequest, type TokenPriceWrite } from './types'
 import { optionalResponseNumber, toResponseNumber } from './format'
 import { pgTimestampToUnix, unixToIsoTimestamp, isTodayNormalized } from './time'
-
-interface QueryablePool {
-  query<T>(sql: string, params?: Array<string | number | null>): Promise<{ rows: T[] }>
-}
 
 function buildSourceCaseExpression(column = 'tp.source'): string {
   return `CASE ${column} ${SOURCE_PRIORITY.map((source, index) => `WHEN '${source}' THEN ${index + 1}`).join(' ')} ELSE 999 END`
 }
 
 export async function getExactHistoricalPrice(
-  pool: QueryablePool,
+  pool: Pool,
   request: HistoricalRequestTuple,
   source?: PriceSource,
 ): Promise<ExactPriceRecord | null> {
@@ -20,7 +17,7 @@ export async function getExactHistoricalPrice(
 }
 
 export async function getBatchHistoricalPrices(
-  pool: QueryablePool,
+  pool: Pool,
   requests: HistoricalRequestTuple[],
   source?: PriceSource,
 ): Promise<ExactPriceRecord[]> {
@@ -73,7 +70,7 @@ export async function getBatchHistoricalPrices(
 }
 
 export async function getRangeHistoricalPrices(
-  pool: QueryablePool,
+  pool: Pool,
   requests: RangeRequest[],
   source?: PriceSource,
 ): Promise<ExactPriceRecord[]> {
@@ -131,7 +128,7 @@ export async function getRangeHistoricalPrices(
 }
 
 export async function getExistingExactTimestamps(
-  pool: QueryablePool,
+  pool: Pool,
   requests: HistoricalRequestTuple[],
   source: PriceSource,
 ): Promise<Set<string>> {
@@ -143,7 +140,7 @@ export async function getExistingExactTimestamps(
   return new Set(rows.map(row => `${row.chain}:${row.token}:${row.timestamp}`))
 }
 
-export async function insertTokenPrices(pool: QueryablePool, rows: TokenPriceWrite[]): Promise<void> {
+export async function insertTokenPrices(pool: Pool, rows: TokenPriceWrite[]): Promise<void> {
   if (rows.length === 0) {
     return
   }
@@ -164,7 +161,7 @@ function dedupeTokenPriceWrites(rows: TokenPriceWrite[]): TokenPriceWrite[] {
   return [...keyedRows.values()]
 }
 
-async function insertRows(pool: QueryablePool, rows: TokenPriceWrite[], updateOnConflict: boolean): Promise<void> {
+async function insertRows(pool: Pool, rows: TokenPriceWrite[], updateOnConflict: boolean): Promise<void> {
   if (rows.length === 0) {
     return
   }
