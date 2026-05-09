@@ -1,7 +1,6 @@
 import { config as loadEnv } from 'dotenv'
 loadEnv();
 import { chainIdToName, normalizeTokenAddress } from "../src/chains";
-import { createPool } from '../src/db'
 import { DefiLlamaClient } from '../src/defillama'
 import {
   getBatchHistoricalPrices,
@@ -23,7 +22,8 @@ if (!databaseUrl) {
   throw new Error('DATABASE_URL is required')
 }
 
-const pool = createPool(databaseUrl)
+const { Pool } = await import('pg')
+const pool = new Pool({ connectionString: databaseUrl })
 const stats: WarmupStats = {
   cacheHits: 0,
   apiCalls: 0,
