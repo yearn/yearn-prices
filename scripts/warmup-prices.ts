@@ -10,6 +10,7 @@ import {
 } from "../src/queries";
 import { createChainClient, estimateBlockByTimestamp, readVaultSharePrice } from '../src/rpc'
 import {
+  isTodayNormalized,
   normalizedDaysInRange,
   normalizeToEndOfDay,
   nowUnix,
@@ -167,7 +168,7 @@ function groupMissingRequests(requests: HistoricalRequestTuple[], existing: Set<
 
   for (const request of requests) {
     const key = `${request.chain}:${request.token}:${request.timestamp}`
-    if (existing.has(key)) {
+    if (existing.has(key) && !isTodayNormalized(request.timestamp)) {
       continue
     }
 
@@ -179,10 +180,15 @@ function groupMissingRequests(requests: HistoricalRequestTuple[], existing: Set<
   return grouped
 }
 
-function buildDefiLlamaPayloads(grouped: Record<string, number[]>): Array<Record<string, number[]>> {
+function toFetchTimestamp(timestamp: number, currentTimestamp: number): number {
+  return isTodayNormalized(timestamp, currentTimestamp) ? currentTimestamp : timestamp
+}
+
+function buildDefiLlamaPayloads(grouped: Record<string, number[]>, currentTimestamp = nowUnix()): Array<Record<string, number[]>> {
   const tokenChunks: Array<{ tokenKey: string; timestamps: number[] }> = []
   for (const [tokenKey, timestamps] of Object.entries(grouped)) {
-    for (const timestampChunk of chunk([...new Set(timestamps)].sort((left, right) => left - right), DEFI_LLAMA_TIMESTAMP_BATCH)) {
+    const fetchTimestamps = timestamps.map(timestamp => toFetchTimestamp(timestamp, currentTimestamp))
+    for (const timestampChunk of chunk([...new Set(fetchTimestamps)].sort((left, right) => left - right), DEFI_LLAMA_TIMESTAMP_BATCH)) {
       tokenChunks.push({ tokenKey, timestamps: timestampChunk })
     }
   }
@@ -199,7 +205,10 @@ async function warmDirectPrices(
 ): Promise<void> {
   const requests = buildDirectRequests(vaults, timestamps)
   const existing = await getExistingExactTimestamps(pool, requests, 'defillama')
-  stats.cacheHits += existing.size
+  stats.cacheHits += [...existing].filter(key => {
+    const timestamp = Number(key.slice(key.lastIndexOf(':') + 1))
+    return !isTodayNormalized(timestamp)
+  }).length
 
   const groupedMissing = groupMissingRequests(requests, existing)
   const payloads = buildDefiLlamaPayloads(groupedMissing)
@@ -231,7 +240,7 @@ async function warmDirectPrices(
         }
 
         for (const requestedTimestamp of requestedTimestamps) {
-          if (!returnedTimestamps.has(requestedTimestamp)) {
+          if (!returnedTimestamps.has(normalizeToEndOfDay(requestedTimestamp))) {
             console.warn(`gap:defillama ${tokenKey} ${requestedTimestamp}`)
           }
         }
@@ -268,7 +277,7 @@ async function warmDerivedVaultPrices(
   const existingDerived = await getExistingExactTimestamps(pool, derivedRequests, 'derived')
   const missingVaults = vaults.flatMap(vault => {
     return timestamps
-      .filter(timestamp => !existingDerived.has(`${vault.chain}:${vault.vaultToken}:${timestamp}`))
+      .filter(timestamp => isTodayNormalized(timestamp) || !existingDerived.has(`${vault.chain}:${vault.vaultToken}:${timestamp}`))
       .map(timestamp => ({ vault, timestamp }))
   })
 
