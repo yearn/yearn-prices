@@ -191,7 +191,8 @@ async function insertRows(pool: Pool, rows: TokenPriceWrite[], updateOnConflict:
       DO UPDATE SET
         price = EXCLUDED.price,
         symbol = EXCLUDED.symbol,
-        confidence = EXCLUDED.confidence
+        confidence = EXCLUDED.confidence,
+        updated_at = NOW()
     `
     : `
       ON CONFLICT (chain, token, timestamp, source) DO NOTHING
