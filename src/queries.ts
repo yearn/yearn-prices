@@ -145,11 +145,20 @@ export async function insertTokenPrices(pool: Pool, rows: TokenPriceWrite[]): Pr
     return
   }
 
-  const immutableRows = rows.filter(row => !isTodayNormalized(row.timestamp))
-  const mutableRows = rows.filter(row => isTodayNormalized(row.timestamp))
+  const dedupedRows = dedupeTokenPriceWrites(rows)
+  const immutableRows = dedupedRows.filter(row => !isTodayNormalized(row.timestamp))
+  const mutableRows = dedupedRows.filter(row => isTodayNormalized(row.timestamp))
 
   await insertRows(pool, immutableRows, false)
   await insertRows(pool, mutableRows, true)
+}
+
+function dedupeTokenPriceWrites(rows: TokenPriceWrite[]): TokenPriceWrite[] {
+  const keyedRows = new Map<string, TokenPriceWrite>()
+  for (const row of rows) {
+    keyedRows.set(`${row.chain}:${row.token}:${row.timestamp}:${row.source}`, row)
+  }
+  return [...keyedRows.values()]
 }
 
 async function insertRows(pool: Pool, rows: TokenPriceWrite[], updateOnConflict: boolean): Promise<void> {
@@ -182,7 +191,8 @@ async function insertRows(pool: Pool, rows: TokenPriceWrite[], updateOnConflict:
       DO UPDATE SET
         price = EXCLUDED.price,
         symbol = EXCLUDED.symbol,
-        confidence = EXCLUDED.confidence
+        confidence = EXCLUDED.confidence,
+        updated_at = NOW()
     `
     : `
       ON CONFLICT (chain, token, timestamp, source) DO NOTHING
