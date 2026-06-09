@@ -13,46 +13,45 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
       - run: bun install --frozen-lockfile
-      - name: Upload secrets
-        run: |
-          echo '${{ toJSON(secrets) }}' | \
-          jq '{
-            DATABASE_URL: .DATABASE_URL,
-            API_KEY_KONG: .API_KEY_KONG,
-            API_KEY_FRONTEND: .API_KEY_FRONTEND,
-            RPC_URL_1: .RPC_URL_1,
-            RPC_URL_10: .RPC_URL_10,
-            RPC_URL_100: .RPC_URL_100,
-            RPC_URL_137: .RPC_URL_137,
-            RPC_URL_146: .RPC_URL_146,
-            RPC_URL_250: .RPC_URL_250,
-            RPC_URL_8453: .RPC_URL_8453,
-            RPC_URL_42161: .RPC_URL_42161,
-            RPC_URL_80094: .RPC_URL_80094,
-            RPC_URL_747474: .RPC_URL_747474
-          }' | bunx wrangler secret bulk
+      - uses: 1Password/install-cli-action@v1
+      - name: Load secrets from 1Password
+        uses: 1Password/load-secrets-action@v2
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          DATABASE_URL: op://webops-prod/yearn-price/DATABASE_URL
+          API_KEY_KONG: op://webops-prod/yearn-price/API_KEY_KONG
+          API_KEY_FRONTEND: op://webops-prod/yearn-price/API_KEY_FRONTEND
+          CLOUDFLARE_API_TOKEN: op://webops-prod/yearn-price/CLOUDFLARE_API_TOKEN
+          CLOUDFLARE_ACCOUNT_ID: op://webops-prod/yearn-price/CLOUDFLARE_ACCOUNT_ID
+          RPC_URL_1: op://webops-prod/yearn-price/RPC_URL_1
+          RPC_URL_10: op://webops-prod/yearn-price/RPC_URL_10
+          RPC_URL_100: op://webops-prod/yearn-price/RPC_URL_100
+          RPC_URL_137: op://webops-prod/yearn-price/RPC_URL_137
+          RPC_URL_146: op://webops-prod/yearn-price/RPC_URL_146
+          RPC_URL_250: op://webops-prod/yearn-price/RPC_URL_250
+          RPC_URL_8453: op://webops-prod/yearn-price/RPC_URL_8453
+          RPC_URL_42161: op://webops-prod/yearn-price/RPC_URL_42161
+          RPC_URL_80094: op://webops-prod/yearn-price/RPC_URL_80094
+          RPC_URL_747474: op://webops-prod/yearn-price/RPC_URL_747474
+      - name: Upload secrets to Cloudflare
+        run: |
+          jq -n '{
+            DATABASE_URL: env.DATABASE_URL,
+            API_KEY_KONG: env.API_KEY_KONG,
+            API_KEY_FRONTEND: env.API_KEY_FRONTEND,
+            RPC_URL_1: env.RPC_URL_1,
+            RPC_URL_10: env.RPC_URL_10,
+            RPC_URL_100: env.RPC_URL_100,
+            RPC_URL_137: env.RPC_URL_137,
+            RPC_URL_146: env.RPC_URL_146,
+            RPC_URL_250: env.RPC_URL_250,
+            RPC_URL_8453: env.RPC_URL_8453,
+            RPC_URL_42161: env.RPC_URL_42161,
+            RPC_URL_80094: env.RPC_URL_80094,
+            RPC_URL_747474: env.RPC_URL_747474
+          }' | bunx wrangler secret bulk
       - name: Run migrations
         run: bun run migrate
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
       - name: Warm price cache
         run: bun run warmup
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          RPC_URL_1: ${{ secrets.RPC_URL_1 }}
-          RPC_URL_10: ${{ secrets.RPC_URL_10 }}
-          RPC_URL_100: ${{ secrets.RPC_URL_100 }}
-          RPC_URL_137: ${{ secrets.RPC_URL_137 }}
-          RPC_URL_146: ${{ secrets.RPC_URL_146 }}
-          RPC_URL_250: ${{ secrets.RPC_URL_250 }}
-          RPC_URL_8453: ${{ secrets.RPC_URL_8453 }}
-          RPC_URL_42161: ${{ secrets.RPC_URL_42161 }}
-          RPC_URL_80094: ${{ secrets.RPC_URL_80094 }}
-          RPC_URL_747474: ${{ secrets.RPC_URL_747474 }}
       - run: bun run deploy
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
