@@ -17,15 +17,15 @@ jobs:
         uses: 1Password/load-secrets-action@v2
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          DATABASE_URL: op://yearn/webops/yearn-price/DATABASE_URL
-          RPC_URL_1: op://yearn/webops/yearn-price/RPC_URL_1
-          RPC_URL_10: op://yearn/webops/yearn-price/RPC_URL_10
-          RPC_URL_100: op://yearn/webops/yearn-price/RPC_URL_100
-          RPC_URL_137: op://yearn/webops/yearn-price/RPC_URL_137
-          RPC_URL_146: op://yearn/webops/yearn-price/RPC_URL_146
-          RPC_URL_250: op://yearn/webops/yearn-price/RPC_URL_250
-          RPC_URL_8453: op://yearn/webops/yearn-price/RPC_URL_8453
-          RPC_URL_42161: op://yearn/webops/yearn-price/RPC_URL_42161
-          RPC_URL_80094: op://yearn/webops/yearn-price/RPC_URL_80094
-          RPC_URL_747474: op://yearn/webops/yearn-price/RPC_URL_747474
+          DATABASE_URL: op://webops-prod/yearn-price/DATABASE_URL
+          RPC_URL_1: op://webops-prod/yearn-price/RPC_URL_1
+          RPC_URL_10: op://webops-prod/yearn-price/RPC_URL_10
+          RPC_URL_100: op://webops-prod/yearn-price/RPC_URL_100
+          RPC_URL_137: op://webops-prod/yearn-price/RPC_URL_137
+          RPC_URL_146: op://webops-prod/yearn-price/RPC_URL_146
+          RPC_URL_250: op://webops-prod/yearn-price/RPC_URL_250
+          RPC_URL_8453: op://webops-prod/yearn-price/RPC_URL_8453
+          RPC_URL_42161: op://webops-prod/yearn-price/RPC_URL_42161
+          RPC_URL_80094: op://webops-prod/yearn-price/RPC_URL_80094
+          RPC_URL_747474: op://webops-prod/yearn-price/RPC_URL_747474
       - run: bun run warmup
