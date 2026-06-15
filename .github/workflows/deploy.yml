@@ -21,6 +21,7 @@ jobs:
           DATABASE_URL: op://webops-prod/yearn-price/DATABASE_URL
           API_KEY_KONG: op://webops-prod/yearn-price/API_KEY_KONG
           API_KEY_FRONTEND: op://webops-prod/yearn-price/API_KEY_FRONTEND
+          ENSO_API_KEY: op://webops-prod/yearn-price/ENSO_API_KEY
           CLOUDFLARE_API_TOKEN: op://webops-prod/yearn-price/CLOUDFLARE_API_TOKEN
           CLOUDFLARE_ACCOUNT_ID: op://webops-prod/yearn-price/CLOUDFLARE_ACCOUNT_ID
           RPC_URL_1: op://webops-prod/yearn-price/RPC_URL_1
@@ -39,6 +40,7 @@ jobs:
             DATABASE_URL: env.DATABASE_URL,
             API_KEY_KONG: env.API_KEY_KONG,
             API_KEY_FRONTEND: env.API_KEY_FRONTEND,
+            ENSO_API_KEY: env.ENSO_API_KEY,
             RPC_URL_1: env.RPC_URL_1,
             RPC_URL_10: env.RPC_URL_10,
             RPC_URL_100: env.RPC_URL_100,

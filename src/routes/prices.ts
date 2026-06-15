@@ -5,7 +5,7 @@ import { EnsoClient } from '../enso'
 import { ApiError, ensure } from '../errors'
 import { jsonResponse } from '../http'
 import { getBatchHistoricalPrices, getExactHistoricalPrice, getRangeHistoricalPrices, insertTokenPrices } from '../queries'
-import { normalizedDaysInRange, normalizeToEndOfDay, nowUnix } from '../time'
+import { normalizedDaysInRange, normalizeToEndOfDay, nowUnix, toUnixSeconds } from '../time'
 import type { BatchHistoricalResponseCoin, Env, ExactPriceRecord, HistoricalRequestTuple, RangeRequest } from '../types'
 import { parseBatchCoins, parseOptionalSource, parseRangeCoins, parseTimestampSegment } from '../validation'
 
@@ -90,11 +90,11 @@ export async function handleCurrent(env: Env, pool: Pool, chainIdSegment: string
     `Enso returned no valid price for ${tokenKey}`,
   )
 
-  const priceTimestamp =
+  const ensoTimestamp =
     typeof priceData.timestamp === 'number' && Number.isFinite(priceData.timestamp) && priceData.timestamp > 0
-      ? priceData.timestamp
+      ? toUnixSeconds(priceData.timestamp)
       : nowUnix()
-  const timestamp = normalizeToEndOfDay(priceTimestamp)
+  const timestamp = normalizeToEndOfDay(ensoTimestamp)
   const symbol = priceData.symbol ?? null
   const confidence = priceData.confidence ?? null
 

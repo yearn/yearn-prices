@@ -142,7 +142,7 @@ If no exact row exists for the normalized timestamp, the route returns:
 
 Proxies the current price for one token from [Enso](https://docs.enso.build/api-reference/tokens/token-price) and stores the result in price history. The path mirrors the upstream Enso endpoint.
 
-The fetched price is normalized to its UTC day-end timestamp (Enso's price timestamp, or the current time when Enso omits it) and upserted into `token_prices` under the `enso` source, using the same normalization and conflict handling as the warmup ingestion. Persistence is best-effort: if the write fails, the error is logged and the live price is still returned.
+The fetched price is normalized to its UTC day-end timestamp — Enso returns a millisecond timestamp, which is converted to seconds (or the current time is used when Enso omits it) — and upserted into `token_prices` under the `enso` source, using the same normalization and conflict handling as the warmup ingestion. Persistence is best-effort: if the write fails, the error is logged and the live price is still returned.
 
 Requires the `ENSO_API_KEY` worker secret (`wrangler secret put ENSO_API_KEY`).
 

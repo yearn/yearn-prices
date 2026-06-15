@@ -16,6 +16,13 @@ export function currentUtcDayEnd(now = nowUnix()): number {
   return normalizeToEndOfDay(now)
 }
 
+// Enso returns millisecond timestamps (e.g. 1781549905855); older docs showed seconds.
+// Normalize both to unix seconds. 1e12 cleanly separates: realistic seconds stay < ~1e10,
+// milliseconds are >= ~1e12.
+export function toUnixSeconds(timestamp: number): number {
+  return timestamp >= 1e12 ? Math.floor(timestamp / 1000) : Math.floor(timestamp)
+}
+
 export function isTodayNormalized(timestamp: number, now = nowUnix()): boolean {
   return normalizeToEndOfDay(timestamp) === currentUtcDayEnd(now)
 }
