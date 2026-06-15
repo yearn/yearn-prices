@@ -61,6 +61,7 @@ Price routes accept an optional `source` query parameter. Supported values are:
 - `on-chain-oracle`
 - `bobs-api`
 - `derived`
+- `enso`
 
 When `source` is omitted, the API returns the first available row by priority:
 
@@ -68,6 +69,7 @@ When `source` is omitted, the API returns the first available row by priority:
 2. `on-chain-oracle`
 3. `bobs-api`
 4. `derived`
+5. `enso`
 
 ## `GET /api/health`
 
@@ -135,6 +137,45 @@ If no exact row exists for the normalized timestamp, the route returns:
   }
 }
 ```
+
+## `GET /api/prices/:chainId/:tokenAddress`
+
+Proxies the current price for one token from [Enso](https://docs.enso.build/api-reference/tokens/token-price) and stores the result in price history. The path mirrors the upstream Enso endpoint.
+
+The fetched price is normalized to its UTC day-end timestamp (Enso's price timestamp, or the current time when Enso omits it) and upserted into `token_prices` under the `enso` source, using the same normalization and conflict handling as the warmup ingestion. Persistence is best-effort: if the write fails, the error is logged and the live price is still returned.
+
+Requires the `ENSO_API_KEY` worker secret (`wrangler secret put ENSO_API_KEY`).
+
+Path parameters:
+
+- `chainId`: numeric chain id (e.g. `1` for ethereum). Must be a supported chain.
+- `tokenAddress`: EVM `0x` token address. Normalized to its EIP-55 checksum.
+
+Example:
+
+```bash
+curl \
+  -H "Authorization: Bearer $API_KEY" \
+  "http://localhost:8787/api/prices/1/0x2260fac5e5542a773aa44fbcfedf7c193bc2c599"
+```
+
+Response:
+
+```json
+{
+  "coins": {
+    "ethereum:0x2260FAC5e5542a773Aa44fBCfeDf7C193bc2C599": {
+      "price": 27052,
+      "symbol": "WBTC",
+      "timestamp": 1719878399,
+      "confidence": 0.99,
+      "source": "enso"
+    }
+  }
+}
+```
+
+The returned `timestamp` is the normalized UTC day-end the price was stored against. If Enso has no price for the token, the route returns `NOT_FOUND`.
 
 ## `GET /api/prices/batchHistorical`
 

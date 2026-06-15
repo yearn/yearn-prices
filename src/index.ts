@@ -3,7 +3,7 @@ import { createPool } from './db'
 import { ApiError, jsonError } from './errors'
 import { optionsResponse, withCors } from './http'
 import { handleHealth } from './routes/health'
-import { handleBatchHistorical, handleHistorical, handleRangeHistorical, notFoundErrorHeaders } from './routes/prices'
+import { handleBatchHistorical, handleCurrent, handleHistorical, handleRangeHistorical, notFoundErrorHeaders } from './routes/prices'
 import type { Env } from './types'
 
 function logRequest(request: Request, clientId: string | null, extra?: Record<string, unknown>): void {
@@ -52,6 +52,12 @@ export default {
           return await handleRangeHistorical(request, env, pool)
         }
 
+        const currentMatch = pathname.match(/^\/api\/prices\/(\d+)\/([^/]+)$/)
+        if (currentMatch && request.method === 'GET') {
+          const [, chainIdSegment, tokenAddressSegment] = currentMatch
+          return await handleCurrent(env, pool, chainIdSegment, tokenAddressSegment)
+        }
+
         const historicalMatch = pathname.match(/^\/api\/prices\/historical\/([^/]+)\/([^/]+)$/)
         if (historicalMatch && request.method === 'GET') {
           const [, timestampSegment, tokenKeySegment] = historicalMatch
@@ -74,7 +80,9 @@ export default {
             detail: error.message,
           }),
         )
-        const headers = error.code === 'NOT_FOUND' && pathname.startsWith('/api/prices/historical/')
+        const notFoundCacheable =
+          pathname.startsWith('/api/prices/historical/') || /^\/api\/prices\/\d+\/[^/]+$/.test(pathname)
+        const headers = error.code === 'NOT_FOUND' && notFoundCacheable
           ? withCors(notFoundErrorHeaders())
           : withCors()
         return jsonError(error, headers)

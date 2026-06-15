@@ -1,10 +1,11 @@
 import type { Pool } from '@neondatabase/serverless'
 import { cacheControlForBatch, cacheControlForHistorical, cacheControlForRange, CACHE_CONTROL_NOT_FOUND } from '../cache'
-import { parseTokenKey } from '../chains'
+import { chainIdToName, normalizeTokenAddress, parseTokenKey } from '../chains'
+import { EnsoClient } from '../enso'
 import { ApiError, ensure } from '../errors'
 import { jsonResponse } from '../http'
-import { getBatchHistoricalPrices, getExactHistoricalPrice, getRangeHistoricalPrices } from '../queries'
-import { normalizedDaysInRange } from '../time'
+import { getBatchHistoricalPrices, getExactHistoricalPrice, getRangeHistoricalPrices, insertTokenPrices } from '../queries'
+import { normalizedDaysInRange, normalizeToEndOfDay, nowUnix } from '../time'
 import type { BatchHistoricalResponseCoin, Env, ExactPriceRecord, HistoricalRequestTuple, RangeRequest } from '../types'
 import { parseBatchCoins, parseOptionalSource, parseRangeCoins, parseTimestampSegment } from '../validation'
 
@@ -60,6 +61,80 @@ export async function handleHistorical(
     {
       headers: {
         'cache-control': cacheControlForHistorical(record.timestamp),
+      },
+    },
+  )
+}
+
+export async function handleCurrent(env: Env, pool: Pool, chainIdSegment: string, tokenAddressSegment: string): Promise<Response> {
+  ensure(env.ENSO_API_KEY, 'INTERNAL_ERROR', 'ENSO_API_KEY is not configured')
+  ensure(/^\d+$/.test(chainIdSegment), 'INVALID_INPUT', 'Chain id must be a number')
+  const chainId = Number(chainIdSegment)
+  const chain = chainIdToName(chainId)
+  ensure(chain !== undefined, 'INVALID_INPUT', `Unsupported chain id: ${chainId}`)
+
+  let token: `0x${string}`
+  try {
+    token = normalizeTokenAddress(tokenAddressSegment)
+  } catch {
+    throw new ApiError('INVALID_INPUT', `Unsupported token address: ${tokenAddressSegment}`)
+  }
+  const tokenKey = buildTokenKey(chain, token)
+
+  const enso = new EnsoClient(env.ENSO_API_KEY)
+  const priceData = await enso.getPrice(chainId, token.toLowerCase())
+
+  ensure(
+    typeof priceData.price === 'number' && Number.isFinite(priceData.price) && priceData.price > 0,
+    'NOT_FOUND',
+    `Enso returned no valid price for ${tokenKey}`,
+  )
+
+  const priceTimestamp =
+    typeof priceData.timestamp === 'number' && Number.isFinite(priceData.timestamp) && priceData.timestamp > 0
+      ? priceData.timestamp
+      : nowUnix()
+  const timestamp = normalizeToEndOfDay(priceTimestamp)
+  const symbol = priceData.symbol ?? null
+  const confidence = priceData.confidence ?? null
+
+  try {
+    await insertTokenPrices(pool, [
+      {
+        chain,
+        token,
+        timestamp,
+        price: priceData.price,
+        symbol,
+        confidence,
+        source: 'enso',
+      },
+    ])
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        message: 'enso-persist-error',
+        token_key: tokenKey,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    )
+  }
+
+  return jsonResponse(
+    {
+      coins: {
+        [tokenKey]: {
+          price: priceData.price,
+          symbol,
+          timestamp,
+          confidence,
+          source: 'enso',
+        },
+      },
+    },
+    {
+      headers: {
+        'cache-control': cacheControlForHistorical(timestamp),
       },
     },
   )

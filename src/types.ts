@@ -3,12 +3,14 @@ export const SOURCE_PRIORITY = [
   'on-chain-oracle',
   'bobs-api',
   'derived',
+  'enso',
 ] as const
 
 export type PriceSource = (typeof SOURCE_PRIORITY)[number]
 
 export interface Env {
   DATABASE_URL: string
+  ENSO_API_KEY?: string
   [key: string]: string | undefined
 }
 
@@ -115,4 +117,14 @@ export interface DefiLlamaBatchCoin {
 
 export interface DefiLlamaBatchResponse {
   coins: Record<string, DefiLlamaBatchCoin>
+}
+
+export interface EnsoPriceResponse {
+  decimals: number
+  price: number
+  address: string
+  chainId: number
+  symbol?: string
+  timestamp?: number
+  confidence?: number
 }
