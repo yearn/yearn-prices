@@ -1,13 +1,13 @@
 import type { Pool } from '@neondatabase/serverless'
-import { cacheControlForBatch, cacheControlForHistorical, cacheControlForRange, CACHE_CONTROL_NOT_FOUND, CACHE_CONTROL_TODAY } from '../cache'
+import { cacheControlForBatch, cacheControlForHistorical, cacheControlForRange, CACHE_CONTROL_NOT_FOUND, CACHE_CONTROL_SPOT } from '../cache'
 import { chainNameToId, parseTokenKey } from '../chains'
 import { EnsoClient } from '../enso'
 import { ApiError, ensure } from '../errors'
 import { jsonResponse } from '../http'
-import { getBatchHistoricalPrices, getExactHistoricalPrice, getRangeHistoricalPrices, insertTokenPrices } from '../queries'
-import { normalizedDaysInRange, normalizeToEndOfDay, nowUnix, toUnixSeconds } from '../time'
-import type { BatchHistoricalResponseCoin, CurrentRequest, Env, ExactPriceRecord, HistoricalRequestTuple, RangeRequest, TokenPriceWrite } from '../types'
-import { parseBatchCoins, parseCurrentCoins, parseOptionalSource, parseRangeCoins, parseTimestampSegment } from '../validation'
+import { getBatchHistoricalPrices, getExactHistoricalPrice, getRangeHistoricalPrices } from '../queries'
+import { normalizedDaysInRange, nowUnix, toUnixSeconds } from '../time'
+import type { BatchHistoricalResponseCoin, Env, ExactPriceRecord, HistoricalRequestTuple, RangeRequest, SpotRequest } from '../types'
+import { parseBatchCoins, parseSpotCoins, parseOptionalSource, parseRangeCoins, parseTimestampSegment } from '../validation'
 
 function buildTokenKey(chain: string, token: string): string {
   return `${chain}:${token}`
@@ -66,13 +66,16 @@ export async function handleHistorical(
   )
 }
 
-export async function handleCurrent(request: Request, env: Env, pool: Pool): Promise<Response> {
+// Stateless proxy for live spot prices from Enso. Intentionally does not persist:
+// spot is a latest-price use case served by the edge cache, and writing a mid-day
+// spot price as that day's historical close would corrupt the price history.
+export async function handleSpot(request: Request, env: Env): Promise<Response> {
   ensure(env.ENSO_API_KEY, 'INTERNAL_ERROR', 'ENSO_API_KEY is not configured')
-  const requests = parseCurrentCoins(new URL(request.url).searchParams.get('coins'))
+  const requests = parseSpotCoins(new URL(request.url).searchParams.get('coins'))
 
   const enso = new EnsoClient(env.ENSO_API_KEY)
   const settled = await Promise.allSettled(
-    requests.map(async (req): Promise<{ req: CurrentRequest; timestamp: number; symbol: string | null; price: number; confidence: number | null }> => {
+    requests.map(async (req): Promise<{ req: SpotRequest; timestamp: number; symbol: string | null; price: number; confidence: number | null }> => {
       const chainId = chainNameToId(req.chain)
       ensure(chainId !== undefined, 'INVALID_INPUT', `Unsupported chain: ${req.chain}`)
 
@@ -83,14 +86,16 @@ export async function handleCurrent(request: Request, env: Env, pool: Pool): Pro
         `Enso returned no valid price for ${req.originalKey}`,
       )
 
-      const ensoTimestamp =
+      // Live spot timestamp: Enso reports unix milliseconds, converted to seconds
+      // (or "now" when omitted). Not normalized to a day-end — this is a spot price.
+      const timestamp =
         typeof priceData.timestamp === 'number' && Number.isFinite(priceData.timestamp) && priceData.timestamp > 0
           ? toUnixSeconds(priceData.timestamp)
           : nowUnix()
 
       return {
         req,
-        timestamp: normalizeToEndOfDay(ensoTimestamp),
+        timestamp,
         symbol: priceData.symbol ?? null,
         price: priceData.price,
         confidence: priceData.confidence ?? null,
@@ -99,14 +104,13 @@ export async function handleCurrent(request: Request, env: Env, pool: Pool): Pro
   )
 
   const coins: Record<string, BatchHistoricalResponseCoin> = {}
-  const writes: TokenPriceWrite[] = []
 
   for (let i = 0; i < settled.length; i += 1) {
     const outcome = settled[i]
     if (outcome.status === 'rejected') {
       console.error(
         JSON.stringify({
-          message: 'enso-current-error',
+          message: 'enso-spot-error',
           token_key: requests[i].originalKey,
           error: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
         }),
@@ -119,29 +123,13 @@ export async function handleCurrent(request: Request, env: Env, pool: Pool): Pro
       symbol,
       prices: [{ timestamp, price, confidence, source: 'enso' }],
     }
-    writes.push({ chain: req.chain, token: req.token, timestamp, price, symbol, confidence, source: 'enso' })
   }
 
-  if (writes.length > 0) {
-    try {
-      await insertTokenPrices(pool, writes)
-    } catch (error) {
-      console.error(
-        JSON.stringify({
-          message: 'enso-persist-error',
-          token_keys: writes.map(write => `${write.chain}:${write.token}`),
-          error: error instanceof Error ? error.message : String(error),
-        }),
-      )
-    }
-  }
-
-  // Current prices are always for today's UTC day, so the response must revalidate (never immutable).
   return jsonResponse(
     { coins },
     {
       headers: {
-        'cache-control': CACHE_CONTROL_TODAY,
+        'cache-control': CACHE_CONTROL_SPOT,
       },
     },
   )

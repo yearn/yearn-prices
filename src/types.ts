@@ -51,7 +51,7 @@ export interface HistoricalRequestTuple {
   timestamp: number
 }
 
-export interface CurrentRequest {
+export interface SpotRequest {
   chain: string
   token: `0x${string}`
   originalKey: string

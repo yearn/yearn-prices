@@ -1,9 +1,10 @@
 import { authenticateRequest } from './auth'
 import { createPool } from './db'
+import { readEdgeCache, writeEdgeCache } from './edge-cache'
 import { ApiError, jsonError } from './errors'
 import { optionsResponse, withCors } from './http'
 import { handleHealth } from './routes/health'
-import { handleBatchHistorical, handleCurrent, handleHistorical, handleRangeHistorical, notFoundErrorHeaders } from './routes/prices'
+import { handleBatchHistorical, handleHistorical, handleRangeHistorical, handleSpot, notFoundErrorHeaders } from './routes/prices'
 import type { Env } from './types'
 
 function logRequest(request: Request, clientId: string | null, extra?: Record<string, unknown>): void {
@@ -18,8 +19,40 @@ function logRequest(request: Request, clientId: string | null, extra?: Record<st
   )
 }
 
+async function routePriceRequest(request: Request, env: Env, pathname: string): Promise<Response> {
+  // Spot is a stateless Enso proxy — no database connection needed.
+  if (pathname === '/api/prices/spot' && request.method === 'GET') {
+    return handleSpot(request, env)
+  }
+
+  if (!env.DATABASE_URL) {
+    throw new ApiError('INTERNAL_ERROR', 'DATABASE_URL is not configured')
+  }
+
+  const pool = createPool(env.DATABASE_URL)
+  try {
+    if (pathname === '/api/prices/batchHistorical' && request.method === 'GET') {
+      return await handleBatchHistorical(request, env, pool)
+    }
+
+    if (pathname === '/api/prices/rangeHistorical' && request.method === 'GET') {
+      return await handleRangeHistorical(request, env, pool)
+    }
+
+    const historicalMatch = pathname.match(/^\/api\/prices\/historical\/([^/]+)\/([^/]+)$/)
+    if (historicalMatch && request.method === 'GET') {
+      const [, timestampSegment, tokenKeySegment] = historicalMatch
+      return await handleHistorical(request, env, pool, timestampSegment, tokenKeySegment)
+    }
+  } finally {
+    await pool.end()
+  }
+
+  throw new ApiError('NOT_FOUND', 'Route not found')
+}
+
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (request.method === 'OPTIONS') {
       return optionsResponse()
     }
@@ -38,34 +71,17 @@ export default {
       ;({ clientId } = authenticateRequest(request, env))
       logRequest(request, clientId)
 
-      if (!env.DATABASE_URL) {
-        throw new ApiError('INTERNAL_ERROR', 'DATABASE_URL is not configured')
+      // Serve from Cloudflare's edge cache before doing any work (Enso fetch / DB query).
+      const cached = request.method === 'GET' ? await readEdgeCache(request) : undefined
+      if (cached) {
+        return cached
       }
 
-      const pool = createPool(env.DATABASE_URL)
-      try {
-        if (pathname === '/api/prices/batchHistorical' && request.method === 'GET') {
-          return await handleBatchHistorical(request, env, pool)
-        }
-
-        if (pathname === '/api/prices/rangeHistorical' && request.method === 'GET') {
-          return await handleRangeHistorical(request, env, pool)
-        }
-
-        if (pathname === '/api/prices/current' && request.method === 'GET') {
-          return await handleCurrent(request, env, pool)
-        }
-
-        const historicalMatch = pathname.match(/^\/api\/prices\/historical\/([^/]+)\/([^/]+)$/)
-        if (historicalMatch && request.method === 'GET') {
-          const [, timestampSegment, tokenKeySegment] = historicalMatch
-          return await handleHistorical(request, env, pool, timestampSegment, tokenKeySegment)
-        }
-      } finally {
-        await pool.end()
+      const response = await routePriceRequest(request, env, pathname)
+      if (request.method === 'GET') {
+        writeEdgeCache(ctx, request, response)
       }
-
-      throw new ApiError('NOT_FOUND', 'Route not found')
+      return response
     } catch (error) {
       if (error instanceof ApiError) {
         console.error(

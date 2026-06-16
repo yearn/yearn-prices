@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { getAddress } from 'viem'
 import { EnsoClient } from '../src/enso'
-import { handleCurrent } from '../src/routes/prices'
-import { currentUtcDayEnd, toUnixSeconds, unixToIsoTimestamp } from '../src/time'
+import { handleSpot } from '../src/routes/prices'
+import { toUnixSeconds } from '../src/time'
 import type { Env } from '../src/types'
 
 // Real key, loaded from .env via dotenv (vitest setupFiles). These tests hit the live Enso API,
@@ -33,44 +33,25 @@ describe.skipIf(!ENSO_API_KEY)('Enso integration (live API)', () => {
   )
 
   it(
-    'builds the normalized row passed to the DB from a live price (the step right before insert)',
+    'proxies a live WETH spot price through handleSpot (stateless, no DB write)',
     async () => {
       const env: Env = { DATABASE_URL: 'postgres://unused', ENSO_API_KEY }
-      const calls: Array<[string, unknown[]]> = []
-      const pool = {
-        query: (sql: string, params: unknown[]) => {
-          calls.push([sql, params])
-          return Promise.resolve({ rows: [] })
-        },
-        end: () => Promise.resolve(),
-      } as any
 
       const coinKey = `ethereum:${WETH}`
       const request = new Request(
-        `https://svc/api/prices/current?coins=${encodeURIComponent(JSON.stringify([coinKey]))}`,
+        `https://svc/api/prices/spot?coins=${encodeURIComponent(JSON.stringify([coinKey]))}`,
       )
-      const response = await handleCurrent(request, env, pool)
+      const response = await handleSpot(request, env)
 
       expect(response.status).toBe(200)
       const body = (await response.json()) as any
-      const coin = body.coins[coinKey]
-      const price = coin.prices[0]
+      const price = body.coins[coinKey].prices[0]
       expect(price.price).toBeGreaterThan(0)
       expect(price.source).toBe('enso')
-      // Live price is current → ms timestamp converted and normalized to today's UTC day-end.
-      // (Would be a far-future day if the ms→seconds conversion regressed.)
-      expect(price.timestamp).toBe(currentUtcDayEnd())
-
-      // Assert the exact row that would be written to token_prices — before any real insert.
-      expect(calls).toHaveLength(1)
-      const [sql, params] = calls[0]
-      expect(sql).toContain('INSERT INTO token_prices')
-      expect(sql).toContain('ON CONFLICT (chain, token, timestamp, source)')
-      expect(params[0]).toBe('ethereum') // chain (name from the token key)
-      expect(params[1]).toBe(WETH_CHECKSUM) // token (checksummed in DB, lowercased only for Enso)
-      expect(params[2]).toBe(unixToIsoTimestamp(currentUtcDayEnd())) // today's UTC day-end
-      expect(params[3]).toBe(price.price) // price matches the proxied response
-      expect(params[6]).toBe('enso') // source
+      // Live spot timestamp: Enso ms converted to seconds, near now (not normalized to a day-end).
+      // (Would be a far-future value if the ms→seconds conversion regressed.)
+      expect(price.timestamp).toBeGreaterThan(1_700_000_000)
+      expect(price.timestamp).toBeLessThanOrEqual(Math.floor(Date.now() / 1000) + 60)
     },
     NETWORK_TIMEOUT,
   )

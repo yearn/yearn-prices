@@ -138,11 +138,13 @@ If no exact row exists for the normalized timestamp, the route returns:
 }
 ```
 
-## `GET /api/prices/current`
+## `GET /api/prices/spot`
 
-Proxies the current price for one or more tokens from [Enso](https://docs.enso.build/api-reference/tokens/token-price) and stores the results in price history. The request and response shapes mirror `batchHistorical`.
+Proxies the latest spot price for one or more tokens from [Enso](https://docs.enso.build/api-reference/tokens/token-price). The request and response shapes mirror `batchHistorical`.
 
-Each fetched price is normalized to its UTC day-end timestamp — Enso returns a millisecond timestamp, which is converted to seconds (or the current time is used when Enso omits it) — and upserted into `token_prices` under the `enso` source, using the same normalization and conflict handling as the warmup ingestion. Persistence is best-effort: if the write fails, the error is logged and the live prices are still returned.
+This is a stateless proxy: it validates, fetches from Enso, and returns. It does **not** write to `token_prices`. Spot is a latest-price use case served by the edge cache; persisting a mid-day spot price as that day's historical close would pollute the price history (see the [Cache-Control](#cache-control) section for the edge TTL).
+
+Each returned `timestamp` is the price's own time in Unix seconds — Enso reports a millisecond timestamp, which is converted to seconds (or the current time is used when Enso omits it). Unlike the historical routes, spot timestamps are not normalized to a UTC day-end.
 
 Requires the `ENSO_API_KEY` worker secret (`wrangler secret put ENSO_API_KEY`).
 
@@ -166,7 +168,7 @@ Example:
 ```bash
 curl \
   -H "Authorization: Bearer $API_KEY" \
-  --get "http://localhost:8787/api/prices/current" \
+  --get "http://localhost:8787/api/prices/spot" \
   --data-urlencode 'coins=["ethereum:0x2260fac5e5542a773aa44fbcfedf7c193bc2c599"]'
 ```
 
@@ -190,7 +192,7 @@ Response:
 }
 ```
 
-Each token's single `prices` entry carries the normalized UTC day-end the price was stored against. Tokens Enso has no price for are omitted from the response, like `batchHistorical`.
+Each token's single `prices` entry carries the spot price's own Unix-seconds timestamp. Tokens Enso has no price for are omitted from the response, like `batchHistorical`.
 
 ## `GET /api/prices/batchHistorical`
 
@@ -354,3 +356,10 @@ Price responses set cache headers based on the requested timestamps and whether 
 - Fully resolved batch or range for past days: `public, max-age=31536000, immutable`
 - Partially resolved batch or range for past days: `public, max-age=3600`
 - Historical not found responses: `public, max-age=3600, stale-while-revalidate=14400`
+- Spot: `public, s-maxage=120, stale-while-revalidate=600`
+
+## Edge caching
+
+Worker-generated responses do not populate Cloudflare's edge cache from a `Cache-Control` header alone — that header only drives the client/browser cache. Successful `GET` responses for all price routes are therefore stored in the edge cache (`caches.default`) explicitly and served from it on subsequent requests, using the TTLs above. A request is served from the edge before any Enso fetch or database query runs.
+
+Spot has no upstream cache policy (Enso sends only a weak `etag`), so its `s-maxage=120` is a chosen shared-cache TTL — short enough to keep prices fresh, long enough to absorb bursts — mirroring the Enso proxy already shipping in yearn.fi.
