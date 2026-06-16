@@ -1,4 +1,5 @@
 import { authenticateRequest } from './auth'
+import { CACHE_CONTROL_NO_STORE } from './cache'
 import { createPool } from './db'
 import { readEdgeCache, writeEdgeCache } from './edge-cache'
 import { ApiError, jsonError } from './errors'
@@ -97,7 +98,7 @@ export default {
         const notFoundCacheable = pathname.startsWith('/api/prices/historical/')
         const headers = error.code === 'NOT_FOUND' && notFoundCacheable
           ? withCors(notFoundErrorHeaders())
-          : withCors()
+          : withCors({ 'cache-control': CACHE_CONTROL_NO_STORE })
         return jsonError(error, headers)
       }
 
@@ -109,7 +110,7 @@ export default {
           error: error instanceof Error ? error.message : String(error),
         }),
       )
-      return jsonError(new ApiError('INTERNAL_ERROR', 'Unexpected internal error'), withCors())
+      return jsonError(new ApiError('INTERNAL_ERROR', 'Unexpected internal error'), withCors({ 'cache-control': CACHE_CONTROL_NO_STORE }))
     }
   },
 }
