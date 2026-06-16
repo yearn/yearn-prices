@@ -51,6 +51,12 @@ export interface HistoricalRequestTuple {
   timestamp: number
 }
 
+export interface CurrentRequest {
+  chain: string
+  token: `0x${string}`
+  originalKey: string
+}
+
 export interface RangeRequest {
   chain: string
   token: string

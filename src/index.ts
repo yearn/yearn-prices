@@ -6,8 +6,6 @@ import { handleHealth } from './routes/health'
 import { handleBatchHistorical, handleCurrent, handleHistorical, handleRangeHistorical, notFoundErrorHeaders } from './routes/prices'
 import type { Env } from './types'
 
-const CURRENT_PRICE_PATH = /^\/api\/prices\/(\d+)\/([^/]+)$/
-
 function logRequest(request: Request, clientId: string | null, extra?: Record<string, unknown>): void {
   console.info(
     JSON.stringify({
@@ -54,10 +52,8 @@ export default {
           return await handleRangeHistorical(request, env, pool)
         }
 
-        const currentMatch = pathname.match(CURRENT_PRICE_PATH)
-        if (currentMatch && request.method === 'GET') {
-          const [, chainIdSegment, tokenAddressSegment] = currentMatch
-          return await handleCurrent(env, pool, chainIdSegment, tokenAddressSegment)
+        if (pathname === '/api/prices/current' && request.method === 'GET') {
+          return await handleCurrent(request, env, pool)
         }
 
         const historicalMatch = pathname.match(/^\/api\/prices\/historical\/([^/]+)\/([^/]+)$/)
@@ -82,8 +78,7 @@ export default {
             detail: error.message,
           }),
         )
-        const notFoundCacheable =
-          pathname.startsWith('/api/prices/historical/') || CURRENT_PRICE_PATH.test(pathname)
+        const notFoundCacheable = pathname.startsWith('/api/prices/historical/')
         const headers = error.code === 'NOT_FOUND' && notFoundCacheable
           ? withCors(notFoundErrorHeaders())
           : withCors()

@@ -45,26 +45,31 @@ describe.skipIf(!ENSO_API_KEY)('Enso integration (live API)', () => {
         end: () => Promise.resolve(),
       } as any
 
-      const response = await handleCurrent(env, pool, '1', WETH)
+      const coinKey = `ethereum:${WETH}`
+      const request = new Request(
+        `https://svc/api/prices/current?coins=${encodeURIComponent(JSON.stringify([coinKey]))}`,
+      )
+      const response = await handleCurrent(request, env, pool)
 
       expect(response.status).toBe(200)
       const body = (await response.json()) as any
-      const coin = body.coins[`ethereum:${WETH_CHECKSUM}`]
-      expect(coin.price).toBeGreaterThan(0)
-      expect(coin.source).toBe('enso')
+      const coin = body.coins[coinKey]
+      const price = coin.prices[0]
+      expect(price.price).toBeGreaterThan(0)
+      expect(price.source).toBe('enso')
       // Live price is current → ms timestamp converted and normalized to today's UTC day-end.
       // (Would be a far-future day if the ms→seconds conversion regressed.)
-      expect(coin.timestamp).toBe(currentUtcDayEnd())
+      expect(price.timestamp).toBe(currentUtcDayEnd())
 
       // Assert the exact row that would be written to token_prices — before any real insert.
       expect(calls).toHaveLength(1)
       const [sql, params] = calls[0]
       expect(sql).toContain('INSERT INTO token_prices')
       expect(sql).toContain('ON CONFLICT (chain, token, timestamp, source)')
-      expect(params[0]).toBe('ethereum') // chain (name, mapped from chainId)
+      expect(params[0]).toBe('ethereum') // chain (name from the token key)
       expect(params[1]).toBe(WETH_CHECKSUM) // token (checksummed in DB, lowercased only for Enso)
       expect(params[2]).toBe(unixToIsoTimestamp(currentUtcDayEnd())) // today's UTC day-end
-      expect(params[3]).toBe(coin.price) // price matches the proxied response
+      expect(params[3]).toBe(price.price) // price matches the proxied response
       expect(params[6]).toBe('enso') // source
     },
     NETWORK_TIMEOUT,

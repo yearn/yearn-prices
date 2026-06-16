@@ -1,12 +1,13 @@
 import { parseTokenKey } from './chains'
 import { ApiError, ensure } from './errors'
 import { normalizeToEndOfDay, normalizedRangeDayCount } from './time'
-import { SOURCE_PRIORITY, type HistoricalRequestTuple, type PriceSource, type RangeRequest } from './types'
+import { SOURCE_PRIORITY, type CurrentRequest, type HistoricalRequestTuple, type PriceSource, type RangeRequest } from './types'
 
 const MAX_BATCH_TOKENS = 50
 const MAX_BATCH_TIMESTAMPS_PER_TOKEN = 90
 const MAX_RANGE_TOKENS = 50
 const MAX_RANGE_DAYS = 366
+const MAX_CURRENT_TOKENS = 50
 
 export function parseTimestampSegment(segment: string): number {
   ensure(/^\d+$/.test(segment), 'INVALID_INPUT', 'Timestamp must be a unix timestamp')
@@ -23,6 +24,42 @@ export function parseOptionalSource(value: string | null): PriceSource | undefin
   }
 
   return value as PriceSource
+}
+
+export function parseCurrentCoins(raw: string | null): CurrentRequest[] {
+  ensure(raw, 'INVALID_INPUT', 'Missing coins query parameter')
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new ApiError('INVALID_INPUT', 'Invalid coins query parameter')
+  }
+
+  ensure(Array.isArray(parsed), 'INVALID_INPUT', 'Coins payload must be an array of token keys')
+  ensure(parsed.length > 0, 'INVALID_INPUT', 'Coins payload must not be empty')
+  ensure(parsed.length <= MAX_CURRENT_TOKENS, 'INVALID_INPUT', `A maximum of ${MAX_CURRENT_TOKENS} tokens is allowed`)
+
+  const seen = new Set<string>()
+  const requests: CurrentRequest[] = []
+  for (const entry of parsed) {
+    ensure(typeof entry === 'string', 'INVALID_INPUT', 'Each coin must be a "<chain>:<address>" string')
+
+    let parsedKey
+    try {
+      parsedKey = parseTokenKey(entry)
+    } catch (error) {
+      throw new ApiError('INVALID_INPUT', error instanceof Error ? error.message : `Invalid token key: ${entry}`)
+    }
+
+    if (seen.has(parsedKey.tokenKey)) {
+      continue
+    }
+    seen.add(parsedKey.tokenKey)
+    requests.push({ chain: parsedKey.chain, token: parsedKey.token, originalKey: entry })
+  }
+
+  return requests
 }
 
 export function parseBatchCoins(raw: string | null): HistoricalRequestTuple[] {

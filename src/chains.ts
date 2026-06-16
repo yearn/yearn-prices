@@ -16,10 +16,18 @@ export const CHAIN_ID_TO_NAME = {
 
 export const SUPPORTED_CHAIN_NAMES: ReadonlySet<string> = new Set(Object.values(CHAIN_ID_TO_NAME))
 
+export const CHAIN_NAME_TO_ID: Record<string, number> = Object.fromEntries(
+  Object.entries(CHAIN_ID_TO_NAME).map(([id, name]) => [name, Number(id)]),
+)
+
 const TOKEN_ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/
 
 export function chainIdToName(chainId: number): string | undefined {
   return CHAIN_ID_TO_NAME[chainId as keyof typeof CHAIN_ID_TO_NAME]
+}
+
+export function chainNameToId(chain: string): number | undefined {
+  return CHAIN_NAME_TO_ID[chain.toLowerCase()]
 }
 
 export function normalizeTokenAddress(token: string): `0x${string}` {

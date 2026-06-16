@@ -138,25 +138,36 @@ If no exact row exists for the normalized timestamp, the route returns:
 }
 ```
 
-## `GET /api/prices/:chainId/:tokenAddress`
+## `GET /api/prices/current`
 
-Proxies the current price for one token from [Enso](https://docs.enso.build/api-reference/tokens/token-price) and stores the result in price history. The path mirrors the upstream Enso endpoint.
+Proxies the current price for one or more tokens from [Enso](https://docs.enso.build/api-reference/tokens/token-price) and stores the results in price history. The request and response shapes mirror `batchHistorical`.
 
-The fetched price is normalized to its UTC day-end timestamp — Enso returns a millisecond timestamp, which is converted to seconds (or the current time is used when Enso omits it) — and upserted into `token_prices` under the `enso` source, using the same normalization and conflict handling as the warmup ingestion. Persistence is best-effort: if the write fails, the error is logged and the live price is still returned.
+Each fetched price is normalized to its UTC day-end timestamp — Enso returns a millisecond timestamp, which is converted to seconds (or the current time is used when Enso omits it) — and upserted into `token_prices` under the `enso` source, using the same normalization and conflict handling as the warmup ingestion. Persistence is best-effort: if the write fails, the error is logged and the live prices are still returned.
 
 Requires the `ENSO_API_KEY` worker secret (`wrangler secret put ENSO_API_KEY`).
 
-Path parameters:
+Query parameters:
 
-- `chainId`: numeric chain id (e.g. `1` for ethereum). Must be a supported chain.
-- `tokenAddress`: EVM `0x` token address. Normalized to its EIP-55 checksum.
+- `coins`: required JSON array of token keys.
+
+The `coins` array lists token keys (`<chain>:<token-address>`):
+
+```json
+["ethereum:0x2260fac5e5542a773aa44fbcfedf7c193bc2c599", "base:0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca"]
+```
+
+Limits:
+
+- Maximum `50` token keys.
+- Duplicate token keys are deduplicated after normalization.
 
 Example:
 
 ```bash
 curl \
   -H "Authorization: Bearer $API_KEY" \
-  "http://localhost:8787/api/prices/1/0x2260fac5e5542a773aa44fbcfedf7c193bc2c599"
+  --get "http://localhost:8787/api/prices/current" \
+  --data-urlencode 'coins=["ethereum:0x2260fac5e5542a773aa44fbcfedf7c193bc2c599"]'
 ```
 
 Response:
@@ -164,18 +175,22 @@ Response:
 ```json
 {
   "coins": {
-    "ethereum:0x2260FAC5e5542a773Aa44fBCfeDf7C193bc2C599": {
-      "price": 27052,
+    "ethereum:0x2260fac5e5542a773aa44fbcfedf7c193bc2c599": {
       "symbol": "WBTC",
-      "timestamp": 1719878399,
-      "confidence": 0.99,
-      "source": "enso"
+      "prices": [
+        {
+          "timestamp": 1719878399,
+          "price": 27052,
+          "confidence": 0.99,
+          "source": "enso"
+        }
+      ]
     }
   }
 }
 ```
 
-The returned `timestamp` is the normalized UTC day-end the price was stored against. If Enso has no price for the token, the route returns `NOT_FOUND`.
+Each token's single `prices` entry carries the normalized UTC day-end the price was stored against. Tokens Enso has no price for are omitted from the response, like `batchHistorical`.
 
 ## `GET /api/prices/batchHistorical`
 

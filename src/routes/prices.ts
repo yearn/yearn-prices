@@ -1,13 +1,13 @@
 import type { Pool } from '@neondatabase/serverless'
-import { cacheControlForBatch, cacheControlForHistorical, cacheControlForRange, CACHE_CONTROL_NOT_FOUND } from '../cache'
-import { chainIdToName, normalizeTokenAddress, parseTokenKey } from '../chains'
+import { cacheControlForBatch, cacheControlForHistorical, cacheControlForRange, CACHE_CONTROL_NOT_FOUND, CACHE_CONTROL_TODAY } from '../cache'
+import { chainNameToId, parseTokenKey } from '../chains'
 import { EnsoClient } from '../enso'
 import { ApiError, ensure } from '../errors'
 import { jsonResponse } from '../http'
 import { getBatchHistoricalPrices, getExactHistoricalPrice, getRangeHistoricalPrices, insertTokenPrices } from '../queries'
 import { normalizedDaysInRange, normalizeToEndOfDay, nowUnix, toUnixSeconds } from '../time'
-import type { BatchHistoricalResponseCoin, Env, ExactPriceRecord, HistoricalRequestTuple, RangeRequest } from '../types'
-import { parseBatchCoins, parseOptionalSource, parseRangeCoins, parseTimestampSegment } from '../validation'
+import type { BatchHistoricalResponseCoin, CurrentRequest, Env, ExactPriceRecord, HistoricalRequestTuple, RangeRequest, TokenPriceWrite } from '../types'
+import { parseBatchCoins, parseCurrentCoins, parseOptionalSource, parseRangeCoins, parseTimestampSegment } from '../validation'
 
 function buildTokenKey(chain: string, token: string): string {
   return `${chain}:${token}`
@@ -66,75 +66,82 @@ export async function handleHistorical(
   )
 }
 
-export async function handleCurrent(env: Env, pool: Pool, chainIdSegment: string, tokenAddressSegment: string): Promise<Response> {
+export async function handleCurrent(request: Request, env: Env, pool: Pool): Promise<Response> {
   ensure(env.ENSO_API_KEY, 'INTERNAL_ERROR', 'ENSO_API_KEY is not configured')
-  ensure(/^\d+$/.test(chainIdSegment), 'INVALID_INPUT', 'Chain id must be a number')
-  const chainId = Number(chainIdSegment)
-  const chain = chainIdToName(chainId)
-  ensure(chain !== undefined, 'INVALID_INPUT', `Unsupported chain id: ${chainId}`)
-
-  let token: `0x${string}`
-  try {
-    token = normalizeTokenAddress(tokenAddressSegment)
-  } catch {
-    throw new ApiError('INVALID_INPUT', `Unsupported token address: ${tokenAddressSegment}`)
-  }
-  const tokenKey = buildTokenKey(chain, token)
+  const requests = parseCurrentCoins(new URL(request.url).searchParams.get('coins'))
 
   const enso = new EnsoClient(env.ENSO_API_KEY)
-  const priceData = await enso.getPrice(chainId, token.toLowerCase())
+  const settled = await Promise.allSettled(
+    requests.map(async (req): Promise<{ req: CurrentRequest; timestamp: number; symbol: string | null; price: number; confidence: number | null }> => {
+      const chainId = chainNameToId(req.chain)
+      ensure(chainId !== undefined, 'INVALID_INPUT', `Unsupported chain: ${req.chain}`)
 
-  ensure(
-    typeof priceData.price === 'number' && Number.isFinite(priceData.price) && priceData.price > 0,
-    'NOT_FOUND',
-    `Enso returned no valid price for ${tokenKey}`,
+      const priceData = await enso.getPrice(chainId, req.token.toLowerCase())
+      ensure(
+        typeof priceData.price === 'number' && Number.isFinite(priceData.price) && priceData.price > 0,
+        'NOT_FOUND',
+        `Enso returned no valid price for ${req.originalKey}`,
+      )
+
+      const ensoTimestamp =
+        typeof priceData.timestamp === 'number' && Number.isFinite(priceData.timestamp) && priceData.timestamp > 0
+          ? toUnixSeconds(priceData.timestamp)
+          : nowUnix()
+
+      return {
+        req,
+        timestamp: normalizeToEndOfDay(ensoTimestamp),
+        symbol: priceData.symbol ?? null,
+        price: priceData.price,
+        confidence: priceData.confidence ?? null,
+      }
+    }),
   )
 
-  const ensoTimestamp =
-    typeof priceData.timestamp === 'number' && Number.isFinite(priceData.timestamp) && priceData.timestamp > 0
-      ? toUnixSeconds(priceData.timestamp)
-      : nowUnix()
-  const timestamp = normalizeToEndOfDay(ensoTimestamp)
-  const symbol = priceData.symbol ?? null
-  const confidence = priceData.confidence ?? null
+  const coins: Record<string, BatchHistoricalResponseCoin> = {}
+  const writes: TokenPriceWrite[] = []
 
-  try {
-    await insertTokenPrices(pool, [
-      {
-        chain,
-        token,
-        timestamp,
-        price: priceData.price,
-        symbol,
-        confidence,
-        source: 'enso',
-      },
-    ])
-  } catch (error) {
-    console.error(
-      JSON.stringify({
-        message: 'enso-persist-error',
-        token_key: tokenKey,
-        error: error instanceof Error ? error.message : String(error),
-      }),
-    )
+  for (let i = 0; i < settled.length; i += 1) {
+    const outcome = settled[i]
+    if (outcome.status === 'rejected') {
+      console.error(
+        JSON.stringify({
+          message: 'enso-current-error',
+          token_key: requests[i].originalKey,
+          error: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
+        }),
+      )
+      continue
+    }
+
+    const { req, timestamp, symbol, price, confidence } = outcome.value
+    coins[req.originalKey] = {
+      symbol,
+      prices: [{ timestamp, price, confidence, source: 'enso' }],
+    }
+    writes.push({ chain: req.chain, token: req.token, timestamp, price, symbol, confidence, source: 'enso' })
   }
 
+  if (writes.length > 0) {
+    try {
+      await insertTokenPrices(pool, writes)
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          message: 'enso-persist-error',
+          token_keys: writes.map(write => `${write.chain}:${write.token}`),
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      )
+    }
+  }
+
+  // Current prices are always for today's UTC day, so the response must revalidate (never immutable).
   return jsonResponse(
-    {
-      coins: {
-        [tokenKey]: {
-          price: priceData.price,
-          symbol,
-          timestamp,
-          confidence,
-          source: 'enso',
-        },
-      },
-    },
+    { coins },
     {
       headers: {
-        'cache-control': cacheControlForHistorical(timestamp),
+        'cache-control': CACHE_CONTROL_TODAY,
       },
     },
   )
