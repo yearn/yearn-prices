@@ -1,12 +1,13 @@
 import type { Pool } from '@neondatabase/serverless'
-import { cacheControlForBatch, cacheControlForHistorical, cacheControlForRange, CACHE_CONTROL_NOT_FOUND } from '../cache'
-import { parseTokenKey } from '../chains'
+import { cacheControlForBatch, cacheControlForHistorical, cacheControlForRange, CACHE_CONTROL_NOT_FOUND, CACHE_CONTROL_SPOT } from '../cache'
+import { chainNameToId, parseTokenKey } from '../chains'
+import { EnsoClient } from '../enso'
 import { ApiError, ensure } from '../errors'
 import { jsonResponse } from '../http'
 import { getBatchHistoricalPrices, getExactHistoricalPrice, getRangeHistoricalPrices } from '../queries'
-import { normalizedDaysInRange } from '../time'
-import type { BatchHistoricalResponseCoin, Env, ExactPriceRecord, HistoricalRequestTuple, RangeRequest } from '../types'
-import { parseBatchCoins, parseOptionalSource, parseRangeCoins, parseTimestampSegment } from '../validation'
+import { normalizedDaysInRange, nowUnix, toUnixSeconds } from '../time'
+import type { BatchHistoricalResponseCoin, Env, ExactPriceRecord, HistoricalRequestTuple, RangeRequest, SpotRequest } from '../types'
+import { parseBatchCoins, parseSpotCoins, parseOptionalSource, parseRangeCoins, parseTimestampSegment } from '../validation'
 
 function buildTokenKey(chain: string, token: string): string {
   return `${chain}:${token}`
@@ -60,6 +61,75 @@ export async function handleHistorical(
     {
       headers: {
         'cache-control': cacheControlForHistorical(record.timestamp),
+      },
+    },
+  )
+}
+
+// Stateless proxy for live spot prices from Enso. Intentionally does not persist:
+// spot is a latest-price use case served by the edge cache, and writing a mid-day
+// spot price as that day's historical close would corrupt the price history.
+export async function handleSpot(request: Request, env: Env): Promise<Response> {
+  ensure(env.ENSO_API_KEY, 'INTERNAL_ERROR', 'ENSO_API_KEY is not configured')
+  const requests = parseSpotCoins(new URL(request.url).searchParams.get('coins'))
+
+  const enso = new EnsoClient(env.ENSO_API_KEY)
+  const settled = await Promise.allSettled(
+    requests.map(async (req): Promise<{ req: SpotRequest; timestamp: number; symbol: string | null; price: number; confidence: number | null }> => {
+      const chainId = chainNameToId(req.chain)
+      ensure(chainId !== undefined, 'INVALID_INPUT', `Unsupported chain: ${req.chain}`)
+
+      const priceData = await enso.getPrice(chainId, req.token.toLowerCase())
+      ensure(
+        typeof priceData.price === 'number' && Number.isFinite(priceData.price) && priceData.price > 0,
+        'NOT_FOUND',
+        `Enso returned no valid price for ${req.originalKey}`,
+      )
+
+      // Live spot timestamp: Enso reports unix milliseconds, converted to seconds
+      // (or "now" when omitted). Not normalized to a day-end — this is a spot price.
+      const timestamp =
+        typeof priceData.timestamp === 'number' && Number.isFinite(priceData.timestamp) && priceData.timestamp > 0
+          ? toUnixSeconds(priceData.timestamp)
+          : nowUnix()
+
+      return {
+        req,
+        timestamp,
+        symbol: priceData.symbol ?? null,
+        price: priceData.price,
+        confidence: priceData.confidence ?? null,
+      }
+    }),
+  )
+
+  const coins: Record<string, BatchHistoricalResponseCoin> = {}
+
+  for (let i = 0; i < settled.length; i += 1) {
+    const outcome = settled[i]
+    if (outcome.status === 'rejected') {
+      console.error(
+        JSON.stringify({
+          message: 'enso-spot-error',
+          token_key: requests[i].originalKey,
+          error: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
+        }),
+      )
+      continue
+    }
+
+    const { req, timestamp, symbol, price, confidence } = outcome.value
+    coins[req.originalKey] = {
+      symbol,
+      prices: [{ timestamp, price, confidence, source: 'enso' }],
+    }
+  }
+
+  return jsonResponse(
+    { coins },
+    {
+      headers: {
+        'cache-control': CACHE_CONTROL_SPOT,
       },
     },
   )

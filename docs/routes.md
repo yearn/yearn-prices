@@ -61,6 +61,7 @@ Price routes accept an optional `source` query parameter. Supported values are:
 - `on-chain-oracle`
 - `bobs-api`
 - `derived`
+- `enso`
 
 When `source` is omitted, the API returns the first available row by priority:
 
@@ -68,6 +69,7 @@ When `source` is omitted, the API returns the first available row by priority:
 2. `on-chain-oracle`
 3. `bobs-api`
 4. `derived`
+5. `enso`
 
 ## `GET /api/health`
 
@@ -135,6 +137,62 @@ If no exact row exists for the normalized timestamp, the route returns:
   }
 }
 ```
+
+## `GET /api/prices/spot`
+
+Proxies the latest spot price for one or more tokens from [Enso](https://docs.enso.build/api-reference/tokens/token-price). The request and response shapes mirror `batchHistorical`.
+
+This is a stateless proxy: it validates, fetches from Enso, and returns. It does **not** write to `token_prices`. Spot is a latest-price use case served by the edge cache; persisting a mid-day spot price as that day's historical close would pollute the price history (see the [Cache-Control](#cache-control) section for the edge TTL).
+
+Each returned `timestamp` is the price's own time in Unix seconds — Enso reports a millisecond timestamp, which is converted to seconds (or the current time is used when Enso omits it). Unlike the historical routes, spot timestamps are not normalized to a UTC day-end.
+
+Requires the `ENSO_API_KEY` worker secret (`wrangler secret put ENSO_API_KEY`).
+
+Query parameters:
+
+- `coins`: required JSON array of token keys.
+
+The `coins` array lists token keys (`<chain>:<token-address>`):
+
+```json
+["ethereum:0x2260fac5e5542a773aa44fbcfedf7c193bc2c599", "base:0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca"]
+```
+
+Limits:
+
+- Maximum `50` token keys.
+- Duplicate token keys are deduplicated after normalization.
+
+Example:
+
+```bash
+curl \
+  -H "Authorization: Bearer $API_KEY" \
+  --get "http://localhost:8787/api/prices/spot" \
+  --data-urlencode 'coins=["ethereum:0x2260fac5e5542a773aa44fbcfedf7c193bc2c599"]'
+```
+
+Response:
+
+```json
+{
+  "coins": {
+    "ethereum:0x2260fac5e5542a773aa44fbcfedf7c193bc2c599": {
+      "symbol": "WBTC",
+      "prices": [
+        {
+          "timestamp": 1719878399,
+          "price": 27052,
+          "confidence": 0.99,
+          "source": "enso"
+        }
+      ]
+    }
+  }
+}
+```
+
+Each token's single `prices` entry carries the spot price's own Unix-seconds timestamp. Tokens Enso has no price for are omitted from the response, like `batchHistorical`.
 
 ## `GET /api/prices/batchHistorical`
 
@@ -294,7 +352,16 @@ Common error cases:
 Price responses set cache headers based on the requested timestamps and whether every requested value was found.
 
 - Historical non-today exact price: `public, max-age=31536000, immutable`
-- Requests involving today's UTC day: `public, max-age=3600, stale-while-revalidate=14400`
+- Requests involving today's UTC day: `public, s-maxage=300, max-age=3600, stale-while-revalidate=14400`
 - Fully resolved batch or range for past days: `public, max-age=31536000, immutable`
 - Partially resolved batch or range for past days: `public, max-age=3600`
 - Historical not found responses: `public, max-age=3600, stale-while-revalidate=14400`
+- Spot: `public, s-maxage=120, stale-while-revalidate=600`
+
+## Edge caching
+
+Worker-generated responses do not populate Cloudflare's edge cache from a `Cache-Control` header alone — that header only drives the client/browser cache. Successful `GET` responses for all price routes are therefore stored in the edge cache (`caches.default`) explicitly and served from it on subsequent requests, using the TTLs above. A request is served from the edge before any Enso fetch or database query runs.
+
+Spot has no upstream cache policy (Enso sends only a weak `etag`), so its `s-maxage=120` is a chosen shared-cache TTL — short enough to keep prices fresh, long enough to absorb bursts — mirroring the Enso proxy already shipping in yearn.fi.
+
+The store/TTL decision is delegated to the Cache API: `caches.default.put()` reads the response's `Cache-Control`, refusing `no-store`/`private` and deriving the edge TTL from `s-maxage` (falling back to `max-age`, then `Expires`). Only successful responses are offered to `put()` — errors return straight from the worker's catch block and are never edge-stored (generic errors additionally carry `no-store` for downstream caches; historical not-found is the deliberate exception, returning a browser-cacheable negative result). Today's data sets `s-maxage=300` so the shared edge refreshes every ~5min, tracking the hourly warmup far more closely than the 1h browser `max-age`. The cache key is the request URL canonicalized first (sorted query params, and `coins` re-serialized with sorted keys and lowercased addresses) so requests that differ only in JSON ordering, whitespace, or address casing share one entry. Positional arrays — a range's `[start, end]` and a batch token's timestamp list — are never reordered, so two requests that differ in those never collide.
