@@ -4,6 +4,7 @@ import { createPool } from './db'
 import { readEdgeCache, writeEdgeCache } from './edge-cache'
 import { ApiError, jsonError } from './errors'
 import { optionsResponse, withCors } from './http'
+import { captureError } from './observability'
 import { handleHealth } from './routes/health'
 import { handleBatchHistorical, handleHistorical, handleRangeHistorical, handleSpot, notFoundErrorHeaders } from './routes/prices'
 import type { Env } from './types'
@@ -110,6 +111,7 @@ export default {
           error: error instanceof Error ? error.message : String(error),
         }),
       )
+      captureError(ctx, env, error)
       return jsonError(new ApiError('INTERNAL_ERROR', 'Unexpected internal error'), withCors({ 'cache-control': CACHE_CONTROL_NO_STORE }))
     }
   },

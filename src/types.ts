@@ -11,6 +11,9 @@ export type PriceSource = (typeof SOURCE_PRIORITY)[number]
 export interface Env {
   DATABASE_URL: string
   ENSO_API_KEY?: string
+  OTEL_EXPORTER_OTLP_ENDPOINT?: string
+  OTEL_EXPORTER_OTLP_HEADERS?: string
+  OTEL_SERVICE_NAME?: string
   [key: string]: string | undefined
 }
 
