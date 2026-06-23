@@ -2,6 +2,7 @@ export const SOURCE_PRIORITY = [
   'defillama',
   'on-chain-oracle',
   'bobs-api',
+  'curve',
   'derived',
   'enso',
 ] as const

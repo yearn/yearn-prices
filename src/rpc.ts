@@ -5,6 +5,7 @@ const SHARE_PRICE_ABI_V2 = parseAbi(['function pricePerShare() view returns (uin
 const SHARE_PRICE_ABI_V3 = parseAbi(['function convertToAssets(uint256) view returns (uint256)'])
 
 const blockCache = new Map<string, bigint>()
+const clientCache = new Map<number, PublicClient>()
 
 function sleep(milliseconds: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, milliseconds))
@@ -29,7 +30,7 @@ export function isV3Vault(apiVersion: string | null | undefined): boolean {
   return compareApiVersions(apiVersion, '3.0.0') >= 0
 }
 
-export function createChainClient(chainId: number, rpcUrl: string): PublicClient {
+function createChainClient(chainId: number, rpcUrl: string): PublicClient {
   const chainName = CHAIN_ID_TO_NAME[chainId as keyof typeof CHAIN_ID_TO_NAME]
   if (!chainName) {
     throw new Error(`Unsupported chain id: ${chainId}`)
@@ -58,6 +59,26 @@ export function createChainClient(chainId: number, rpcUrl: string): PublicClient
       retryDelay: 250,
     }),
   })
+}
+
+/**
+ * Returns a memoized client for `chainId`, or null when no `RPC_URL_<chainId>`
+ * is configured. Callers decide how to surface the missing-RPC gap.
+ */
+export function getChainClient(chainId: number): PublicClient | null {
+  const cached = clientCache.get(chainId)
+  if (cached) {
+    return cached
+  }
+
+  const rpcUrl = process.env[`RPC_URL_${chainId}`]
+  if (!rpcUrl) {
+    return null
+  }
+
+  const client = createChainClient(chainId, rpcUrl)
+  clientCache.set(chainId, client)
+  return client
 }
 
 export async function estimateBlockByTimestamp(client: PublicClient, chainId: number, timestamp: number): Promise<bigint> {

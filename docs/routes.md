@@ -60,6 +60,7 @@ Price routes accept an optional `source` query parameter. Supported values are:
 - `defillama`
 - `on-chain-oracle`
 - `bobs-api`
+- `curve`
 - `derived`
 - `enso`
 
@@ -68,8 +69,9 @@ When `source` is omitted, the API returns the first available row by priority:
 1. `defillama`
 2. `on-chain-oracle`
 3. `bobs-api`
-4. `derived`
-5. `enso`
+4. `curve`
+5. `derived`
+6. `enso`
 
 ## `GET /api/health`
 
