@@ -70,4 +70,17 @@ describe('priceCurveLpUsd', () => {
     const price = await priceCurveLpUsd(mockClient(), 5, '0x05', 0n, async () => null)
     expect(price).toBeNull()
   })
+
+  it('does not cache the registry on a transient get_registry error', async () => {
+    const client = mockClient()
+    const readContract = client.readContract as ReturnType<typeof vi.fn>
+    readContract.mockImplementationOnce(() => {
+      throw new Error('RPC timeout')
+    })
+
+    // First call: get_registry throws -> null, must NOT poison the cache.
+    expect(await priceCurveLpUsd(client, 6, '0x06', 0n, async () => 1)).toBeNull()
+    // Second call on the same chain: registry resolves, fallback still works.
+    expect(await priceCurveLpUsd(client, 6, '0x06', 0n, async () => 1)).toBeCloseTo(1.01, 10)
+  })
 })

@@ -31,7 +31,7 @@ async function getRegistry(client: PublicClient, chainId: number): Promise<`0x${
       functionName: 'get_registry',
     })
   } catch {
-    registryCache.set(chainId, null)
+    // Transient RPC error — don't cache, so the next item retries.
     return null
   }
 
