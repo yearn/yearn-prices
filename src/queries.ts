@@ -1,11 +1,16 @@
 import type { Pool } from '@neondatabase/serverless'
 import { SOURCE_PRIORITY, type DbPriceRow, type ExactPriceRecord, type HistoricalRequestTuple, type PriceSource, type RangeRequest, type TokenPriceWrite } from './types'
-import { optionalResponseNumber, toResponseNumber } from './format'
+import { MAX_PLAUSIBLE_PRICE, optionalResponseNumber, toResponseNumber } from './format'
 import { pgTimestampToUnix, unixToIsoTimestamp, isTodayNormalized } from './time'
 
 function buildSourceCaseExpression(column = 'tp.source'): string {
   return `CASE ${column} ${SOURCE_PRIORITY.map((source, index) => `WHEN '${source}' THEN ${index + 1}`).join(' ')} ELSE 999 END`
 }
+
+// Stored prices outside the plausible range — provider garbage like 0, negatives,
+// or the ~1e10 stale-Curve-LP bug — must never be served or outrank a good
+// fallback. The ingestion guard stops new garbage; this filters any already stored.
+const PLAUSIBLE_PRICE_SQL = `tp.price > 0 AND tp.price <= ${MAX_PLAUSIBLE_PRICE}`
 
 export async function getExactHistoricalPrice(
   pool: Pool,
@@ -49,7 +54,7 @@ export async function getBatchHistoricalPrices(
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp = r.timestamp
-      WHERE tp.source = $${sourceIndex}
+      WHERE tp.source = $${sourceIndex} AND ${PLAUSIBLE_PRICE_SQL}
       ORDER BY tp.chain, tp.token, tp.timestamp
     `
   } else {
@@ -61,6 +66,7 @@ export async function getBatchHistoricalPrices(
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp = r.timestamp
+      WHERE ${PLAUSIBLE_PRICE_SQL}
       ORDER BY tp.chain, tp.token, tp.timestamp, ${buildSourceCaseExpression()}
     `
   }
@@ -107,7 +113,7 @@ export async function getRangeHistoricalPrices(
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp BETWEEN r.start_timestamp AND r.end_timestamp
-      WHERE tp.source = $${sourceIndex}
+      WHERE tp.source = $${sourceIndex} AND ${PLAUSIBLE_PRICE_SQL}
       ORDER BY tp.chain, tp.token, tp.timestamp
     `
   } else {
@@ -119,6 +125,7 @@ export async function getRangeHistoricalPrices(
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp BETWEEN r.start_timestamp AND r.end_timestamp
+      WHERE ${PLAUSIBLE_PRICE_SQL}
       ORDER BY tp.chain, tp.token, tp.timestamp, ${buildSourceCaseExpression()}
     `
   }

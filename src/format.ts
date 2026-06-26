@@ -25,9 +25,9 @@ export function optionalResponseNumber(value: string | number | null): number | 
 }
 
 // DeFiLlama's confidence is a 0-1 quality score, but it occasionally comes back
-// marginally above 1 (e.g. 1.01). Clamp the upper bound so stored values stay <= 1.
+// marginally above 1 (e.g. 1.01). Clamp to [0, 1] so stored values stay in range.
 export function capConfidence(value: number | null | undefined): number | null {
-  return value == null ? null : Math.min(value, 1)
+  return value == null ? null : Math.max(0, Math.min(value, 1))
 }
 
 // Sanity ceiling on a single token's USD price. No real token/vault share trades
@@ -38,7 +38,9 @@ export function capConfidence(value: number | null | undefined): number | null {
 // a per-token expected-range check.
 export const MAX_PLAUSIBLE_PRICE = 1_000_000
 
-// On-chain virtual price is exact, so curve prices ship full confidence.
+// Curve LP price = on-chain virtual_price × coin0's USD price (from DefiLlama),
+// exact only for stableswap pools. Shipped at full confidence so it ranks as a
+// trusted fallback; the residual uncertainty is coin0's price, not the LP math.
 export const CURVE_CONFIDENCE = 1
 
 // A served USD price is only valid in (0, MAX]: anything else is provider garbage.

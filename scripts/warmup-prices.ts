@@ -99,7 +99,6 @@ function parseArgs(argv: string[]): { start: number; end: number; chain?: string
   return { start, end, chain, token }
 }
 
-
 async function fetchYearnVaults(): Promise<NormalizedVault[]> {
   const response = await fetch('https://kong.yearn.fi/api/rest/list/vaults?origin=yearn')
   if (!response.ok) {
