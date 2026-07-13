@@ -59,7 +59,7 @@ Production secrets, including every `API_KEY_*`, live in the 1Password vault `we
    openssl rand -base64 32
    ```
 2. **Pick a client id** for the consumer, e.g. `KONG`, `FRONTEND`. The env var name will be `API_KEY_<CLIENT_ID>` (uppercase).
-3. **Add it to 1Password.** In the `webops-prod` vault, `yearn-price` item, add a new field named `API_KEY_<CLIENT_ID>` with the generated value.
+3. **Add it to 1Password.** In the `webops-prod` vault, `yearn-price` item, add a new password field named `API_KEY_<CLIENT_ID>` with the generated value.
 4. **Wire it into CI.** `.github/workflows/deploy.yml` lists each secret explicitly in two places — add the new key to both:
    - the `env:` block of the "Load secrets from 1Password" step (`API_KEY_<CLIENT_ID>: op://webops-prod/yearn-price/API_KEY_<CLIENT_ID>`)
    - the `jq` object in the "Upload secrets to Cloudflare" step
