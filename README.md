@@ -77,7 +77,7 @@ This only updates the deployed Worker; remember to also update 1Password and `de
 
 ## Deployment
 
-Pushing to `main` runs `.github/workflows/deploy.yml`: install deps, load secrets from 1Password, upload them to the Worker, run migrations, warm the price cache, then `wrangler deploy`. `.github/workflows/warmup.yml` runs the warmup script hourly on a cron. `.github/workflows/pr.yml` runs typecheck and tests on every PR.
+Pushing to `main` runs `.github/workflows/deploy.yml`: the deploy job installs dependencies, loads secrets from 1Password, uploads them to the Worker, runs migrations, and deploys with `wrangler deploy`; the warmup job runs in parallel to refresh the price cache. `.github/workflows/warmup.yml` runs the warmup script hourly on a cron. `.github/workflows/pr.yml` runs typecheck and tests on every PR.
 
 ## Testing
 
