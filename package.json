@@ -4,8 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -13,16 +15,22 @@
     "migrate:create": "db-migrate create --config ./database.json --sql-file --env dev",
     "migrate:down": "PGSSLMODE=require db-migrate down --config ./database.json --env dev",
     "warmup": "bun run scripts/warmup-prices.ts",
-    "backfill:token-address-checksums": "bun run scripts/backfill-token-address-checksums.ts"
+    "backfill:token-address-checksums": "bun run scripts/backfill-token-address-checksums.ts",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "0.10.4",
+    "@opennextjs/cloudflare": "1.17.1",
     "dotenv": "16.6.1",
+    "next": "15.5.18",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
     "viem": "2.47.6"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "4.20260329.1",
     "@types/node": "22.19.15",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
     "db-migrate": "0.11.14",
     "db-migrate-pg": "1.5.2",
     "pg": "8.20.0",

@@ -1,6 +1,6 @@
 # Route Usage
 
-This service exposes a small JSON API for health checks and historical token prices.
+This service exposes a small JSON API for health checks and historical token prices. It runs as a Next.js App Router API on Cloudflare Workers via OpenNext (`@opennextjs/cloudflare`).
 
 ## Base Behavior
 
@@ -12,7 +12,7 @@ This service exposes a small JSON API for health checks and historical token pri
   - `Authorization: Bearer <api-key>`
   - `x-api-key: <api-key>`
 
-The worker accepts API keys from environment variables named `API_KEY_*`. The matched suffix is logged as the client id.
+The service accepts API keys from environment variables named `API_KEY_*`. The matched suffix is logged as the client id.
 
 ## Token Keys
 
@@ -80,7 +80,7 @@ Returns service health. This route does not require authentication.
 Example:
 
 ```bash
-curl http://localhost:8787/api/health
+curl http://localhost:3000/api/health
 ```
 
 Response:
@@ -110,7 +110,7 @@ Example:
 ```bash
 curl \
   -H "Authorization: Bearer $API_KEY" \
-  "http://localhost:8787/api/prices/historical/1704153599/ethereum:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+  "http://localhost:3000/api/prices/historical/1704153599/ethereum:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
 ```
 
 Response:
@@ -148,7 +148,7 @@ This is a stateless proxy: it validates, fetches from Enso, and returns. It does
 
 Each returned `timestamp` is the price's own time in Unix seconds — Enso reports a millisecond timestamp, which is converted to seconds (or the current time is used when Enso omits it). Unlike the historical routes, spot timestamps are not normalized to a UTC day-end.
 
-Requires the `ENSO_API_KEY` worker secret (`wrangler secret put ENSO_API_KEY`).
+Requires the `ENSO_API_KEY` Worker secret (`wrangler secret put ENSO_API_KEY`; set in `.dev.vars` for local dev).
 
 Query parameters:
 
@@ -170,7 +170,7 @@ Example:
 ```bash
 curl \
   -H "Authorization: Bearer $API_KEY" \
-  --get "http://localhost:8787/api/prices/spot" \
+  --get "http://localhost:3000/api/prices/spot" \
   --data-urlencode 'coins=["ethereum:0x2260fac5e5542a773aa44fbcfedf7c193bc2c599"]'
 ```
 
@@ -225,7 +225,7 @@ Example:
 ```bash
 curl \
   -H "x-api-key: $API_KEY" \
-  --get "http://localhost:8787/api/prices/batchHistorical" \
+  --get "http://localhost:3000/api/prices/batchHistorical" \
   --data-urlencode 'coins={"ethereum:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48":[1704153599,1704239999]}'
 ```
 
@@ -287,7 +287,7 @@ Example:
 ```bash
 curl \
   -H "Authorization: Bearer $API_KEY" \
-  --get "http://localhost:8787/api/prices/rangeHistorical" \
+  --get "http://localhost:3000/api/prices/rangeHistorical" \
   --data-urlencode 'coins={"ethereum:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48":[1704067200,1704239999]}'
 ```
 
@@ -362,8 +362,12 @@ Price responses set cache headers based on the requested timestamps and whether 
 
 ## Edge caching
 
-Worker-generated responses do not populate Cloudflare's edge cache from a `Cache-Control` header alone — that header only drives the client/browser cache. Successful `GET` responses for all price routes are therefore stored in the edge cache (`caches.default`) explicitly and served from it on subsequent requests, using the TTLs above. A request is served from the edge before any Enso fetch or database query runs.
+Worker-generated responses do not populate Cloudflare's edge cache from a `Cache-Control` header alone — that header only drives the client/browser cache. Successful `GET` responses for all price routes are therefore stored in the edge cache (`caches.default`) explicitly and served from it on subsequent requests, using the TTLs above. Auth still runs on every request; a hit is returned only after the API key is validated, and **before** any Enso fetch or database query (so a cache hit never opens a Neon pool).
 
 Spot has no upstream cache policy (Enso sends only a weak `etag`), so its `s-maxage=120` is a chosen shared-cache TTL — short enough to keep prices fresh, long enough to absorb bursts — mirroring the Enso proxy already shipping in yearn.fi.
 
-The store/TTL decision is delegated to the Cache API: `caches.default.put()` reads the response's `Cache-Control`, refusing `no-store`/`private` and deriving the edge TTL from `s-maxage` (falling back to `max-age`, then `Expires`). Only successful responses are offered to `put()` — errors return straight from the worker's catch block and are never edge-stored (generic errors additionally carry `no-store` for downstream caches; historical not-found is the deliberate exception, returning a browser-cacheable negative result). Today's data sets `s-maxage=300` so the shared edge refreshes every ~5min, tracking the hourly warmup far more closely than the 1h browser `max-age`. The cache key is the request URL canonicalized first (sorted query params, and `coins` re-serialized with sorted keys and lowercased addresses) so requests that differ only in JSON ordering, whitespace, or address casing share one entry. Positional arrays — a range's `[start, end]` and a batch token's timestamp list — are never reordered, so two requests that differ in those never collide.
+The store/TTL decision is delegated to the Cache API: `caches.default.put()` reads the response's `Cache-Control`, refusing `no-store`/`private` and deriving the edge TTL from `s-maxage` (falling back to `max-age`, then `Expires`). Only successful responses are offered to `put()` — errors return from the request handler's catch block and are never edge-stored (generic errors additionally carry `no-store` for downstream caches; historical not-found is the deliberate exception, returning a browser-cacheable negative result via `Cache-Control` only). Today's data sets `s-maxage=300` so the shared edge refreshes every ~5min, tracking the hourly warmup far more closely than the 1h browser `max-age`.
+
+The cache key is the request URL canonicalized first (sorted query params, and `coins` re-serialized with sorted keys and lowercased addresses) so requests that differ only in JSON ordering, whitespace, or address casing share one entry. Positional arrays — a range's `[start, end]` and a batch token's timestamp list — are never reordered, so two requests that differ in those never collide.
+
+Route handlers use `dynamic = 'force-dynamic'` so Next.js does not statically cache them; shared edge caching for price JSON is the explicit Cache API path above, not Next's data cache.

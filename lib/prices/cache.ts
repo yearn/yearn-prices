@@ -1,4 +1,4 @@
-import { isTodayNormalized } from './time'
+import { isTodayNormalized } from '@/lib/time'
 
 export const CACHE_CONTROL_IMMUTABLE = 'public, max-age=31536000, immutable'
 // Today's value changes intraday as warmup (hourly) backfills it. s-maxage=300 lets the
@@ -10,10 +10,8 @@ export const CACHE_CONTROL_NOT_FOUND = 'public, max-age=3600, stale-while-revali
 // Spot is a live proxy with no upstream cache policy. Short shared-cache TTL so the
 // edge absorbs bursts without serving long-stale prices; mirrors yearn.fi's Enso proxy.
 export const CACHE_CONTROL_SPOT = 'public, s-maxage=120, stale-while-revalidate=600'
-// Generic error responses set this so no client or shared cache retains them. (Errors
-// also never reach writeEdgeCache — they return from the request handler's catch block —
-// so they don't populate the edge cache regardless.) Historical not-found is the one
-// deliberate exception: it returns a cacheable negative result (CACHE_CONTROL_NOT_FOUND).
+// Generic error responses set this so no client or shared cache retains them.
+// Historical not-found is the deliberate exception (CACHE_CONTROL_NOT_FOUND).
 export const CACHE_CONTROL_NO_STORE = 'no-store'
 
 export function cacheControlForHistorical(timestamp: number): string {

@@ -1,6 +1,9 @@
 node_modules
-.wrangler
-.dev.vars
+.next
+.open-next
 dist
 .env
 .env.local
+.dev.vars
+.wrangler
+tsconfig.tsbuildinfo

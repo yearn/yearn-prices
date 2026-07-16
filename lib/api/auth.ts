@@ -1,5 +1,5 @@
-import { ApiError } from './errors'
-import type { Env } from './types'
+import { ApiError } from '@/lib/api/errors'
+import type { Env } from '@/lib/prices/types'
 
 export interface AuthenticatedClient {
   clientId: string

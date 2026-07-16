@@ -5,9 +5,14 @@
 // To actually cache at the edge we have to read from and write to caches.default
 // explicitly, keyed by the request URL.
 
-// caches.default is a Cloudflare Workers extension absent from the WebWorker lib's CacheStorage.
-function edgeCache(): Cache {
-  return (caches as unknown as { default: Cache }).default
+// caches.default is a Cloudflare Workers extension absent from standard CacheStorage.
+function edgeCache(): Cache | null {
+  try {
+    const storage = caches as unknown as { default?: Cache }
+    return storage.default ?? null
+  } catch {
+    return null
+  }
 }
 
 // caches.default keys on the request URL, so two logically identical requests that
@@ -62,16 +67,47 @@ function cacheKey(request: Request): Request {
 }
 
 export async function readEdgeCache(request: Request): Promise<Response | undefined> {
-  return edgeCache().match(cacheKey(request))
+  const cache = edgeCache()
+  if (!cache) {
+    return undefined
+  }
+  try {
+    return (await cache.match(cacheKey(request))) ?? undefined
+  } catch {
+    // Local `next dev` / non-Worker runtimes may not support the Cache API.
+    return undefined
+  }
 }
 
-export function writeEdgeCache(ctx: ExecutionContext, request: Request, response: Response): void {
+/**
+ * Store a successful GET response in the edge cache.
+ * `waitUntil` keeps put() off the response critical path when available (Workers).
+ */
+export function writeEdgeCache(
+  request: Request,
+  response: Response,
+  waitUntil?: (promise: Promise<unknown>) => void,
+): void {
+  const cache = edgeCache()
+  if (!cache) {
+    return
+  }
+
   // Trust the Cache API for the store/TTL decision: put() honors the response's
   // Cache-Control — it refuses no-store/private and derives the edge TTL from
-  // s-maxage → max-age → Expires. Only success responses reach this function (the
-  // request handler returns errors straight from its catch block), so the edge stores
-  // successes and nothing else; put() honoring Cache-Control is the backstop.
-  //
-  // Non-blocking: storing the response must not delay returning it to the client.
-  ctx.waitUntil(edgeCache().put(cacheKey(request), response.clone()))
+  // s-maxage → max-age → Expires. Only success responses should reach this function.
+  const put = cache.put(cacheKey(request), response.clone()).catch(error => {
+    console.error(
+      JSON.stringify({
+        message: 'edge-cache-put-error',
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    )
+  })
+
+  if (waitUntil) {
+    waitUntil(put)
+  } else {
+    void put
+  }
 }

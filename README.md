@@ -1,6 +1,8 @@
 # price-service
 
-Cloudflare Worker that serves spot and historical token prices for Yearn. It aggregates prices from DefiLlama, on-chain oracles, Curve, Bob's API, and Enso, and persists historical prices to a Neon Postgres database.
+Next.js API (OpenNext on Cloudflare Workers) that serves spot and historical token prices for Yearn. It aggregates prices from DefiLlama, on-chain oracles, Curve, Bob's API, and Enso, and persists historical prices to a Neon Postgres database.
+
+Production base URL: `https://prices.yearn.dev`.
 
 ## Requirements
 
@@ -13,22 +15,31 @@ Cloudflare Worker that serves spot and historical token prices for Yearn. It agg
 
 ```bash
 bun install
-cp .env.example .dev.vars   # wrangler dev reads secrets from .dev.vars
-cp .env.example .env        # scripts (warmup, backfill, migrate) read from .env via dotenv
+cp .env.example .dev.vars   # wrangler / OpenNext local bindings
+cp .env.example .env.local  # optional: next dev without bindings
+cp .env.example .env        # scripts (warmup, backfill, migrate) read via dotenv
 ```
 
-Fill in `.dev.vars` and `.env` with real values: a `DATABASE_URL`, one `API_KEY_*` per consumer, `ENSO_API_KEY`, and an `RPC_URL_<chainId>` per supported chain. Both files are gitignored — never commit them.
+Fill in `.dev.vars` / `.env` with real values: a `DATABASE_URL`, one `API_KEY_*` per consumer, `ENSO_API_KEY`, and an `RPC_URL_<chainId>` per supported chain (scripts only). These files are gitignored — never commit them.
 
 ```bash
 bun run dev
+```
+
+For a local Workers runtime preview (closer to production):
+
+```bash
+bun run preview
 ```
 
 ## Scripts
 
 | Command | Purpose |
 | --- | --- |
-| `bun run dev` | Start the worker locally with `wrangler dev` |
-| `bun run deploy` | Deploy the worker with `wrangler deploy` |
+| `bun run dev` | Next.js dev server (Turbopack); CF bindings via OpenNext dev helper |
+| `bun run preview` | OpenNext build + local Workers runtime |
+| `bun run deploy` | OpenNext build + `wrangler deploy` to Cloudflare |
+| `bun run build` | Next.js production build only |
 | `bun run typecheck` | Type-check with `tsc --noEmit` |
 | `bun run test` | Run the Vitest suite |
 | `bun run migrate` | Run pending Postgres migrations (`db-migrate up`) |
@@ -48,7 +59,7 @@ All `/api/prices/*` routes require an API key, sent as either:
 - `Authorization: Bearer <api-key>`
 - `x-api-key: <api-key>`
 
-The worker has no token database — it checks the presented key against every worker environment variable/secret named `API_KEY_*` (see `src/auth.ts`). The matched variable's suffix, lowercased, becomes the `client_id` used in request logs (e.g. `API_KEY_FRONTEND` → `frontend`).
+The service has no token database — it checks the presented key against every Worker secret/env var named `API_KEY_*` (see `lib/api/auth.ts`). The matched variable's suffix, lowercased, becomes the `client_id` used in request logs (e.g. `API_KEY_FRONTEND` → `frontend`).
 
 Production secrets, including every `API_KEY_*`, live in the 1Password vault `webops-prod`, item `yearn-price`. `.github/workflows/deploy.yml` pulls them via `1Password/load-secrets-action` and uploads them to the Cloudflare Worker with `wrangler secret bulk` on every push to `main`.
 
@@ -63,25 +74,30 @@ Production secrets, including every `API_KEY_*`, live in the 1Password vault `we
 4. **Wire it into CI.** `.github/workflows/deploy.yml` lists each secret explicitly in two places — add the new key to both:
    - the `env:` block of the "Load secrets from 1Password" step (`API_KEY_<CLIENT_ID>: op://webops-prod/yearn-price/API_KEY_<CLIENT_ID>`)
    - the `jq` object in the "Upload secrets to Cloudflare" step
-5. **Deploy.** Merge to `main` (or run the `Deploy Worker` workflow manually) — CI loads the secret from 1Password and uploads it to the Worker via `wrangler secret bulk`.
-6. **Local dev:** add the same `API_KEY_<CLIENT_ID>=<value>` line to `.dev.vars` so `wrangler dev` can validate it.
+5. **Deploy.** Merge to `main` (or run the deploy workflow manually) — CI loads the secret from 1Password and uploads it to the Worker via `wrangler secret bulk`.
+6. **Local dev:** add the same `API_KEY_<CLIENT_ID>=<value>` line to `.dev.vars`.
 7. **Hand off the token** to the consuming team out-of-band (e.g. a 1Password share link) — never paste it into Slack, git, or a PR.
 
-To rotate or add a key outside of a deploy (e.g. an emergency rotation), you can push directly to the live Worker without going through CI:
+To rotate or add a key outside of a deploy:
 
 ```bash
 wrangler secret put API_KEY_<CLIENT_ID>
 ```
 
-This only updates the deployed Worker; remember to also update 1Password and `deploy.yml` so the next CI deploy doesn't overwrite or drop it.
+Also update 1Password and `deploy.yml` so the next CI deploy does not overwrite or drop it.
 
 ## Deployment
 
-Pushing to `main` runs `.github/workflows/deploy.yml`: install deps, load secrets from 1Password, upload them to the Worker, run migrations, warm the price cache, then `wrangler deploy`. `.github/workflows/warmup.yml` runs the warmup script hourly on a cron. `.github/workflows/pr.yml` runs typecheck and tests on every PR.
+Pushing to `main` runs `.github/workflows/deploy.yml`: install deps, load secrets from 1Password, upload them to the Worker, run migrations, warm the price cache, then OpenNext build + `wrangler deploy`.
+
+`.github/workflows/warmup.yml` runs the warmup script hourly. `.github/workflows/pr.yml` runs typecheck, tests, and `next build` on every PR.
+
+The Worker name remains `yearn-prices` (`wrangler.toml`).
 
 ## Testing
 
 ```bash
 bun run typecheck
 bun run test
+bun run build
 ```

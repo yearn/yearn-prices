@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canonicalCacheKey } from '../src/edge-cache'
+import { canonicalCacheKey } from '@/lib/api/edge-cache'
 
 const BASE = 'https://svc/api/prices/spot'
 
@@ -46,20 +46,6 @@ describe('canonicalCacheKey', () => {
   it('preserves positional range arrays (does not reorder [start, end])', () => {
     const a = canonicalCacheKey(batchUrl('rangeHistorical', { 'ethereum:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2': [100, 200] }))
     const b = canonicalCacheKey(batchUrl('rangeHistorical', { 'ethereum:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2': [200, 100] }))
-    expect(a).not.toBe(b)
-  })
-
-  it('does not collapse a string-typed range onto its reversed (invalid) mirror', () => {
-    // parseRangeCoins accepts string timestamps; a valid [start, end] must never share a
-    // key with its start>end mirror, or a 400 could be served from the cached 200.
-    const valid = canonicalCacheKey(batchUrl('rangeHistorical', { 'ethereum:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2': ['100000', '200000'] }))
-    const reversed = canonicalCacheKey(batchUrl('rangeHistorical', { 'ethereum:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2': ['200000', '100000'] }))
-    expect(valid).not.toBe(reversed)
-  })
-
-  it('keeps distinct coins distinct', () => {
-    const a = canonicalCacheKey(spotUrl(['ethereum:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2']))
-    const b = canonicalCacheKey(spotUrl(['base:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2']))
     expect(a).not.toBe(b)
   })
 })

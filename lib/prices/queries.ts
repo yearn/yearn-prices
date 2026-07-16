@@ -1,7 +1,7 @@
 import type { Pool } from '@neondatabase/serverless'
-import { SOURCE_PRIORITY, type DbPriceRow, type ExactPriceRecord, type HistoricalRequestTuple, type PriceSource, type RangeRequest, type TokenPriceWrite } from './types'
-import { optionalResponseNumber, toResponseNumber } from './format'
-import { pgTimestampToUnix, unixToIsoTimestamp, isTodayNormalized } from './time'
+import { SOURCE_PRIORITY, type DbPriceRow, type ExactPriceRecord, type HistoricalRequestTuple, type PriceSource, type RangeRequest, type TokenPriceWrite } from '@/lib/prices/types'
+import { optionalResponseNumber, toResponseNumber } from '@/lib/format'
+import { pgTimestampToUnix, unixToIsoTimestamp, isTodayNormalized } from '@/lib/time'
 
 function buildSourceCaseExpression(column = 'tp.source'): string {
   return `CASE ${column} ${SOURCE_PRIORITY.map((source, index) => `WHEN '${source}' THEN ${index + 1}`).join(' ')} ELSE 999 END`

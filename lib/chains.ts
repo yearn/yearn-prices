@@ -1,4 +1,4 @@
-import type { ParsedTokenKey } from './types'
+import type { ParsedTokenKey } from '@/lib/prices/types'
 import { getAddress } from 'viem'
 
 export const CHAIN_ID_TO_NAME = {

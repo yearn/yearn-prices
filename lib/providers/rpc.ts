@@ -1,5 +1,5 @@
 import { defineChain, createPublicClient, http, parseAbi, type PublicClient } from 'viem'
-import { CHAIN_ID_TO_NAME } from './chains'
+import { CHAIN_ID_TO_NAME } from '@/lib/chains'
 
 const SHARE_PRICE_ABI_V2 = parseAbi(['function pricePerShare() view returns (uint256)'])
 const SHARE_PRICE_ABI_V3 = parseAbi(['function convertToAssets(uint256) view returns (uint256)'])

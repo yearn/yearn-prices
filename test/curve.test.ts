@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { PublicClient } from 'viem'
-import { priceCurveLpUsd } from '../src/curve'
+import { priceCurveLpUsd } from '@/lib/providers/curve'
 
 const ZERO = '0x0000000000000000000000000000000000000000'
 const REGISTRY = '0x0000000000000000000000000000000000000099'

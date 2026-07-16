@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getAddress } from 'viem'
-import { handleSpot } from '../src/routes/prices'
-import { toUnixSeconds } from '../src/time'
-import type { Env } from '../src/types'
+import { handleSpot } from '@/lib/prices/spot'
+import { toUnixSeconds } from '@/lib/time'
+import type { Env } from '@/lib/prices/types'
 
 const RAW_ADDR = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
 const CHECKSUM = getAddress(RAW_ADDR)

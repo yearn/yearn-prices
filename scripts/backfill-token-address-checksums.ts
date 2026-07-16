@@ -1,7 +1,7 @@
 import { config as loadEnv } from 'dotenv'
 loadEnv()
 import { getAddress } from 'viem'
-import { createPool } from '../src/db'
+import { createPool } from '@/lib/db'
 
 const databaseUrl = process.env.DATABASE_URL
 if (!databaseUrl) {
