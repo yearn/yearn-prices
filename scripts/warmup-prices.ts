@@ -3,7 +3,8 @@ import { chainIdToName, normalizeTokenAddress } from "../src/chains";
 import { priceCurveLpUsd } from '../src/curve';
 import { createPool } from '../src/db';
 import { DefiLlamaClient } from '../src/defillama';
-import { capConfidence, CURVE_CONFIDENCE, isPlausiblePrice } from '../src/format';
+import { isBadDefiLlamaTokenKey } from '../src/bad-defillama-tokens';
+import { capConfidence, CURVE_CONFIDENCE } from '../src/format';
 import {
   getBatchHistoricalPrices,
   getExistingExactTimestamps,
@@ -34,8 +35,7 @@ const stats: WarmupStats = {
   insertedDirect: 0,
   insertedDerived: 0,
   insertedCurve: 0,
-  guardedDirect: 0,
-  guardedCurve: 0,
+  skippedBadDefiLlama: 0,
 }
 const defiLlama = new DefiLlamaClient(undefined, () => {
   stats.retries += 1
@@ -65,8 +65,7 @@ interface WarmupStats {
   insertedDirect: number
   insertedDerived: number
   insertedCurve: number
-  guardedDirect: number
-  guardedCurve: number
+  skippedBadDefiLlama: number
 }
 
 function sleep(milliseconds: number): Promise<void> {
@@ -240,6 +239,16 @@ async function warmDirectPrices(
   }).length
 
   const groupedMissing = groupMissingRequests(requests, existing)
+  // Hardcoded denylist: legacy Curve LPs where DefiLlama returns 0 / multi-million
+  // garbage that would outrank the Curve virtual-price fallback. Skip the API
+  // call so Curve can fill instead.
+  for (const tokenKey of Object.keys(groupedMissing)) {
+    if (isBadDefiLlamaTokenKey(tokenKey)) {
+      stats.skippedBadDefiLlama += groupedMissing[tokenKey].length
+      console.warn(`skip:bad-defillama-curve ${tokenKey} (${groupedMissing[tokenKey].length} timestamps)`)
+      delete groupedMissing[tokenKey]
+    }
+  }
   const payloads = buildDefiLlamaPayloads(groupedMissing)
 
   await runInGroups(payloads, async payload => {
@@ -255,14 +264,6 @@ async function warmDirectPrices(
         if (responseCoin) {
           for (const price of responseCoin.prices) {
             returnedTimestamps.add(normalizeToEndOfDay(price.timestamp))
-            // Price guard: drop implausible DefiLlama prices (0 for legacy Curve
-            // LPs, ~1e10 from the stale Curve-LP bug) so they never enter the
-            // table and outrank the Curve fallback.
-            if (!isPlausiblePrice(price.price)) {
-              stats.guardedDirect += 1
-              console.warn(`guard:price ${tokenKey} ${price.timestamp} ${price.price}`)
-              continue
-            }
             const [chain, token] = tokenKey.split(':')
             writes.push({
               chain,
@@ -347,12 +348,6 @@ async function warmCurveFallbackPrices(
 
       if (price == null) {
         console.warn(`gap:curve ${request.chain}:${request.token} ${request.timestamp}`)
-        return
-      }
-
-      if (!isPlausiblePrice(price)) {
-        stats.guardedCurve += 1
-        console.warn(`guard:curve ${request.chain}:${request.token} ${request.timestamp} ${price}`)
         return
       }
 

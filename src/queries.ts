@@ -1,16 +1,30 @@
 import type { Pool } from '@neondatabase/serverless'
+import { BAD_DEFILLAMA_TOKEN_KEYS } from './bad-defillama-tokens'
 import { SOURCE_PRIORITY, type DbPriceRow, type ExactPriceRecord, type HistoricalRequestTuple, type PriceSource, type RangeRequest, type TokenPriceWrite } from './types'
-import { MAX_PLAUSIBLE_PRICE, optionalResponseNumber, toResponseNumber } from './format'
+import { optionalResponseNumber, toResponseNumber } from './format'
 import { pgTimestampToUnix, unixToIsoTimestamp, isTodayNormalized } from './time'
 
 function buildSourceCaseExpression(column = 'tp.source'): string {
   return `CASE ${column} ${SOURCE_PRIORITY.map((source, index) => `WHEN '${source}' THEN ${index + 1}`).join(' ')} ELSE 999 END`
 }
 
-// Stored prices outside the plausible range — provider garbage like 0, negatives,
-// or the ~1e10 stale-Curve-LP bug — must never be served or outrank a good
-// fallback. The ingestion guard stops new garbage; this filters any already stored.
-const PLAUSIBLE_PRICE_SQL = `tp.price > 0 AND tp.price <= ${MAX_PLAUSIBLE_PRICE}`
+// Drop DefiLlama rows for legacy Curve LPs known to return garbage
+// (see bad-defillama-tokens). Those rows would otherwise outrank the Curve
+// virtual-price fallback via SOURCE_PRIORITY.
+function buildBadDefiLlamaFilter(columnPrefix = 'tp'): string {
+  if (BAD_DEFILLAMA_TOKEN_KEYS.size === 0) {
+    return 'TRUE'
+  }
+  const pairs = [...BAD_DEFILLAMA_TOKEN_KEYS].map(key => {
+    const separatorIndex = key.indexOf(':')
+    const chain = key.slice(0, separatorIndex).replace(/'/g, "''")
+    const token = key.slice(separatorIndex + 1).replace(/'/g, "''")
+    return `('${chain}', '${token}')`
+  })
+  return `NOT (${columnPrefix}.source = 'defillama' AND (${columnPrefix}.chain, ${columnPrefix}.token) IN (${pairs.join(', ')}))`
+}
+
+const BAD_DEFILLAMA_SQL = buildBadDefiLlamaFilter()
 
 export async function getExactHistoricalPrice(
   pool: Pool,
@@ -54,7 +68,7 @@ export async function getBatchHistoricalPrices(
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp = r.timestamp
-      WHERE tp.source = $${sourceIndex} AND ${PLAUSIBLE_PRICE_SQL}
+      WHERE tp.source = $${sourceIndex} AND ${BAD_DEFILLAMA_SQL}
       ORDER BY tp.chain, tp.token, tp.timestamp
     `
   } else {
@@ -66,7 +80,7 @@ export async function getBatchHistoricalPrices(
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp = r.timestamp
-      WHERE ${PLAUSIBLE_PRICE_SQL}
+      WHERE ${BAD_DEFILLAMA_SQL}
       ORDER BY tp.chain, tp.token, tp.timestamp, ${buildSourceCaseExpression()}
     `
   }
@@ -113,7 +127,7 @@ export async function getRangeHistoricalPrices(
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp BETWEEN r.start_timestamp AND r.end_timestamp
-      WHERE tp.source = $${sourceIndex} AND ${PLAUSIBLE_PRICE_SQL}
+      WHERE tp.source = $${sourceIndex} AND ${BAD_DEFILLAMA_SQL}
       ORDER BY tp.chain, tp.token, tp.timestamp
     `
   } else {
@@ -125,7 +139,7 @@ export async function getRangeHistoricalPrices(
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp BETWEEN r.start_timestamp AND r.end_timestamp
-      WHERE ${PLAUSIBLE_PRICE_SQL}
+      WHERE ${BAD_DEFILLAMA_SQL}
       ORDER BY tp.chain, tp.token, tp.timestamp, ${buildSourceCaseExpression()}
     `
   }
