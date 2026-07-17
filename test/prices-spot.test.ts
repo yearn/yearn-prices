@@ -81,7 +81,7 @@ describe('handleSpot', () => {
     expect(body.coins[BASE_KEY].prices[0].price).toBe(200)
   })
 
-  it('omits tokens Enso has no price for', async () => {
+  it('returns a friendly per-token error when Enso has no price', async () => {
     fetchMock.mockImplementation((url: string) => {
       if (url.includes('/api/v1/prices/1/')) return Promise.resolve(ensoRes(200, okBody({ price: 100 })))
       if (url.includes('/api/v1/prices/8453/')) return Promise.resolve(ensoRes(404, {}))
@@ -91,16 +91,20 @@ describe('handleSpot', () => {
     const response = await handleSpot(spotRequest([ETH_KEY, BASE_KEY]), ENV)
     const body = (await response.json()) as any
 
-    expect(Object.keys(body.coins)).toEqual([ETH_KEY])
+    expect(Object.keys(body.coins).sort()).toEqual([BASE_KEY, ETH_KEY].sort())
+    expect(body.coins[BASE_KEY]).toEqual({ error: 'Unable to fetch a price for this token' })
   })
 
-  it('returns empty coins and the spot cache header when every token fails', async () => {
+  it('returns an error for every token and the spot cache header when every token fails', async () => {
     fetchMock.mockResolvedValue(ensoRes(404, {}))
 
     const response = await handleSpot(spotRequest([ETH_KEY, BASE_KEY]), ENV)
     const body = (await response.json()) as any
 
-    expect(body.coins).toEqual({})
+    expect(body.coins).toEqual({
+      [ETH_KEY]: { error: 'Unable to fetch a price for this token' },
+      [BASE_KEY]: { error: 'Unable to fetch a price for this token' },
+    })
     expect(response.headers.get('cache-control')).toBe(SPOT_CACHE_CONTROL)
   })
 
@@ -164,22 +168,26 @@ describe('handleSpot', () => {
     expect(ts).toBeLessThanOrEqual(after + 1)
   })
 
-  it('omits a token when Enso reports a zero price', async () => {
+  it('returns an error when Enso reports a zero price', async () => {
     fetchMock.mockResolvedValue(ensoRes(200, okBody({ price: 0 })))
 
     const response = await handleSpot(spotRequest([ETH_KEY]), ENV)
     const body = (await response.json()) as any
 
-    expect(body.coins).toEqual({})
+    expect(body.coins).toEqual({
+      [ETH_KEY]: { error: 'Unable to fetch a price for this token' },
+    })
   })
 
-  it('omits a token when Enso returns a 404', async () => {
+  it('returns an error when Enso returns a 404', async () => {
     fetchMock.mockResolvedValue(ensoRes(404, {}))
 
     const response = await handleSpot(spotRequest([ETH_KEY]), ENV)
     const body = (await response.json()) as any
 
-    expect(body.coins).toEqual({})
+    expect(body.coins).toEqual({
+      [ETH_KEY]: { error: 'Unable to fetch a price for this token' },
+    })
   })
 
   it('throws INTERNAL_ERROR when ENSO_API_KEY is not configured', async () => {

@@ -78,6 +78,12 @@ export interface BatchHistoricalResponseCoin {
   prices: PricePoint[]
 }
 
+export interface SpotErrorResponseCoin {
+  error: string
+}
+
+export type SpotResponseCoin = BatchHistoricalResponseCoin | SpotErrorResponseCoin
+
 export interface TokenPriceWrite {
   chain: string
   token: string

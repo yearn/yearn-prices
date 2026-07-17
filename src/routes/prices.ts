@@ -6,7 +6,15 @@ import { ApiError, ensure } from '../errors'
 import { jsonResponse } from '../http'
 import { getBatchHistoricalPrices, getExactHistoricalPrice, getRangeHistoricalPrices } from '../queries'
 import { normalizedDaysInRange, nowUnix, toUnixSeconds } from '../time'
-import type { BatchHistoricalResponseCoin, Env, ExactPriceRecord, HistoricalRequestTuple, RangeRequest, SpotRequest } from '../types'
+import type {
+  BatchHistoricalResponseCoin,
+  Env,
+  ExactPriceRecord,
+  HistoricalRequestTuple,
+  RangeRequest,
+  SpotRequest,
+  SpotResponseCoin,
+} from '../types'
 import { parseBatchCoins, parseSpotCoins, parseOptionalSource, parseRangeCoins, parseTimestampSegment } from '../validation'
 
 function buildTokenKey(chain: string, token: string): string {
@@ -103,18 +111,20 @@ export async function handleSpot(request: Request, env: Env): Promise<Response> 
     }),
   )
 
-  const coins: Record<string, BatchHistoricalResponseCoin> = {}
+  const coins: Record<string, SpotResponseCoin> = {}
 
   for (let i = 0; i < settled.length; i += 1) {
     const outcome = settled[i]
     if (outcome.status === 'rejected') {
+      const tokenKey = requests[i].originalKey
       console.error(
         JSON.stringify({
           message: 'enso-spot-error',
-          token_key: requests[i].originalKey,
+          token_key: tokenKey,
           error: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
         }),
       )
+      coins[tokenKey] = { error: 'Unable to fetch a price for this token' }
       continue
     }
 
