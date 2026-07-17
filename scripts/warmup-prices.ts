@@ -4,7 +4,8 @@ import { priceCurveLpUsd } from '../src/curve';
 import { createPool } from '../src/db';
 import { DefiLlamaClient } from '../src/defillama';
 import { isBadDefiLlamaTokenKey } from '../src/bad-defillama-tokens';
-import { capConfidence, CURVE_CONFIDENCE } from '../src/format';
+import { shouldAttemptCurveFallback } from '../src/curve-fallback';
+import { capConfidence } from '../src/format';
 import {
   getBatchHistoricalPrices,
   getExistingExactTimestamps,
@@ -318,14 +319,18 @@ async function warmCurveFallbackPrices(
     }
   }
 
-  const existingCurve = await getExistingExactTimestamps(pool, requests, 'curve')
-  const missing = requests.filter(request => {
-    const key = `${request.chain}:${request.token}:${request.timestamp}`
-    if (isTodayNormalized(request.timestamp)) {
-      return true
-    }
-    return !existingCurve.has(key)
-  })
+  // Gate historical Curve probes on both sources: a valid DefiLlama row fills the
+  // gap (SOURCE_PRIORITY), and an existing Curve row must not be recomputed.
+  // getExistingExactTimestamps('defillama') already excludes denylisted LP rows, so
+  // those four tokens still appear missing and remain eligible for Curve fallback.
+  // Today always refreshes regardless of what is already stored.
+  const [existingDefillama, existingCurve] = await Promise.all([
+    getExistingExactTimestamps(pool, requests, 'defillama'),
+    getExistingExactTimestamps(pool, requests, 'curve'),
+  ])
+  const missing = requests.filter(request =>
+    shouldAttemptCurveFallback(request, existingDefillama, existingCurve),
+  )
 
   await runInGroups(missing, async request => {
     try {
@@ -339,6 +344,8 @@ async function warmCurveFallbackPrices(
 
       const blockNumber = await estimateBlockByTimestamp(client, underlying.chainId, request.timestamp)
 
+      // Approximate: virtual_price × DefiLlama(coin0). Residual uncertainty includes
+      // coin0 (interest-bearing yTokens on legacy Y/yBUSD/PAX pools).
       const price = await priceCurveLpUsd(client, underlying.chainId, underlying.token, blockNumber, async coin => {
         const coinKey = `${request.chain}:${coin}`
         stats.apiCalls += 1
@@ -357,7 +364,7 @@ async function warmCurveFallbackPrices(
         timestamp: request.timestamp,
         price,
         symbol: underlying.symbol,
-        confidence: CURVE_CONFIDENCE,
+        confidence: null,
         source: 'curve',
       }])
       stats.insertedCurve += 1

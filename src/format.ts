@@ -29,8 +29,3 @@ export function optionalResponseNumber(value: string | number | null): number | 
 export function capConfidence(value: number | null | undefined): number | null {
   return value == null ? null : Math.max(0, Math.min(value, 1))
 }
-
-// Curve LP price = on-chain virtual_price × coin0's USD price (from DefiLlama),
-// exact only for stableswap pools. Shipped at full confidence so it ranks as a
-// trusted fallback; the residual uncertainty is coin0's price, not the LP math.
-export const CURVE_CONFIDENCE = 1

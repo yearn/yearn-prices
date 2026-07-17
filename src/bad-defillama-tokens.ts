@@ -5,15 +5,18 @@ import { normalizeTokenKey } from './chains'
 // Enumerated from production token_prices: source=defillama AND
 // (price<=0 OR price>1e6) AND a curve-source row exists for the same token.
 //
-// These are classic stableswap-registry LPs, so priceCurveLpUsd can replace them.
+// Curve is a best-effort fallback via priceCurveLpUsd (virtual_price × coin0):
+// for Y / yBUSD / PAX the goal is suppressing invalid DefiLlama spikes on drained
+// legacy lending pools (coin0 is an interest-bearing yToken, so the price is
+// approximate). sUSD plain3 is the straightforward stablecoin case.
 const BAD_DEFILLAMA_CURVE_LPS = [
-  // Curve Y pool — all-zero DefiLlama history in DB (~901 rows)
+  // Curve Y pool — all-zero DefiLlama history in DB (~901 rows); drained lending pool
   ['ethereum', '0xdF5e0e81Dff6FAF3A7e52BA697820c5e32D806A8'], // yDAI+yUSDC+yUSDT+yTUSD
-  // Curve yBUSD pool — zeros + ~7e7 spikes (~920 rows)
+  // Curve yBUSD pool — zeros + ~7e7 spikes (~920 rows); drained lending pool
   ['ethereum', '0x3B3Ac5386837Dc563660FB6a0937DFAa5924333B'], // yDAI+yUSDC+yUSDT+yBUSD
-  // Curve PAX pool — zeros + ~2e6 spikes (~916 rows)
+  // Curve PAX pool — zeros + ~2e6 spikes (~916 rows); drained lending pool
   ['ethereum', '0xD905e2eaeBe188fc92179b6350807D8bd91Db0D8'], // ypaxCrv
-  // Curve sUSD plain3 — all-zero DefiLlama (~329 rows)
+  // Curve sUSD plain3 — all-zero DefiLlama (~329 rows); plain stablecoin LP
   ['ethereum', '0xC25a3A3b969415c80451098fa907EC722572917F'], // crvPlain3andSUSD
 ] as const
 
