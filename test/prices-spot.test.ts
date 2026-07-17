@@ -1,8 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getAddress } from 'viem'
+import { errorEnvelope } from '../src/errors'
 import { handleSpot } from '../src/routes/prices'
 import { toUnixSeconds } from '../src/time'
 import type { Env } from '../src/types'
+
+const SPOT_NOT_FOUND = errorEnvelope('NOT_FOUND', 'No price available for this token')
+const SPOT_UNAVAILABLE = errorEnvelope(
+  'UNAVAILABLE',
+  'Price temporarily unavailable, please retry',
+)
 
 const RAW_ADDR = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
 const CHECKSUM = getAddress(RAW_ADDR)
@@ -92,7 +99,7 @@ describe('handleSpot', () => {
     const body = (await response.json()) as any
 
     expect(Object.keys(body.coins).sort()).toEqual([BASE_KEY, ETH_KEY].sort())
-    expect(body.coins[BASE_KEY]).toEqual({ error: 'No price available for this token', code: 'NOT_FOUND' })
+    expect(body.coins[BASE_KEY]).toEqual(SPOT_NOT_FOUND)
   })
 
   it('returns an error for every token and the spot cache header when every token fails', async () => {
@@ -102,8 +109,8 @@ describe('handleSpot', () => {
     const body = (await response.json()) as any
 
     expect(body.coins).toEqual({
-      [ETH_KEY]: { error: 'No price available for this token', code: 'NOT_FOUND' },
-      [BASE_KEY]: { error: 'No price available for this token', code: 'NOT_FOUND' },
+      [ETH_KEY]: SPOT_NOT_FOUND,
+      [BASE_KEY]: SPOT_NOT_FOUND,
     })
     expect(response.headers.get('cache-control')).toBe(SPOT_CACHE_CONTROL)
   })
@@ -115,7 +122,7 @@ describe('handleSpot', () => {
     const body = (await response.json()) as any
 
     expect(body.coins).toEqual({
-      [ETH_KEY]: { error: 'Price temporarily unavailable, please retry', code: 'UNAVAILABLE' },
+      [ETH_KEY]: SPOT_UNAVAILABLE,
     })
   })
 
@@ -186,7 +193,7 @@ describe('handleSpot', () => {
     const body = (await response.json()) as any
 
     expect(body.coins).toEqual({
-      [ETH_KEY]: { error: 'No price available for this token', code: 'NOT_FOUND' },
+      [ETH_KEY]: SPOT_NOT_FOUND,
     })
   })
 
@@ -197,7 +204,7 @@ describe('handleSpot', () => {
     const body = (await response.json()) as any
 
     expect(body.coins).toEqual({
-      [ETH_KEY]: { error: 'No price available for this token', code: 'NOT_FOUND' },
+      [ETH_KEY]: SPOT_NOT_FOUND,
     })
   })
 
