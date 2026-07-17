@@ -78,6 +78,21 @@ export interface BatchHistoricalResponseCoin {
   prices: PricePoint[]
 }
 
+export interface ErrorPayload<C extends string = string> {
+  code: C
+  message: string
+}
+
+export type ErrorBody<C extends string = string> = {
+  error: ErrorPayload<C>
+}
+
+export type SpotTokenErrorCode = 'NOT_FOUND' | 'UNAVAILABLE'
+
+export type SpotErrorResponseCoin = ErrorBody<SpotTokenErrorCode>
+
+export type SpotResponseCoin = BatchHistoricalResponseCoin | SpotErrorResponseCoin
+
 export interface TokenPriceWrite {
   chain: string
   token: string

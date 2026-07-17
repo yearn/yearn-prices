@@ -1,3 +1,5 @@
+import type { ErrorBody } from './types'
+
 export type ErrorCode =
   | 'INVALID_INPUT'
   | 'UNAUTHORIZED'
@@ -25,11 +27,18 @@ export class ApiError extends Error {
   }
 }
 
+export function errorEnvelope<C extends string>(
+  code: C,
+  message: string,
+): ErrorBody<C> {
+  return { error: { code, message } }
+}
+
 export function jsonError(error: ApiError, headers?: HeadersInit): Response {
-  return Response.json(
-    { error: { code: error.code, message: error.message } },
-    { status: error.status, headers },
-  )
+  return Response.json(errorEnvelope(error.code, error.message), {
+    status: error.status,
+    headers,
+  })
 }
 
 export function ensure(condition: unknown, code: ErrorCode, message: string): asserts condition {
