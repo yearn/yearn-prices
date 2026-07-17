@@ -80,6 +80,7 @@ export interface BatchHistoricalResponseCoin {
 
 export interface SpotErrorResponseCoin {
   error: string
+  code: 'NOT_FOUND' | 'UNAVAILABLE'
 }
 
 export type SpotResponseCoin = BatchHistoricalResponseCoin | SpotErrorResponseCoin

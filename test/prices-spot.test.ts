@@ -92,7 +92,7 @@ describe('handleSpot', () => {
     const body = (await response.json()) as any
 
     expect(Object.keys(body.coins).sort()).toEqual([BASE_KEY, ETH_KEY].sort())
-    expect(body.coins[BASE_KEY]).toEqual({ error: 'Unable to fetch a price for this token' })
+    expect(body.coins[BASE_KEY]).toEqual({ error: 'No price available for this token', code: 'NOT_FOUND' })
   })
 
   it('returns an error for every token and the spot cache header when every token fails', async () => {
@@ -102,10 +102,21 @@ describe('handleSpot', () => {
     const body = (await response.json()) as any
 
     expect(body.coins).toEqual({
-      [ETH_KEY]: { error: 'Unable to fetch a price for this token' },
-      [BASE_KEY]: { error: 'Unable to fetch a price for this token' },
+      [ETH_KEY]: { error: 'No price available for this token', code: 'NOT_FOUND' },
+      [BASE_KEY]: { error: 'No price available for this token', code: 'NOT_FOUND' },
     })
     expect(response.headers.get('cache-control')).toBe(SPOT_CACHE_CONTROL)
+  })
+
+  it('marks upstream failures as retryable', async () => {
+    fetchMock.mockRejectedValue(new Error('network down'))
+
+    const response = await handleSpot(spotRequest([ETH_KEY]), ENV)
+    const body = (await response.json()) as any
+
+    expect(body.coins).toEqual({
+      [ETH_KEY]: { error: 'Price temporarily unavailable, please retry', code: 'UNAVAILABLE' },
+    })
   })
 
   it('dedupes token keys that normalize to the same value', async () => {
@@ -175,7 +186,7 @@ describe('handleSpot', () => {
     const body = (await response.json()) as any
 
     expect(body.coins).toEqual({
-      [ETH_KEY]: { error: 'Unable to fetch a price for this token' },
+      [ETH_KEY]: { error: 'No price available for this token', code: 'NOT_FOUND' },
     })
   })
 
@@ -186,7 +197,7 @@ describe('handleSpot', () => {
     const body = (await response.json()) as any
 
     expect(body.coins).toEqual({
-      [ETH_KEY]: { error: 'Unable to fetch a price for this token' },
+      [ETH_KEY]: { error: 'No price available for this token', code: 'NOT_FOUND' },
     })
   })
 

@@ -117,14 +117,20 @@ export async function handleSpot(request: Request, env: Env): Promise<Response> 
     const outcome = settled[i]
     if (outcome.status === 'rejected') {
       const tokenKey = requests[i].originalKey
+      const reason = outcome.reason
       console.error(
         JSON.stringify({
           message: 'enso-spot-error',
           token_key: tokenKey,
-          error: outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
+          error: reason instanceof Error ? reason.message : String(reason),
         }),
       )
-      coins[tokenKey] = { error: 'Unable to fetch a price for this token' }
+      // NOT_FOUND means Enso has no price for this token (permanent); anything else
+      // is an upstream/network failure the client can retry.
+      coins[tokenKey] =
+        reason instanceof ApiError && reason.code === 'NOT_FOUND'
+          ? { error: 'No price available for this token', code: 'NOT_FOUND' }
+          : { error: 'Price temporarily unavailable, please retry', code: 'UNAVAILABLE' }
       continue
     }
 
