@@ -479,6 +479,17 @@ describe('historical market resolver', () => {
         observationOffsetSeconds: -75,
         observationDirection: 'before',
         selectionPolicy: 'latest-at-or-before-eod',
+        mapping: {
+          kind: 'coingecko-alias',
+          requestedIdentifier: directIdentifier,
+          providerIdentifier: 'coingecko:dai',
+          rationale: expect.stringContaining('Optimism DAI'),
+          validityInterval: {
+            validFrom: null,
+            validUntil: null,
+            validUntilInclusive: false,
+          },
+        },
       },
     })
     expect(getBatchHistorical).toHaveBeenCalledTimes(2)

@@ -586,6 +586,24 @@ export function createHistoricalMarketPriceResolver(
         observationDirection: observationDirection(offsetSeconds),
         selectionPolicy: 'latest-at-or-before-eod',
         searchWidth,
+        ...(isAlias && alias
+          ? {
+              mapping: {
+                kind: alias.kind,
+                requestedIdentifier,
+                providerIdentifier: matchedIdentifier,
+                rationale: alias.rationale ?? null,
+                assumption: alias.assumption ?? null,
+                bridgeIssuer: alias.bridgeIssuer ?? null,
+                validityInterval: {
+                  validFrom: alias.validFrom ?? null,
+                  validUntil: alias.validUntil ?? null,
+                  validUntilInclusive: false,
+                },
+                references: alias.references ?? [],
+              },
+            }
+          : {}),
         ...(isCanonicalProxy && alias
           ? {
               bridgeIssuer: alias.bridgeIssuer,

@@ -22,6 +22,19 @@ export interface DefiLlamaCoinGeckoAlias {
 
 const MULTICHAIN_INCIDENT_REFERENCE = 'https://blog.fantom.foundation/fantom-foundation-awarded-default-judgement-against-multichain/'
 const MULTICHAIN_FANTOM_BRIDGE_REFERENCE = 'https://etherscan.io/address/0xc564ee9f21ed8a2d8e7e76c085740d5e4c5fafbe'
+const OPTIMISM_TOKEN_LIST_REFERENCE = 'https://github.com/ethereum-optimism/ethereum-optimism.github.io/blob/master/optimism.tokenlist.json'
+
+function optimismAlias(
+  input: Pick<DefiLlamaCoinGeckoAlias, 'token' | 'identifier' | 'rationale'>,
+): DefiLlamaCoinGeckoAlias {
+  return {
+    chain: 'optimism',
+    kind: 'coingecko-alias',
+    assumption: 'provider-identifier-alias-after-direct-market-miss',
+    references: [OPTIMISM_TOKEN_LIST_REFERENCE],
+    ...input,
+  }
+}
 
 function fantomProxy(input: Omit<DefiLlamaCoinGeckoAlias, 'chain' | 'kind' | 'assumption' | 'references'>
   & { references?: readonly string[] }): DefiLlamaCoinGeckoAlias {
@@ -39,36 +52,31 @@ function fantomProxy(input: Omit<DefiLlamaCoinGeckoAlias, 'chain' | 'kind' | 'as
 }
 
 const ALIASES: readonly DefiLlamaCoinGeckoAlias[] = [
-  {
-    chain: 'optimism',
+  optimismAlias({
     token: normalizeTokenAddress('0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1'),
     identifier: 'coingecko:dai',
-    kind: 'coingecko-alias',
-  },
-  {
-    chain: 'optimism',
+    rationale: 'The requested Optimism DAI contract represents DAI; use its CoinGecko market only after a direct contract lookup misses.',
+  }),
+  optimismAlias({
     token: normalizeTokenAddress('0x4200000000000000000000000000000000000006'),
     identifier: 'coingecko:weth',
-    kind: 'coingecko-alias',
-  },
-  {
-    chain: 'optimism',
+    rationale: 'The requested Optimism predeploy is WETH; use the WETH CoinGecko market only after a direct contract lookup misses.',
+  }),
+  optimismAlias({
     token: normalizeTokenAddress('0x94b008aA00579c1307B0EF2c499aD98a8ce58e58'),
     identifier: 'coingecko:tether',
-    kind: 'coingecko-alias',
-  },
-  {
-    chain: 'optimism',
+    rationale: 'The requested Optimism contract represents bridged USDT; use the Tether CoinGecko market only after a direct contract lookup misses.',
+  }),
+  optimismAlias({
     token: normalizeTokenAddress('0x7F5c764cBc14f9669B88837ca1490cCa17c31607'),
     identifier: 'coingecko:usd-coin',
-    kind: 'coingecko-alias',
-  },
-  {
-    chain: 'optimism',
+    rationale: 'The requested Optimism contract represents bridged USDC.e; use the USDC CoinGecko market only after a direct contract lookup misses.',
+  }),
+  optimismAlias({
     token: normalizeTokenAddress('0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85'),
     identifier: 'coingecko:usd-coin',
-    kind: 'coingecko-alias',
-  },
+    rationale: 'The requested Optimism contract is native USDC; use the USDC CoinGecko market only after a direct contract lookup misses.',
+  }),
   fantomProxy({
     token: normalizeTokenAddress('0x04068da6c83afcfa0e13ba15a6696662335d5b75'),
     identifier: 'coingecko:usd-coin',
