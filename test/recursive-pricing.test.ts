@@ -6,6 +6,7 @@ import type {
 } from '../src/recursive-pricing'
 import {
   InvalidPricingError,
+  isRetryablePricingError,
   RecursivePriceEngine,
   RetryablePricingError,
 } from '../src/recursive-pricing'
@@ -253,6 +254,14 @@ describe('recursive historical pricing', () => {
       path: null,
       failure: { reason: 'unsupported' },
     })
+  })
+
+  test('classifies opaque RPC transport failures as retryable without retrying contract reverts', () => {
+    const rpcFailure = new Error('An unknown RPC error occurred. Cannot destructure property error from null')
+    rpcFailure.name = 'UnknownRpcError'
+
+    expect(isRetryablePricingError(rpcFailure)).toBe(true)
+    expect(isRetryablePricingError(new Error('Contract reverted and returned no data'))).toBe(false)
   })
 
   test('reuses successful paths without reusing state across timestamps', async () => {

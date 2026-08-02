@@ -180,9 +180,13 @@ export function isRetryablePricingError(error: unknown): boolean {
     if (message.includes('revert') || message.includes('returned no data')) return false
     if (
       current.name === 'HttpRequestError'
+      || current.name === 'RpcRequestError'
+      || current.name === 'UnknownRpcError'
       || current.name === 'TimeoutError'
       || current.name === 'SocketError'
       || message.includes('http request failed')
+      || message.includes('rpc request failed')
+      || message.includes('unknown rpc error occurred')
       || message.includes('fetch failed')
       || message.includes('timed out')
       || /http (408|425|429|5\d\d)/.test(message)
