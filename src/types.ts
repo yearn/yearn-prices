@@ -1,13 +1,30 @@
 export const SOURCE_PRIORITY = [
   'defillama',
+  'defillama-canonical-market-proxy',
+  'defillama-coingecko-alias',
   'on-chain-oracle',
   'bobs-api',
   'curve',
   'derived',
   'enso',
+  'binance',
+  'stable-peg',
 ] as const
 
 export type PriceSource = (typeof SOURCE_PRIORITY)[number]
+
+export const PRICE_EVIDENCE_KINDS = ['observed', 'derived', 'estimated', 'legacy'] as const
+export type PriceEvidenceKind = (typeof PRICE_EVIDENCE_KINDS)[number]
+
+export const PRICE_EVIDENCE_QUALITIES = ['exact', 'near-eod', 'fallback', 'legacy'] as const
+export type PriceEvidenceQuality = (typeof PRICE_EVIDENCE_QUALITIES)[number]
+
+export const PRICE_VALIDATION_STATUSES = ['validated', 'legacy-unvalidated', 'quarantined'] as const
+export type PriceValidationStatus = (typeof PRICE_VALIDATION_STATUSES)[number]
+
+export type PriceObservationDirection = 'before' | 'exact' | 'after'
+
+export type PriceEvidenceFailureClass = 'not-found' | 'invalid' | 'disagreement' | 'unsupported' | 'retryable'
 
 export interface Env {
   DATABASE_URL: string
@@ -31,11 +48,72 @@ export interface DbPriceRow {
   source: PriceSource
 }
 
+export interface DbPriceEvidenceRow extends DbPriceRow {
+  requested_timestamp: string | Date
+  observed_timestamp: string | Date
+  evidence_kind: PriceEvidenceKind | null
+  quality: PriceEvidenceQuality | null
+  adapter: string | null
+  block_number: string | number | bigint | null
+  input_evidence: unknown
+  validation_status: PriceValidationStatus | null
+  failure_reason: string | null
+  evidence_metadata: unknown
+}
+
 export interface PricePoint {
   timestamp: number
   price: number
   confidence: number | null
   source: PriceSource
+}
+
+export interface PriceEvidenceInput {
+  chain: string
+  token: string
+  observedTimestamp: number
+  priceUsd: number
+  source: string
+  adapter: string | null
+  classification: PriceEvidenceKind
+  quality: PriceEvidenceQuality
+  conversion?: Record<string, unknown>
+  inputs?: PriceEvidenceInput[]
+}
+
+export interface PriceEvidenceCandidate {
+  chain: string
+  token: string
+  requestedTimestamp: number
+  observedTimestamp: number
+  observationDistance: number
+  observationOffsetSeconds: number
+  observationDirection: PriceObservationDirection
+  priceUsd: number
+  symbol: string | null
+  confidence: number | null
+  source: PriceSource
+  adapter: string | null
+  classification: PriceEvidenceKind
+  quality: PriceEvidenceQuality
+  blockNumber: number | null
+  inputs: PriceEvidenceInput[]
+  validationStatus: PriceValidationStatus
+  failureReason: string | null
+  metadata: Record<string, unknown>
+}
+
+export interface PriceEvidenceValidation {
+  status: PriceValidationStatus | 'unavailable'
+  disagreementBps: number | null
+  failureClass: PriceEvidenceFailureClass | null
+  failureReason: string | null
+}
+
+export interface PriceEvidenceSelection {
+  selected: PriceEvidenceCandidate | null
+  candidates: PriceEvidenceCandidate[]
+  validation: PriceEvidenceValidation
 }
 
 export interface ExactPriceRecord extends PricePoint {
@@ -101,6 +179,15 @@ export interface TokenPriceWrite {
   symbol: string | null
   confidence: number | string | null
   source: PriceSource
+  observedTimestamp?: number | null
+  classification?: PriceEvidenceKind | null
+  quality?: PriceEvidenceQuality | null
+  adapter?: string | null
+  blockNumber?: number | null
+  inputs?: PriceEvidenceInput[]
+  validationStatus?: PriceValidationStatus | null
+  failureReason?: string | null
+  metadata?: Record<string, unknown>
 }
 
 export interface KongVaultListItem {
