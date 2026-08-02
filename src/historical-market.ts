@@ -238,7 +238,9 @@ function candidateToPath(candidate: PriceEvidenceCandidate): ResolvedPricePath {
 function isProductionDailyImport(candidate: PriceEvidenceCandidate): boolean {
   return candidate.adapter === 'production-yearn-prices-import'
     && candidate.metadata.origin === 'production-yearn-prices'
-    && candidate.validationStatus === 'legacy-unvalidated'
+    && candidate.metadata.importClassification === 'trusted-production-observation-structural'
+    && candidate.metadata.independentlyValidated === false
+    && candidate.validationStatus === 'validated'
     && candidate.classification === 'legacy'
     && candidate.quality === 'legacy'
     && candidate.source !== 'stable-peg'
@@ -260,13 +262,14 @@ function productionDailyImportToPath(candidate: PriceEvidenceCandidate): Resolve
     confidence: candidate.confidence,
     source: candidate.source,
     adapter: candidate.adapter ?? 'production-yearn-prices-import',
-    classification: 'observed',
+    classification: 'estimated',
     quality: 'fallback',
     blockNumber: null,
     inputs: [],
     metadata: {
       ...candidate.metadata,
       recursiveSeedPolicy: 'explicit-production-eod-import',
+      directObservationClaimed: false,
     },
   }
 }

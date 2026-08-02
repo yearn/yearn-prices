@@ -40,6 +40,7 @@ export interface DailyPriceWorkerOptions extends DailyPriceTargetProcessorOption
   batchSize?: number
   concurrency?: number
   leaseSeconds?: number
+  maxAttempts?: number
   maxTargets?: number
   progressEvery?: number
   onProgress?: (progress: DailyPriceProgressSnapshot) => void
@@ -66,6 +67,7 @@ export interface DailyPriceWorkerDependencies extends DailyPriceTargetProcessorD
 const DEFAULT_BATCH_SIZE = 25
 const DEFAULT_CONCURRENCY = 1
 const DEFAULT_LEASE_SECONDS = 300
+const DEFAULT_MAX_ATTEMPTS = 3
 const DEFAULT_RETRY_DELAY_SECONDS = 5 * 60
 const DEFAULT_PROGRESS_EVERY = 25
 
@@ -218,6 +220,7 @@ async function resolveDailyPriceTarget(
         observedTimestamp: result.path.observedTimestamp,
         observationDistance: result.path.requestedTimestamp - result.path.observedTimestamp,
         source: result.path.source,
+        classification: result.path.classification,
         quality: result.path.quality,
       },
     },
@@ -281,6 +284,7 @@ export async function runDailyPriceWorker(
   const batchSize = assertPositiveInteger(options.batchSize ?? DEFAULT_BATCH_SIZE, 'batchSize')
   const concurrency = assertPositiveInteger(options.concurrency ?? DEFAULT_CONCURRENCY, 'concurrency')
   const leaseSeconds = assertPositiveInteger(options.leaseSeconds ?? DEFAULT_LEASE_SECONDS, 'leaseSeconds')
+  const maxAttempts = assertPositiveInteger(options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS, 'maxAttempts')
   const progressEvery = assertPositiveInteger(options.progressEvery ?? DEFAULT_PROGRESS_EVERY, 'progressEvery')
   const maxTargets = options.maxTargets ?? Number.POSITIVE_INFINITY
   if (!(maxTargets === Number.POSITIVE_INFINITY || (Number.isInteger(maxTargets) && maxTargets > 0))) {
@@ -305,6 +309,7 @@ export async function runDailyPriceWorker(
     const targets = await claimTargets(pool, limit, {
       nowTimestamp: currentTimestamp(),
       leaseSeconds,
+      maxAttempts,
     })
     if (targets.length === 0) break
     claimedBatches += 1

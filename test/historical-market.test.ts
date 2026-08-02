@@ -210,9 +210,13 @@ describe('historical market resolver', () => {
         observationDirection: 'exact',
         classification: 'legacy',
         quality: 'legacy',
-        validationStatus: 'legacy-unvalidated',
+        validationStatus: 'validated',
         adapter: 'production-yearn-prices-import',
-        metadata: { origin: 'production-yearn-prices' },
+        metadata: {
+          origin: 'production-yearn-prices',
+          importClassification: 'trusted-production-observation-structural',
+          independentlyValidated: false,
+        },
       })]),
       defiLlama: { getHistorical },
     })
@@ -223,10 +227,13 @@ describe('historical market resolver', () => {
       requestedTimestamp: REQUESTED_TIMESTAMP,
     })).resolves.toMatchObject({
       priceUsd: 100,
-      classification: 'observed',
+      classification: 'estimated',
       quality: 'fallback',
       adapter: 'production-yearn-prices-import',
-      metadata: { recursiveSeedPolicy: 'explicit-production-eod-import' },
+      metadata: {
+        recursiveSeedPolicy: 'explicit-production-eod-import',
+        directObservationClaimed: false,
+      },
     })
     expect(getHistorical).not.toHaveBeenCalled()
   })

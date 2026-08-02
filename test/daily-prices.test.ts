@@ -77,10 +77,11 @@ describe('daily price queue', () => {
     const [sql, params] = query.mock.calls[0]
     expect(sql).toContain("status = 'pending'")
     expect(sql).toContain("status = 'retryable'")
+    expect(sql).toContain('attempt_count < $4')
     expect(sql).toContain("status = 'in_progress' AND lease_expires_at <=")
     expect(sql).toContain('FOR UPDATE SKIP LOCKED')
     expect(sql).toContain("CASE status WHEN 'pending' THEN 0")
-    expect(params).toEqual([25, '2023-11-14T22:15:00.000Z', 120])
+    expect(params).toEqual([25, '2023-11-14T22:15:00.000Z', 120, 3])
     expect(targets[0]).toMatchObject({
       id: 7,
       status: 'in_progress',

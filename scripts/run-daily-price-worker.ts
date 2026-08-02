@@ -16,6 +16,7 @@ interface CliOptions {
   concurrency?: number
   maxTargets?: number
   leaseSeconds?: number
+  maxAttempts?: number
   retryDelaySeconds?: number
   progressEvery?: number
   maxDepth?: number
@@ -37,6 +38,7 @@ function parseOptions(args: string[]): CliOptions {
     else if (flag === '--concurrency') options.concurrency = parsePositiveInteger(value, flag)
     else if (flag === '--max-targets') options.maxTargets = parsePositiveInteger(value, flag)
     else if (flag === '--lease-seconds') options.leaseSeconds = parsePositiveInteger(value, flag)
+    else if (flag === '--max-attempts') options.maxAttempts = parsePositiveInteger(value, flag)
     else if (flag === '--retry-delay-seconds') options.retryDelaySeconds = parsePositiveInteger(value, flag)
     else if (flag === '--progress-every') options.progressEvery = parsePositiveInteger(value, flag)
     else if (flag === '--max-depth') options.maxDepth = parsePositiveInteger(value, flag)
@@ -101,6 +103,7 @@ try {
     concurrency: options.concurrency,
     maxTargets: options.maxTargets,
     leaseSeconds: options.leaseSeconds,
+    maxAttempts: options.maxAttempts,
     retryDelaySeconds: options.retryDelaySeconds,
     progressEvery: options.progressEvery,
     onProgress: progress => console.info(JSON.stringify({

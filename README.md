@@ -46,6 +46,8 @@ bun run dev
 | `bun run daily:import-production <snapshot.jsonl>` | Import a read-only exact-EOD production snapshot under the documented trust policy |
 | `bun run daily:run` | Resolve the durable daily queue with bounded concurrency |
 | `bun run daily:status` | Print durable EOD queue progress |
+| `bun run daily:canaries` | Run representative historical live canaries for every on-chain adapter |
+| `bun run daily:report` | Print the complete EOD coverage and evidence breakdown |
 
 ## API
 

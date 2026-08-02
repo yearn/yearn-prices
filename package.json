@@ -21,7 +21,9 @@
     "daily:enqueue-file": "bun run scripts/enqueue-daily-price-targets.ts",
     "daily:import-production": "bun run scripts/import-production-eod-snapshot.ts",
     "daily:run": "bun run scripts/run-daily-price-worker.ts",
-    "daily:status": "bun run scripts/daily-price-status.ts"
+    "daily:status": "bun run scripts/daily-price-status.ts",
+    "daily:report": "bun run scripts/daily-coverage-report.ts",
+    "daily:canaries": "bun run scripts/run-adapter-canaries.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "0.10.4",

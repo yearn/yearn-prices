@@ -275,6 +275,7 @@ export function productionDailyTarget(
       importAccepted: policy.accepted,
       importReason: policy.reason,
       ...(record.kind === 'price' ? { source: record.source, quality: 'legacy' } : {}),
+      ...(record.kind === 'price' ? { classification: 'legacy' } : {}),
     },
   }
 }

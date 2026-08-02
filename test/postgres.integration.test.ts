@@ -27,13 +27,13 @@ describe.skipIf(!enabled)('isolated Postgres integration', () => {
 
   beforeAll(async () => {
     pool = createPool(isolatedDatabaseUrl())
-    await pool.query('DELETE FROM daily_price_targets WHERE token = $1', [TOKEN])
-    await pool.query('DELETE FROM token_prices WHERE token = $1', [TOKEN])
+    await pool.query('DELETE FROM daily_price_targets WHERE lower(token) = $1', [TOKEN.toLowerCase()])
+    await pool.query('DELETE FROM token_prices WHERE lower(token) = $1', [TOKEN.toLowerCase()])
   })
 
   afterAll(async () => {
-    await pool.query('DELETE FROM daily_price_targets WHERE token = $1', [TOKEN])
-    await pool.query('DELETE FROM token_prices WHERE token = $1', [TOKEN])
+    await pool.query('DELETE FROM daily_price_targets WHERE lower(token) = $1', [TOKEN.toLowerCase()])
+    await pool.query('DELETE FROM token_prices WHERE lower(token) = $1', [TOKEN.toLowerCase()])
     await pool.end()
   })
 

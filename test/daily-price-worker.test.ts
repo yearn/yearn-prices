@@ -206,6 +206,9 @@ describe('daily price worker', () => {
       progress: { remaining: 0, priced: 1, unsupported: 1 },
     })
     expect(recordOutcome.mock.calls.map(call => call[3].status)).toEqual(['unsupported', 'priced'])
+    expect(recordOutcome.mock.calls[1][3]).toMatchObject({
+      metadata: { classification: 'observed' },
+    })
     expect(claimTargets).toHaveBeenCalledTimes(2)
   })
 

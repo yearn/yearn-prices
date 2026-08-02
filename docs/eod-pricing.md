@@ -90,6 +90,10 @@ or undocumented derivations remain ineligible until independently repaired. Thei
 evidence, and their asset-days remain pending in the durable queue. A production `stable-peg` row can never become
 strict EOD evidence through import.
 
+When explicitly enabled for a repair run, an accepted trusted import may seed a recursive conversion as estimated,
+fallback-quality input. The original stored row remains legacy evidence, and the derived candidate retains the import
+policy and a `directObservationClaimed: false` marker.
+
 ## Operations
 
 Enqueue one closed day:
@@ -107,9 +111,15 @@ The operation accepts at most 500 assets and a 128 KiB body. It normalizes addre
 Run and inspect the worker:
 
 ```bash
-bun run daily:run -- --batch-size 75 --concurrency 4
+bun run daily:run -- --batch-size 75 --concurrency 4 --max-attempts 3
 bun run daily:status
+bun run daily:canaries
+bun run daily:report
 ```
+
+`daily:canaries` forces representative live contracts through each registered on-chain adapter at the latest closed
+EOD block, including separate Compound and Iron Bank exchange-rate cases. `daily:report` emits the final chain,
+source, adapter, quality, import-policy, failure, alias, and incident-proxy breakdown without exposing provider URLs.
 
 The authenticated progress API is `GET /api/daily-prices/progress`. The operator dashboard is `/daily-prices`; its API key remains in browser session storage only.
 

@@ -251,7 +251,7 @@ export async function markDailyPriceTargetsPriced(
         WHERE target.chain = accepted.chain
           AND target.token = accepted.token
           AND target.eod_at = accepted.eod_at
-          AND target.status IN ('pending', 'retryable', 'unsupported', 'priced')
+          AND target.status IN ('pending', 'retryable', 'unsupported')
         RETURNING target.id
       `,
       params,
@@ -264,13 +264,15 @@ export async function markDailyPriceTargetsPriced(
 export async function claimDailyPriceTargets(
   pool: Pool,
   limit: number,
-  options: { nowTimestamp?: number; leaseSeconds?: number } = {},
+  options: { nowTimestamp?: number; leaseSeconds?: number; maxAttempts?: number } = {},
 ): Promise<DailyPriceTarget[]> {
   if (!Number.isInteger(limit) || limit <= 0) throw new Error('DailyPrice claim limit must be a positive integer')
   const nowTimestamp = options.nowTimestamp ?? Math.floor(Date.now() / 1_000)
   const leaseSeconds = options.leaseSeconds ?? 300
+  const maxAttempts = options.maxAttempts ?? 3
   if (!Number.isSafeInteger(nowTimestamp) || nowTimestamp < 0) throw new Error('nowTimestamp must be a unix timestamp')
   if (!Number.isInteger(leaseSeconds) || leaseSeconds <= 0) throw new Error('leaseSeconds must be a positive integer')
+  if (!Number.isInteger(maxAttempts) || maxAttempts <= 0) throw new Error('maxAttempts must be a positive integer')
 
   const result = await pool.query<DbDailyPriceTargetRow>(
     `
@@ -278,7 +280,11 @@ export async function claimDailyPriceTargets(
         SELECT id
         FROM daily_price_targets
         WHERE status = 'pending'
-          OR (status = 'retryable' AND (next_retry_at IS NULL OR next_retry_at <= $2::timestamptz))
+          OR (
+            status = 'retryable'
+            AND attempt_count < $4
+            AND (next_retry_at IS NULL OR next_retry_at <= $2::timestamptz)
+          )
           OR (status = 'in_progress' AND lease_expires_at <= $2::timestamptz)
         ORDER BY
           CASE status WHEN 'pending' THEN 0 WHEN 'retryable' THEN 1 ELSE 2 END,
@@ -300,7 +306,7 @@ export async function claimDailyPriceTargets(
       WHERE target.id = eligible.id
       RETURNING target.*
     `,
-    [limit, unixToIsoTimestamp(nowTimestamp), leaseSeconds],
+    [limit, unixToIsoTimestamp(nowTimestamp), leaseSeconds, maxAttempts],
   )
   return result.rows.map(mapDailyPriceTarget)
 }
