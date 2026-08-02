@@ -7,13 +7,18 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "lint": "bun run typecheck && bun run scripts/lint.ts",
+    "test": "vitest run --exclude '**/*.integration.test.ts'",
+    "test:integration": "vitest run '**/*.integration.test.ts'",
     "test:watch": "vitest",
     "migrate": "PGSSLMODE=require db-migrate up --config ./database.json --env dev",
     "migrate:create": "db-migrate create --config ./database.json --sql-file --env dev",
     "migrate:down": "PGSSLMODE=require db-migrate down --config ./database.json --env dev",
     "warmup": "bun run scripts/warmup-prices.ts",
-    "backfill:token-address-checksums": "bun run scripts/backfill-token-address-checksums.ts"
+    "backfill:token-address-checksums": "bun run scripts/backfill-token-address-checksums.ts",
+    "daily:enqueue-file": "bun run scripts/enqueue-daily-price-targets.ts",
+    "daily:run": "bun run scripts/run-daily-price-worker.ts",
+    "daily:status": "bun run scripts/daily-price-status.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "0.10.4",

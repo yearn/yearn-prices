@@ -20,6 +20,18 @@ export function parseTimestampSegment(segment: string): number {
   return normalizeToEndOfDay(Number(segment))
 }
 
+export function parseExactEodTimestampSegment(segment: string): number {
+  ensure(/^\d+$/.test(segment), 'INVALID_INPUT', 'Timestamp must be a unix timestamp')
+  const timestamp = Number(segment)
+  ensure(Number.isSafeInteger(timestamp) && timestamp >= 0, 'INVALID_INPUT', 'Timestamp is outside the supported range')
+  ensure(
+    normalizeToEndOfDay(timestamp) === timestamp,
+    'INVALID_INPUT',
+    'Daily price timestamp must be exactly 23:59:59 UTC',
+  )
+  return timestamp
+}
+
 export function parseOptionalSource(value: string | null): PriceSource | undefined {
   if (!value) {
     return undefined

@@ -4,7 +4,7 @@ This service exposes a small JSON API for health checks and historical token pri
 
 ## Base Behavior
 
-- All documented routes support `GET`.
+- Read routes support `GET`; the scoped daily enqueue route uses `POST`.
 - `OPTIONS` requests return `204` with CORS headers.
 - All JSON responses include permissive CORS headers.
 - `/api/health` is public.
@@ -53,25 +53,36 @@ floor(timestamp / 86400) * 86400 + 86399
 
 For example, any timestamp on `2024-01-01` UTC is queried as `2024-01-01T23:59:59.000Z`.
 
+The strict `/api/daily-prices/*` routes require the path timestamp itself to equal `23:59:59 UTC`. Unlike the
+legacy historical routes, they reject intraday path timestamps instead of normalizing them.
+
 ## Sources
 
 Price routes accept an optional `source` query parameter. Supported values are:
 
 - `defillama`
+- `defillama-canonical-market-proxy`
+- `defillama-coingecko-alias`
 - `on-chain-oracle`
 - `bobs-api`
 - `curve`
 - `derived`
 - `enso`
+- `binance`
+- `stable-peg` (legacy inspection only; never strict EOD evidence)
 
 When `source` is omitted, the API returns the first available row by priority:
 
 1. `defillama`
-2. `on-chain-oracle`
-3. `bobs-api`
-4. `curve`
-5. `derived`
-6. `enso`
+2. `defillama-canonical-market-proxy`
+3. `defillama-coingecko-alias`
+4. `on-chain-oracle`
+5. `bobs-api`
+6. `curve`
+7. `derived`
+8. `enso`
+9. `binance`
+10. `stable-peg`
 
 ## `GET /api/health`
 
@@ -91,6 +102,51 @@ Response:
   "timestamp": 1719878400
 }
 ```
+
+## `POST /api/daily-prices/enqueue`
+
+Authenticates and idempotently registers the assets needed for one closed UTC day. Existing accepted EOD evidence is
+returned immediately; missing asset-days are inserted into the durable worker queue. The request never resolves a
+price inline.
+
+Limits:
+
+- one closed day per request;
+- maximum 500 target assets;
+- maximum 128 KiB request body;
+- deduplicated by normalized chain, token, and EOD timestamp.
+
+```json
+{
+  "day": "2024-01-01",
+  "targets": [
+    {
+      "chain": "ethereum",
+      "token": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+    }
+  ]
+}
+```
+
+The `day` field may be omitted to select the latest closed UTC day.
+
+## `GET /api/daily-prices/:timestamp/:tokenKey`
+
+Returns only an accepted exact-EOD price. The timestamp must itself be `23:59:59 UTC`; an intraday stored row cannot
+satisfy the request. Missing evidence returns `404`, and disagreement quarantine returns `409`.
+
+The response adds `adapter`, `classification`, and `quality` without changing the legacy historical response.
+
+## `GET /api/daily-prices/evidence/:timestamp/:tokenKey`
+
+Returns the deterministic selection, every persisted candidate for the exact EOD key, and its validation result. It
+never performs repair and uses `no-store` caching so operators see current policy state.
+
+## `GET /api/daily-prices/progress`
+
+Returns authenticated live queue state: chain distribution, current leases, total/attempted/remaining counts, durable
+outcomes, source/adapter/quality counts, elapsed time, rolling processing rate, ETA, and recent sanitized failure
+reasons. The matching dashboard is available at `/daily-prices`.
 
 ## `GET /api/prices/historical/:timestamp/:tokenKey`
 

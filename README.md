@@ -2,6 +2,11 @@
 
 Cloudflare Worker that serves spot and historical token prices for Yearn. It aggregates prices from DefiLlama, on-chain oracles, Curve, Bob's API, and Enso, and persists historical prices to a Neon Postgres database.
 
+Historical pricing is EOD-first: one accepted price per chain, token, and closed UTC day, stored at exactly
+`23:59:59 UTC`. Missing days are repaired by an explicit durable worker, never inside GET requests. The product
+contract, evidence policy, queue lifecycle, and adapter methodology are documented in
+[`docs/eod-pricing.md`](docs/eod-pricing.md).
+
 ## Requirements
 
 - [Bun](https://bun.sh)
@@ -30,16 +35,23 @@ bun run dev
 | `bun run dev` | Start the worker locally with `wrangler dev` |
 | `bun run deploy` | Deploy the worker with `wrangler deploy` |
 | `bun run typecheck` | Type-check with `tsc --noEmit` |
+| `bun run lint` | Type-check and enforce repository text/artifact rules |
 | `bun run test` | Run the Vitest suite |
 | `bun run migrate` | Run pending Postgres migrations (`db-migrate up`) |
 | `bun run migrate:create` | Scaffold a new SQL migration file |
 | `bun run migrate:down` | Roll back the last migration |
 | `bun run warmup` | Pre-populate today's prices for known vaults/tokens |
 | `bun run backfill:token-address-checksums` | One-off backfill of checksummed token addresses |
+| `bun run daily:enqueue-file <targets.jsonl>` | Idempotently enqueue exact-EOD daily targets |
+| `bun run daily:run` | Resolve the durable daily queue with bounded concurrency |
+| `bun run daily:status` | Print durable EOD queue progress |
 
 ## API
 
 Full route reference, request/response shapes, error codes, and caching behavior are documented in [`docs/routes.md`](docs/routes.md).
+
+The operator dashboard is served at `/daily-prices`. Queue data remains authenticated at
+`/api/daily-prices/progress`.
 
 ## Authentication
 

@@ -1,10 +1,13 @@
 import { authenticateRequest } from './auth'
 import { CACHE_CONTROL_NO_STORE } from './cache'
 import { createPool } from './db'
+import { handleDailyPriceDashboardAsset } from './daily-price-dashboard-page'
+import { handleDailyPriceProgress } from './daily-price-dashboard'
 import { readEdgeCache, writeEdgeCache } from './edge-cache'
 import { ApiError, jsonError } from './errors'
 import { optionsResponse, withCors } from './http'
 import { handleHealth } from './routes/health'
+import { handleDailyEnqueue, handleDailyPriceRead } from './routes/daily-prices'
 import { handleBatchHistorical, handleHistorical, handleRangeHistorical, handleSpot, notFoundErrorHeaders } from './routes/prices'
 import type { Env } from './types'
 
@@ -32,6 +35,24 @@ async function routePriceRequest(request: Request, env: Env, pathname: string): 
 
   const pool = createPool(env.DATABASE_URL)
   try {
+    if (pathname === '/api/daily-prices/progress' && request.method === 'GET') {
+      return await handleDailyPriceProgress(pool)
+    }
+
+    if (pathname === '/api/daily-prices/enqueue' && request.method === 'POST') {
+      return await handleDailyEnqueue(request, pool)
+    }
+
+    const dailyEvidenceMatch = pathname.match(/^\/api\/daily-prices\/evidence\/([^/]+)\/([^/]+)$/)
+    if (dailyEvidenceMatch && request.method === 'GET') {
+      return await handleDailyPriceRead(request, pool, dailyEvidenceMatch[1], dailyEvidenceMatch[2], true)
+    }
+
+    const dailyPriceMatch = pathname.match(/^\/api\/daily-prices\/([^/]+)\/([^/]+)$/)
+    if (dailyPriceMatch && request.method === 'GET') {
+      return await handleDailyPriceRead(request, pool, dailyPriceMatch[1], dailyPriceMatch[2])
+    }
+
     if (pathname === '/api/prices/batchHistorical' && request.method === 'GET') {
       return await handleBatchHistorical(request, env, pool)
     }
@@ -64,6 +85,12 @@ export default {
     let clientId: string | null = null
 
     try {
+      const dashboardAsset = handleDailyPriceDashboardAsset(pathname, request.method)
+      if (dashboardAsset) {
+        logRequest(request, null)
+        return dashboardAsset
+      }
+
       if (pathname === '/api/health' && request.method === 'GET') {
         logRequest(request, null)
         return handleHealth()

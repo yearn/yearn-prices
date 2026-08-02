@@ -172,6 +172,39 @@ export async function enqueueDailyPriceTargets(
   return inserted
 }
 
+export async function getDailyPriceTargets(
+  pool: Pool,
+  inputs: DailyPriceTargetInput[],
+): Promise<DailyPriceTarget[]> {
+  if (inputs.length === 0) return []
+  const unique = new Map<string, DailyPriceTargetInput>()
+  for (const input of inputs) {
+    const target = normalizeDailyPriceTarget(input)
+    unique.set(`${target.chain}:${target.token}:${target.eodTimestamp}`, target)
+  }
+  const values: string[] = []
+  const params: Array<string | number> = []
+  for (const target of unique.values()) {
+    const offset = params.length
+    values.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}::timestamptz)`)
+    params.push(target.chain, target.token, unixToIsoTimestamp(target.eodTimestamp))
+  }
+  const result = await pool.query<DbDailyPriceTargetRow>(
+    `
+      WITH requested(chain, token, eod_at) AS (VALUES ${values.join(', ')})
+      SELECT target.*
+      FROM daily_price_targets target
+      INNER JOIN requested
+        ON target.chain = requested.chain
+       AND target.token = requested.token
+       AND target.eod_at = requested.eod_at
+      ORDER BY target.chain, target.token
+    `,
+    params,
+  )
+  return result.rows.map(mapDailyPriceTarget)
+}
+
 export async function claimDailyPriceTargets(
   pool: Pool,
   limit: number,
