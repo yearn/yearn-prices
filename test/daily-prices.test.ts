@@ -12,7 +12,7 @@ import {
 
 const TOKEN = '0x0000000000000000000000000000000000000001'
 
-describe('historical price daily price queue', () => {
+describe('daily price queue', () => {
   test('enqueues targets idempotently', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [{ id: 1 }] })
     const pool = { query } as unknown as Pool

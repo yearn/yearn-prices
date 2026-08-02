@@ -7,6 +7,84 @@ const SHARE_PRICE_ABI_V3 = parseAbi(['function convertToAssets(uint256) view ret
 const blockCache = new Map<string, bigint>()
 const clientCache = new Map<number, PublicClient>()
 
+export type RpcConfigurationFailure = 'missing' | 'mismatch' | 'transport'
+
+export class RpcConfigurationError extends Error {
+  constructor(
+    readonly expectedChainId: number,
+    readonly failure: RpcConfigurationFailure,
+    readonly returnedChainId: number | null,
+  ) {
+    const key = `RPC_URL_${expectedChainId}`
+    const message = failure === 'missing'
+      ? `${key} is not configured`
+      : failure === 'mismatch'
+        ? `${key} chain ID mismatch: expected ${expectedChainId}, received ${returnedChainId}`
+        : `${key} chain ID validation failed due to a transport or RPC error`
+    super(message)
+    this.name = 'RpcConfigurationError'
+  }
+}
+
+export interface RpcChainIdValidationDependencies {
+  request?: typeof fetch
+}
+
+interface RpcChainIdResponse {
+  result?: unknown
+  error?: unknown
+}
+
+/**
+ * Checks a configured endpoint without including the URL or its credentials in
+ * any error. This is intentionally separate from asset resolution: an RPC
+ * configuration failure must never become unsupported-price evidence.
+ */
+export async function validateRpcChainId(
+  expectedChainId: number,
+  rpcUrl: string | undefined,
+  dependencies: RpcChainIdValidationDependencies = {},
+): Promise<void> {
+  if (!rpcUrl) throw new RpcConfigurationError(expectedChainId, 'missing', null)
+
+  try {
+    const response = await (dependencies.request ?? fetch)(rpcUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_chainId', params: [] }),
+    })
+    if (!response.ok) throw new Error('RPC request failed')
+
+    const payload = await response.json() as RpcChainIdResponse
+    if (payload.error || typeof payload.result !== 'string') throw new Error('Invalid RPC response')
+    const returnedChainId = Number.parseInt(payload.result, 16)
+    if (!Number.isSafeInteger(returnedChainId) || returnedChainId < 0) {
+      throw new Error('Invalid RPC chain ID')
+    }
+    if (returnedChainId !== expectedChainId) {
+      throw new RpcConfigurationError(expectedChainId, 'mismatch', returnedChainId)
+    }
+  } catch (error) {
+    if (error instanceof RpcConfigurationError) throw error
+    throw new RpcConfigurationError(expectedChainId, 'transport', null)
+  }
+}
+
+/** Validates every supported RPC key present in the supplied environment. */
+export async function validateConfiguredRpcChainIds(
+  env: Record<string, string | undefined> = process.env,
+  dependencies: RpcChainIdValidationDependencies = {},
+): Promise<void> {
+  const configured = Object.keys(CHAIN_ID_TO_NAME)
+    .map(Number)
+    .filter(chainId => Object.hasOwn(env, `RPC_URL_${chainId}`))
+    .sort((left, right) => left - right)
+
+  for (const chainId of configured) {
+    await validateRpcChainId(chainId, env[`RPC_URL_${chainId}`], dependencies)
+  }
+}
+
 function sleep(milliseconds: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, milliseconds))
 }
