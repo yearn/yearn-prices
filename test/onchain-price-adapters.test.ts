@@ -162,12 +162,21 @@ describe('wrapper and lending price adapters', () => {
         priceUsd: 3,
         blockNumber: BLOCK_NUMBER,
         quality: 'near-eod',
+        metadata: {
+          historicalBlock: {
+            number: BLOCK_NUMBER,
+            timestamp: REQUESTED_TIMESTAMP,
+            requestedTimestamp: REQUESTED_TIMESTAMP,
+            distanceSeconds: 0,
+          },
+        },
         inputs: [{
           adapter: 'defillama-historical',
           conversion: {
             method: 'convertToAssets',
             convertedAssetsRaw: '1500000',
             underlyingDecimals: 6,
+            historicalBlock: { number: BLOCK_NUMBER, distanceSeconds: 0 },
           },
         }],
       },

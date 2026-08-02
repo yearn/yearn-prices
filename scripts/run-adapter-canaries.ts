@@ -148,6 +148,7 @@ try {
       quality: result.path.quality,
       inputCount: result.path.inputs.length,
       inputTokens: result.path.inputs.map(input => `${input.chain}:${input.token}`),
+      historicalBlock: result.path.metadata.historicalBlock,
     })
   }
 

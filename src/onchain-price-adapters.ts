@@ -115,10 +115,16 @@ export type BlockForTarget = (
   chainId: number,
   target: RecursivePriceTarget,
 ) => Promise<bigint>
+export type BlockTimestampForTarget = (
+  client: PublicClient,
+  blockNumber: bigint,
+  target: RecursivePriceTarget,
+) => Promise<number>
 
 export interface OnchainAdapterOptions {
   clientForChain: ClientForChain
   blockForTarget?: BlockForTarget
+  blockTimestampForTarget?: BlockTimestampForTarget
   pendleTwapSeconds?: number
 }
 
@@ -127,6 +133,7 @@ interface HistoricalContractContext {
   chainId: number
   blockNumber: bigint
   numericBlockNumber: number
+  blockTimestamp: number
   address: Address
 }
 
@@ -169,12 +176,38 @@ async function contractContext(
   if (!Number.isSafeInteger(numericBlockNumber) || numericBlockNumber < 0) {
     throw new Error(`Historical block ${blockNumber} is outside the supported numeric range`)
   }
+  const blockTimestamp = options.blockTimestampForTarget
+    ? await options.blockTimestampForTarget(client, blockNumber, target)
+    : options.blockForTarget
+      ? target.requestedTimestamp
+      : Number((await client.getBlock({ blockNumber })).timestamp)
+  if (!Number.isSafeInteger(blockTimestamp) || blockTimestamp < 0) {
+    throw new InvalidPricingError('Historical block has an invalid timestamp')
+  }
+  if (blockTimestamp > target.requestedTimestamp) {
+    throw new InvalidPricingError('Historical block is after the requested EOD timestamp')
+  }
   return {
     client,
     chainId,
     blockNumber,
     numericBlockNumber,
+    blockTimestamp,
     address: target.token as Address,
+  }
+}
+
+function historicalBlockEvidence(
+  state: HistoricalContractContext,
+  target: RecursivePriceTarget,
+): Record<string, unknown> {
+  return {
+    historicalBlock: {
+      number: state.numericBlockNumber,
+      timestamp: state.blockTimestamp,
+      requestedTimestamp: target.requestedTimestamp,
+      distanceSeconds: target.requestedTimestamp - state.blockTimestamp,
+    },
   }
 }
 
@@ -240,6 +273,7 @@ function erc4626Adapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
       ])
       if (convertedAssetsRaw == null) return null
       const conversion = {
+        ...historicalBlockEvidence(state, target),
         method: 'convertToAssets',
         underlying,
         shareDecimals,
@@ -302,6 +336,7 @@ function beetsBarAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter 
         }),
       ])
       const conversion = {
+        ...historicalBlockEvidence(state, target),
         method: 'beets-bar-pro-rata-underlying',
         underlying,
         shareDecimals,
@@ -371,6 +406,7 @@ function yearnShareAdapter(options: OnchainAdapterOptions): RecursivePriceAdapte
       ])
       const rateDecimals = rate.method === 'getPricePerFullShare' ? 18 : underlyingDecimals
       const conversion = {
+        ...historicalBlockEvidence(state, target),
         method: rate.method,
         underlying,
         rateRaw: rawState(rate.raw),
@@ -426,6 +462,7 @@ function compoundAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter 
         tokenDecimals(state.client, underlying, state.blockNumber),
       ])
       const conversion = {
+        ...historicalBlockEvidence(state, target),
         method: 'exchangeRateStored',
         underlying,
         exchangeRateRaw: rawState(exchangeRateRaw),
@@ -465,7 +502,7 @@ function aaveAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
       if (!underlyingRaw) return null
       const underlying = normalizedAddress(underlyingRaw)
       if (!underlying || underlying.toLowerCase() === target.token.toLowerCase()) return null
-      const conversion = { method: 'one-to-one', underlying }
+      const conversion = { ...historicalBlockEvidence(state, target), method: 'one-to-one', underlying }
       const input = await context.require(
         childTarget(target, underlying, state.numericBlockNumber),
         'Aave underlying',
@@ -503,6 +540,7 @@ function wstEthAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
       const underlying = normalizedAddress(underlyingRaw)
       if (!underlying || underlying.toLowerCase() === target.token.toLowerCase()) return null
       const conversion = {
+        ...historicalBlockEvidence(state, target),
         method: 'stEthPerToken',
         underlying,
         rateRaw: rawState(rateRaw),
@@ -593,6 +631,7 @@ function pairAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
       const inputs = paths as [ResolvedPricePath, ResolvedPricePath]
       const poolDecimals = Number(poolDecimalsRaw)
       const metadata = {
+        ...historicalBlockEvidence(state, target),
         valuationRule: 'all-constituents-required',
         totalSupplyRaw: rawState(totalSupplyRaw),
         poolDecimals,
@@ -752,6 +791,7 @@ function curveAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
         ),
       ])
       const metadata = {
+        ...historicalBlockEvidence(state, target),
         poolAddress,
         valuationRule: 'all-constituents-required',
         totalSupplyRaw: rawState(totalSupplyRaw),
@@ -831,6 +871,7 @@ function balancerAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter 
       ])
       const selfBalanceRaw = selfAsset?.balanceRaw ?? 0n
       const metadata = {
+        ...historicalBlockEvidence(state, target),
         vaultAddress,
         poolId,
         valuationRule: 'all-constituents-required',
@@ -897,6 +938,7 @@ function pendleAdapter(options: OnchainAdapterOptions, twapSeconds: number): Rec
       })
       const assetDecimals = Number(assetInfo[2])
       const conversion = {
+        ...historicalBlockEvidence(state, target),
         method: 'getLpToAssetRate',
         oracleAddress: PENDLE_ORACLE,
         twapSeconds,
