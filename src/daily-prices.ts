@@ -205,6 +205,62 @@ export async function getDailyPriceTargets(
   return result.rows.map(mapDailyPriceTarget)
 }
 
+export async function markDailyPriceTargetsPriced(
+  pool: Pool,
+  inputs: DailyPriceTargetInput[],
+  adapter: string,
+): Promise<number> {
+  if (inputs.length === 0) return 0
+  const unique = new Map<string, DailyPriceTargetInput>()
+  for (const input of inputs) {
+    const target = normalizeDailyPriceTarget(input)
+    unique.set(`${target.chain}:${target.token}:${target.eodTimestamp}`, target)
+  }
+
+  let updated = 0
+  for (const batch of chunk([...unique.values()], ENQUEUE_BATCH_SIZE)) {
+    const values: string[] = []
+    const params: Array<string | number> = []
+    for (const target of batch) {
+      const offset = params.length
+      values.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}::timestamptz, $${offset + 4}::jsonb)`)
+      params.push(
+        target.chain,
+        target.token,
+        unixToIsoTimestamp(target.eodTimestamp),
+        JSON.stringify(target.metadata ?? {}),
+      )
+    }
+    params.push(adapter)
+    const adapterIndex = params.length
+    const result = await pool.query<{ id: string | number }>(
+      `
+        WITH accepted(chain, token, eod_at, metadata) AS (VALUES ${values.join(', ')})
+        UPDATE daily_price_targets target
+        SET
+          status = 'priced',
+          adapter = $${adapterIndex},
+          failure_class = NULL,
+          failure_reason = NULL,
+          next_retry_at = NULL,
+          lease_expires_at = NULL,
+          completed_at = COALESCE(target.completed_at, NOW()),
+          metadata = COALESCE(target.metadata, '{}'::jsonb) || accepted.metadata,
+          updated_at = NOW()
+        FROM accepted
+        WHERE target.chain = accepted.chain
+          AND target.token = accepted.token
+          AND target.eod_at = accepted.eod_at
+          AND target.status IN ('pending', 'retryable', 'unsupported', 'priced')
+        RETURNING target.id
+      `,
+      params,
+    )
+    updated += result.rows.length
+  }
+  return updated
+}
+
 export async function claimDailyPriceTargets(
   pool: Pool,
   limit: number,

@@ -43,6 +43,7 @@ bun run dev
 | `bun run warmup` | Pre-populate today's prices for known vaults/tokens |
 | `bun run backfill:token-address-checksums` | One-off backfill of checksummed token addresses |
 | `bun run daily:enqueue-file <targets.jsonl>` | Idempotently enqueue exact-EOD daily targets |
+| `bun run daily:import-production <snapshot.jsonl>` | Import a read-only exact-EOD production snapshot under the documented trust policy |
 | `bun run daily:run` | Resolve the durable daily queue with bounded concurrency |
 | `bun run daily:status` | Print durable EOD queue progress |
 

@@ -77,6 +77,19 @@ Every derived result retains its inputs and inherits the weakest input quality. 
 
 Pool NAV requires every constituent used by the formula. The service does not use Curve `virtual_price × coin0`, single-sided reserve ratios, or assumed stablecoin pegs.
 
+## Production import policy
+
+The production snapshot import is read-only: it consumes a local JSONL snapshot and never calls a production mutation.
+Every price record must have an exact EOD key and a positive finite value. The original value, source, timestamp, and
+snapshot provenance are retained.
+
+Direct `defillama`, `on-chain-oracle`, `bobs-api`, and `enso` rows that production already accepted may serve after
+structural validation, but remain classified as legacy quality with unknown observation time. The import explicitly
+records that this is not independent validation. Rows from automatic pegs, aliases, proxies, the legacy Curve path,
+or undocumented derivations remain ineligible until independently repaired. Their values remain available as audit
+evidence, and their asset-days remain pending in the durable queue. A production `stable-peg` row can never become
+strict EOD evidence through import.
+
 ## Operations
 
 Enqueue one closed day:

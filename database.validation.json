@@ -1,0 +1,12 @@
+{
+  "defaultEnv": "dev",
+  "dev": {
+    "driver": "pg",
+    "url": {
+      "ENV": "DATABASE_URL"
+    },
+    "schema": {
+      "ENV": "DATABASE_SCHEMA"
+    }
+  }
+}

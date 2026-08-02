@@ -66,7 +66,7 @@ export async function getBatchHistoricalPriceEvidenceCandidates(
     `
       WITH requested(request_index, chain, token, requested_timestamp) AS (
         VALUES ${valuesSql.join(', ')}
-      ),
+      )
       SELECT
         price.chain,
         price.token,
