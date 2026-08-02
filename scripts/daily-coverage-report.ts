@@ -131,14 +131,14 @@ try {
         chain,
         token,
         source,
-        evidence_metadata AS metadata,
+        (ARRAY_AGG(evidence_metadata ORDER BY timestamp))[1] AS metadata,
         MIN(timestamp) AS first_eod,
         MAX(timestamp) AS last_eod,
         COUNT(*) AS asset_days
       FROM token_prices
       WHERE source IN ('defillama-coingecko-alias', 'defillama-canonical-market-proxy')
         AND validation_status = 'validated'
-      GROUP BY chain, token, source, evidence_metadata
+      GROUP BY chain, token, source
       ORDER BY chain, token, first_eod
     `),
   ])
