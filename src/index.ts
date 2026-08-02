@@ -33,7 +33,7 @@ async function routePriceRequest(request: Request, env: Env, pathname: string): 
     throw new ApiError('INTERNAL_ERROR', 'DATABASE_URL is not configured')
   }
 
-  const pool = createPool(env.DATABASE_URL)
+  const pool = createPool(env.DATABASE_URL, env.DATABASE_SCHEMA)
   try {
     if (pathname === '/api/daily-prices/progress' && request.method === 'GET') {
       return await handleDailyPriceProgress(pool)

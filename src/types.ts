@@ -28,6 +28,7 @@ export type PriceEvidenceFailureClass = 'not-found' | 'invalid' | 'disagreement'
 
 export interface Env {
   DATABASE_URL: string
+  DATABASE_SCHEMA?: string
   ENSO_API_KEY?: string
   [key: string]: string | undefined
 }

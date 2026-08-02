@@ -24,6 +24,9 @@ cp .env.example .env        # scripts (warmup, backfill, migrate) read from .env
 
 Fill in `.dev.vars` and `.env` with real values: a `DATABASE_URL`, one `API_KEY_*` per consumer, `ENSO_API_KEY`, and an `RPC_URL_<chainId>` per supported chain. Both files are gitignored — never commit them.
 
+For isolated validation and previews, `DATABASE_SCHEMA` may select a safe Postgres schema without duplicating or
+printing the database URL.
+
 ```bash
 bun run dev
 ```
