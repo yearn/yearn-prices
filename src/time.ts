@@ -1,4 +1,5 @@
 const DAY_SECONDS = 86_400
+export const UTC_DAY_SECONDS = DAY_SECONDS
 
 export function nowUnix(): number {
   return Math.floor(Date.now() / 1000)
@@ -14,6 +15,11 @@ export function normalizeToEndOfDay(timestamp: number): number {
 
 export function currentUtcDayEnd(now = nowUnix()): number {
   return normalizeToEndOfDay(now)
+}
+
+export function latestClosedUtcDayEnd(now = nowUnix()): number {
+  const currentDayEnd = currentUtcDayEnd(now)
+  return currentDayEnd <= now ? currentDayEnd : currentDayEnd - DAY_SECONDS
 }
 
 // Enso returns millisecond timestamps (e.g. 1781549905855); older docs showed seconds.
