@@ -120,12 +120,16 @@ export async function handleDailyEnqueue(
 ): Promise<Response> {
   const contentLength = Number(request.headers.get('content-length') ?? 0)
   ensure(
-    Number.isFinite(contentLength) && contentLength <= MAX_ENQUEUE_BODY_BYTES,
+    Number.isSafeInteger(contentLength) && contentLength >= 0 && contentLength <= MAX_ENQUEUE_BODY_BYTES,
     'INVALID_INPUT',
     `Request body must not exceed ${MAX_ENQUEUE_BODY_BYTES} bytes`,
   )
   const raw = await request.text()
-  ensure(raw.length <= MAX_ENQUEUE_BODY_BYTES, 'INVALID_INPUT', `Request body must not exceed ${MAX_ENQUEUE_BODY_BYTES} bytes`)
+  ensure(
+    new TextEncoder().encode(raw).byteLength <= MAX_ENQUEUE_BODY_BYTES,
+    'INVALID_INPUT',
+    `Request body must not exceed ${MAX_ENQUEUE_BODY_BYTES} bytes`,
+  )
   let body: unknown
   try {
     body = JSON.parse(raw)

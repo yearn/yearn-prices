@@ -91,6 +91,20 @@ describe('daily enqueue API', () => {
     }, EOD + 1)).toThrow('maximum of 500')
   })
 
+  test('enforces the body limit in bytes when content-length is unavailable', async () => {
+    const request = new Request('https://prices.local/api/daily-prices/enqueue', {
+      method: 'POST',
+      body: JSON.stringify({
+        day: '2024-01-01',
+        targets: [{ chain: 'ethereum', token: TOKEN }],
+        note: '💾'.repeat(40_000),
+      }),
+    })
+    request.headers.delete('content-length')
+
+    await expect(handleDailyEnqueue(request, {} as Pool)).rejects.toThrow('must not exceed')
+  })
+
   test('returns accepted rows immediately and enqueues only missing targets', async () => {
     const secondToken = '0x0000000000000000000000000000000000000002'
     const enqueue = vi.fn().mockResolvedValue(1)
