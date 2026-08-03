@@ -235,24 +235,80 @@ async function persistResolvedBatch(
 ): Promise<void> {
   const insertPrices = dependencies.insertPrices ?? insertTokenPrices
   const prices = resolutions.flatMap(resolution => resolution.price ? [resolution.price] : [])
-  await insertPrices(pool, prices)
-
   const records = targets.map((target, index) => ({
     targetId: target.id,
     attemptCount: target.attemptCount,
     outcome: resolutions[index].outcome,
   }))
-  if (dependencies.recordOutcomes) {
-    await dependencies.recordOutcomes(pool, records)
-    return
-  }
-  if (dependencies.recordOutcome) {
-    for (const record of records) {
-      await dependencies.recordOutcome(pool, record.targetId, record.attemptCount, record.outcome)
+
+  if (dependencies.insertPrices || dependencies.recordOutcomes || dependencies.recordOutcome) {
+    await insertPrices(pool, prices)
+    if (dependencies.recordOutcomes) {
+      await dependencies.recordOutcomes(pool, records)
+      return
     }
+    if (dependencies.recordOutcome) {
+      for (const record of records) {
+        await dependencies.recordOutcome(pool, record.targetId, record.attemptCount, record.outcome)
+      }
+      return
+    }
+    await recordDailyPriceOutcomes(pool, records)
     return
   }
-  await recordDailyPriceOutcomes(pool, records)
+
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const params: number[] = []
+    const values = records.map(record => {
+      const offset = params.length
+      params.push(record.targetId, record.attemptCount)
+      return `($${offset + 1}::bigint, $${offset + 2}::integer)`
+    })
+    const leased = await client.query<{ id: string | number }>(
+      `
+        WITH expected(id, attempt_count) AS (VALUES ${values.join(', ')})
+        SELECT target.id
+        FROM daily_price_targets target
+        INNER JOIN expected
+          ON target.id = expected.id
+         AND target.attempt_count = expected.attempt_count
+        WHERE target.status = 'in_progress'
+        FOR UPDATE OF target
+      `,
+      params,
+    )
+    if (leased.rows.length !== records.length) {
+      throw new Error(`DailyPrice evidence batch owns ${leased.rows.length} of ${records.length} target leases`)
+    }
+
+    await insertTokenPrices(client as unknown as Pool, prices)
+    await recordDailyPriceOutcomes(client as unknown as Pool, records)
+    await client.query('COMMIT')
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+async function persistResolvedTarget(
+  pool: Pool,
+  target: DailyPriceTarget,
+  resolution: ResolvedDailyPriceTarget,
+  dependencies: DailyPriceTargetProcessorDependencies,
+): Promise<void> {
+  if (dependencies.insertPrices || dependencies.recordOutcome) {
+    const insertPrices = dependencies.insertPrices ?? insertTokenPrices
+    const recordOutcome = dependencies.recordOutcome ?? recordDailyPriceOutcome
+    if (resolution.price) await insertPrices(pool, [resolution.price])
+    await recordOutcome(pool, target.id, target.attemptCount, resolution.outcome)
+    return
+  }
+
+  await persistResolvedBatch(pool, [target], [resolution], {})
 }
 
 export async function processDailyPriceTarget(
@@ -267,11 +323,8 @@ export async function processDailyPriceTarget(
     'retryDelaySeconds',
   )
   const nowTimestamp = options.nowTimestamp ?? Math.floor(Date.now() / 1_000)
-  const insertPrices = dependencies.insertPrices ?? insertTokenPrices
-  const recordOutcome = dependencies.recordOutcome ?? recordDailyPriceOutcome
   const resolution = await resolveDailyPriceTarget(resolver, target, nowTimestamp, retryDelaySeconds)
-  if (resolution.price) await insertPrices(pool, [resolution.price])
-  await recordOutcome(pool, target.id, target.attemptCount, resolution.outcome)
+  await persistResolvedTarget(pool, target, resolution, dependencies)
   return resolution.outcome
 }
 

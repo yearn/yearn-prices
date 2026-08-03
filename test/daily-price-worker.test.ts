@@ -144,6 +144,31 @@ describe('daily price target processor', () => {
       failureReason: 'pool-nav (invalid): missing constituent',
     })
   })
+
+  test('checks the active lease before inserting evidence', async () => {
+    const queries: string[] = []
+    const client = {
+      query: vi.fn().mockImplementation(async (sql: string) => {
+        queries.push(sql)
+        if (sql.includes('SELECT target.id')) return { rows: [] }
+        return { rows: [] }
+      }),
+      release: vi.fn(),
+    }
+    const transactionalPool = {
+      connect: vi.fn().mockResolvedValue(client),
+    } as unknown as Pool
+    const resolver: DailyPriceResolver = {
+      resolve: vi.fn().mockResolvedValue({ path: path(), failure: null }),
+    }
+
+    await expect(processDailyPriceTarget(transactionalPool, resolver, target()))
+      .rejects.toThrow('owns 0 of 1 target leases')
+
+    expect(queries.some(sql => sql.includes('INSERT INTO token_prices'))).toBe(false)
+    expect(queries).toEqual(expect.arrayContaining(['BEGIN', 'ROLLBACK']))
+    expect(client.release).toHaveBeenCalledOnce()
+  })
 })
 
 describe('daily price worker', () => {

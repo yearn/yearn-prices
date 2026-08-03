@@ -75,6 +75,9 @@ describe('daily price queue', () => {
     })
 
     const [sql, params] = query.mock.calls[0]
+    expect(sql).toContain('WITH exhausted AS')
+    expect(sql).toContain("status = 'quarantined'")
+    expect(sql).toContain("'originalFailureClass', 'retryable'")
     expect(sql).toContain("status = 'pending'")
     expect(sql).toContain("status = 'retryable'")
     expect(sql).toContain('attempt_count < $4')

@@ -276,7 +276,28 @@ export async function claimDailyPriceTargets(
 
   const result = await pool.query<DbDailyPriceTargetRow>(
     `
-      WITH eligible AS (
+      WITH exhausted AS (
+        UPDATE daily_price_targets
+        SET
+          status = 'quarantined',
+          failure_class = 'retryable',
+          next_retry_at = NULL,
+          lease_expires_at = NULL,
+          completed_at = COALESCE(completed_at, $2::timestamptz),
+          metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+            'retryExhausted', jsonb_build_object(
+              'attemptCount', attempt_count,
+              'maxAttempts', $4::integer,
+              'originalFailureClass', 'retryable',
+              'exhaustedAt', $2::timestamptz
+            )
+          ),
+          updated_at = NOW()
+        WHERE status = 'retryable'
+          AND attempt_count >= $4
+        RETURNING id
+      ),
+      eligible AS (
         SELECT id
         FROM daily_price_targets
         WHERE status = 'pending'
