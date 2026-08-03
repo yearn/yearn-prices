@@ -50,6 +50,7 @@ export interface DbPriceRow {
 }
 
 export interface DbPriceEvidenceRow extends DbPriceRow {
+  candidate_id: string
   requested_timestamp: string | Date
   observed_timestamp: string | Date
   evidence_kind: PriceEvidenceKind | null
@@ -94,6 +95,7 @@ export interface PriceEvidenceCandidate {
   symbol: string | null
   confidence: number | null
   source: PriceSource
+  candidateId: string
   adapter: string | null
   classification: PriceEvidenceKind
   quality: PriceEvidenceQuality
@@ -180,6 +182,7 @@ export interface TokenPriceWrite {
   symbol: string | null
   confidence: number | string | null
   source: PriceSource
+  candidateId?: string
   observedTimestamp?: number | null
   classification?: PriceEvidenceKind | null
   quality?: PriceEvidenceQuality | null

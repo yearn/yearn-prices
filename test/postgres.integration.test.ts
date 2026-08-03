@@ -1,11 +1,15 @@
 import type { Pool } from '@neondatabase/serverless'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createPool } from '../src/db'
+import { normalizeTokenAddress } from '../src/chains'
 import {
+  claimDailyPriceTargets,
   enqueueDailyPriceTargets,
   getDailyPriceTargets,
   markDailyPriceTargetsPriced,
+  requeueDailyPriceTargets,
 } from '../src/daily-prices'
+import { processDailyPriceTarget } from '../src/daily-price-worker'
 import { selectEodPriceEvidence } from '../src/evidence'
 import { getBatchHistoricalPriceEvidenceCandidates, insertTokenPrices } from '../src/queries'
 
@@ -13,6 +17,9 @@ const databaseUrl = process.env.DATABASE_URL
 const databaseSchema = process.env.DATABASE_SCHEMA
 const enabled = Boolean(databaseUrl && databaseSchema?.startsWith('yearn_prices_validation_'))
 const TOKEN = '0x00000000000000000000000000000000000000e0'
+const STALE_TOKEN = '0x00000000000000000000000000000000000000e1'
+const CANDIDATE_TOKEN = '0x00000000000000000000000000000000000000e2'
+const RETRY_TOKEN = '0x00000000000000000000000000000000000000e3'
 const EOD = 1_704_153_599
 
 describe.skipIf(!enabled)('isolated Postgres integration', () => {
@@ -21,13 +28,15 @@ describe.skipIf(!enabled)('isolated Postgres integration', () => {
   beforeAll(async () => {
     if (!databaseUrl || !databaseSchema) throw new Error('isolated database is not configured')
     pool = createPool(databaseUrl, databaseSchema)
-    await pool.query('DELETE FROM daily_price_targets WHERE lower(token) = $1', [TOKEN.toLowerCase()])
-    await pool.query('DELETE FROM token_prices WHERE lower(token) = $1', [TOKEN.toLowerCase()])
+    await pool.query('DELETE FROM daily_price_requeue_audits WHERE requested_by = $1', ['postgres-integration'])
+    await pool.query('DELETE FROM daily_price_targets WHERE lower(token) = ANY($1::text[])', [[TOKEN, STALE_TOKEN, CANDIDATE_TOKEN, RETRY_TOKEN].map(token => token.toLowerCase())])
+    await pool.query('DELETE FROM token_prices WHERE lower(token) = ANY($1::text[])', [[TOKEN, STALE_TOKEN, CANDIDATE_TOKEN, RETRY_TOKEN].map(token => token.toLowerCase())])
   })
 
   afterAll(async () => {
-    await pool.query('DELETE FROM daily_price_targets WHERE lower(token) = $1', [TOKEN.toLowerCase()])
-    await pool.query('DELETE FROM token_prices WHERE lower(token) = $1', [TOKEN.toLowerCase()])
+    await pool.query('DELETE FROM daily_price_requeue_audits WHERE requested_by = $1', ['postgres-integration'])
+    await pool.query('DELETE FROM daily_price_targets WHERE lower(token) = ANY($1::text[])', [[TOKEN, STALE_TOKEN, CANDIDATE_TOKEN, RETRY_TOKEN].map(token => token.toLowerCase())])
+    await pool.query('DELETE FROM token_prices WHERE lower(token) = ANY($1::text[])', [[TOKEN, STALE_TOKEN, CANDIDATE_TOKEN, RETRY_TOKEN].map(token => token.toLowerCase())])
     await pool.end()
   })
 
@@ -70,5 +79,119 @@ describe.skipIf(!enabled)('isolated Postgres integration', () => {
     await expect(getDailyPriceTargets(pool, input)).resolves.toEqual([
       expect.objectContaining({ status: 'priced', adapter: 'postgres-canary' }),
     ])
+  })
+
+  it('preserves same-source adapter candidates independently', async () => {
+    const input = {
+      chain: 'ethereum',
+      token: CANDIDATE_TOKEN,
+      timestamp: EOD,
+      symbol: 'LP',
+      confidence: null,
+      source: 'derived' as const,
+      observedTimestamp: EOD,
+      classification: 'derived' as const,
+      quality: 'exact' as const,
+      validationStatus: 'validated' as const,
+      inputs: [{
+        chain: 'ethereum',
+        token: TOKEN,
+        observedTimestamp: EOD,
+        priceUsd: 1,
+        source: 'defillama',
+        adapter: 'defillama-historical',
+        classification: 'observed' as const,
+        quality: 'exact' as const,
+      }],
+    }
+    await insertTokenPrices(pool, [
+      { ...input, price: 1, adapter: 'amm-reserve-nav' },
+      { ...input, price: 1.01, adapter: 'curve-reserve-nav' },
+    ])
+
+    const candidates = await getBatchHistoricalPriceEvidenceCandidates(pool, [{
+      chain: 'ethereum', token: CANDIDATE_TOKEN, timestamp: EOD,
+    }])
+    expect(candidates.map(candidate => candidate.candidateId).sort()).toEqual([
+      'amm-reserve-nav',
+      'curve-reserve-nav',
+    ])
+  })
+
+  it('rejects stale evidence before insertion and audits reviewed requeue', async () => {
+    const inserted = await pool.query<{ id: string | number }>(
+      `INSERT INTO daily_price_targets (chain, token, eod_at, status, attempt_count)
+       VALUES ('ethereum', $1, to_timestamp($2), 'in_progress', 2)
+       RETURNING id`,
+      [STALE_TOKEN, EOD],
+    )
+    const targetId = Number(inserted.rows[0].id)
+    await expect(processDailyPriceTarget(pool, {
+      resolve: async () => ({
+        path: {
+          chain: 'ethereum',
+          token: STALE_TOKEN,
+          requestedTimestamp: EOD,
+          observedTimestamp: EOD,
+          priceUsd: 5,
+          symbol: 'STALE',
+          confidence: 1,
+          source: 'defillama',
+          adapter: 'defillama-historical',
+          classification: 'observed',
+          quality: 'exact',
+          blockNumber: null,
+          inputs: [],
+          metadata: {},
+        },
+        failure: null,
+      }),
+    }, {
+      id: targetId,
+      chain: 'ethereum',
+      token: STALE_TOKEN,
+      eodTimestamp: EOD,
+      status: 'in_progress',
+      attemptCount: 1,
+      adapter: null,
+      failureClass: null,
+      failureReason: null,
+      metadata: {},
+    })).rejects.toThrow('owns 0 of 1 target leases')
+    const staleEvidence = await pool.query(`SELECT 1 FROM token_prices WHERE lower(token) = $1`, [STALE_TOKEN.toLowerCase()])
+    expect(staleEvidence.rows).toHaveLength(0)
+
+    await pool.query(
+      `UPDATE daily_price_targets SET status='unsupported', failure_class='unsupported', failure_reason='old policy'
+       WHERE id=$1`,
+      [targetId],
+    )
+    const requeued = await requeueDailyPriceTargets(pool, {
+      requestedBy: 'postgres-integration',
+      reason: 'reviewed policy',
+      scope: { targets: [{ chain: 'ethereum', token: STALE_TOKEN, eodTimestamp: EOD }] },
+    })
+    expect(requeued).toMatchObject({ requeued: 1 })
+    await expect(getDailyPriceTargets(pool, [{ chain: 'ethereum', token: STALE_TOKEN, eodTimestamp: EOD }]))
+      .resolves.toEqual([expect.objectContaining({ status: 'pending', attemptCount: 0 })])
+  })
+
+  it('terminalizes exhausted transient retries without claiming them again', async () => {
+    await pool.query(
+      `INSERT INTO daily_price_targets (
+        chain, token, eod_at, status, attempt_count, failure_class, failure_reason, next_retry_at
+       ) VALUES ('ethereum', $1, to_timestamp($2), 'retryable', 3, 'retryable', 'HTTP 503', NOW())`,
+      [normalizeTokenAddress(RETRY_TOKEN), EOD],
+    )
+    await claimDailyPriceTargets(pool, 1, { maxAttempts: 3 })
+    await expect(getDailyPriceTargets(pool, [{ chain: 'ethereum', token: RETRY_TOKEN, eodTimestamp: EOD }]))
+      .resolves.toEqual([expect.objectContaining({
+        status: 'quarantined',
+        failureClass: 'retryable',
+        failureReason: 'HTTP 503',
+        metadata: expect.objectContaining({
+          retryExhausted: expect.objectContaining({ originalFailureClass: 'retryable' }),
+        }),
+      })])
   })
 })

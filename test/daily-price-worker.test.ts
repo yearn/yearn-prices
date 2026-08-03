@@ -145,6 +145,70 @@ describe('daily price target processor', () => {
     })
   })
 
+  test('persists distinct competing candidates before recording canonical selection', async () => {
+    const insertPrices = vi.fn().mockResolvedValue(undefined)
+    const recordOutcome = vi.fn().mockResolvedValue(undefined)
+    const onchainPath = path({
+      source: 'derived',
+      adapter: 'erc4626-convert-to-assets',
+      classification: 'derived',
+      inputs: [{
+        chain: 'ethereum',
+        token: SECOND_TOKEN,
+        observedTimestamp: REQUESTED_TIMESTAMP - 60,
+        priceUsd: 100,
+        source: 'defillama',
+        adapter: 'defillama-historical',
+        classification: 'observed',
+        quality: 'near-eod',
+      }],
+      priceUsd: 101,
+    })
+    const resolver: DailyPriceResolver = {
+      resolve: vi.fn(),
+      resolveCandidates: vi.fn().mockResolvedValue({
+        path: path(),
+        candidates: [path(), onchainPath],
+        failure: null,
+      }),
+    }
+
+    await processDailyPriceTarget(pool, resolver, target(), {}, { insertPrices, recordOutcome })
+
+    expect(insertPrices).toHaveBeenCalledWith(pool, [
+      expect.objectContaining({ candidateId: 'defillama-historical', validationStatus: 'validated' }),
+      expect.objectContaining({ candidateId: 'erc4626-convert-to-assets', validationStatus: 'validated' }),
+    ])
+    expect(recordOutcome).toHaveBeenCalledWith(pool, 1, 1, expect.objectContaining({
+      metadata: expect.objectContaining({ candidateCount: 2 }),
+    }))
+  })
+
+  test('persists disagreeing candidates only as quarantined evidence', async () => {
+    const insertPrices = vi.fn().mockResolvedValue(undefined)
+    const recordOutcome = vi.fn().mockResolvedValue(undefined)
+    const resolver: DailyPriceResolver = {
+      resolve: vi.fn(),
+      resolveCandidates: vi.fn().mockResolvedValue({
+        path: null,
+        candidates: [path(), path({ source: 'on-chain-oracle', adapter: 'oracle', priceUsd: 80 })],
+        failure: {
+          reason: 'disagreement',
+          token: TOKEN,
+          attempts: [{ adapter: 'candidate-selection', reason: 'disagreement', error: '2000 bps' }],
+        },
+      }),
+    }
+
+    const outcome = await processDailyPriceTarget(pool, resolver, target(), {}, { insertPrices, recordOutcome })
+
+    expect(outcome).toMatchObject({ status: 'quarantined', failureClass: 'disagreement' })
+    expect(insertPrices.mock.calls[0][1]).toEqual([
+      expect.objectContaining({ validationStatus: 'quarantined', failureReason: expect.stringContaining('2000 bps') }),
+      expect.objectContaining({ validationStatus: 'quarantined', failureReason: expect.stringContaining('2000 bps') }),
+    ])
+  })
+
   test('checks the active lease before inserting evidence', async () => {
     const queries: string[] = []
     const client = {
@@ -334,5 +398,38 @@ describe('daily price worker', () => {
     expect(recordOutcomes).toHaveBeenCalledOnce()
     expect(recordOutcomes.mock.calls[0][1]).toHaveLength(2)
     expect(operations).toEqual(['evidence', 'outcomes'])
+  })
+
+  test('waits for controlled retry eligibility instead of exiting incomplete', async () => {
+    const retried = target({ attemptCount: 2 })
+    const claimTargets = vi.fn()
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([retried])
+      .mockResolvedValueOnce([])
+    const loadNextRetry = vi.fn()
+      .mockResolvedValueOnce(REQUESTED_TIMESTAMP + 10)
+      .mockResolvedValueOnce(null)
+    const wait = vi.fn().mockResolvedValue(undefined)
+    const resolver: DailyPriceResolver = {
+      resolve: vi.fn().mockResolvedValue({
+        path: null,
+        failure: { reason: 'unsupported', token: TOKEN, attempts: [] },
+      }),
+    }
+
+    const summary = await runDailyPriceWorker(pool, resolver, {
+      nowTimestamp: REQUESTED_TIMESTAMP,
+      maxAttempts: 3,
+    }, {
+      claimTargets,
+      loadNextRetry,
+      wait,
+      recordOutcome: vi.fn().mockResolvedValue(undefined),
+      loadProgress: vi.fn().mockResolvedValue(progress({ priced: 0, unsupported: 1 })),
+    })
+
+    expect(summary.processed).toBe(1)
+    expect(wait).toHaveBeenCalledWith(10_000)
+    expect(loadNextRetry).toHaveBeenCalledTimes(2)
   })
 })

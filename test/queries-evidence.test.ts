@@ -24,6 +24,7 @@ describe('EOD evidence queries', () => {
       symbol: 'TEST',
       confidence: '0.9',
       source: 'defillama',
+      candidate_id: 'defillama-historical',
       evidence_kind: 'observed',
       quality: 'near-eod',
       adapter: 'defillama-historical',
@@ -47,6 +48,7 @@ describe('EOD evidence queries', () => {
       observationDistance: 60,
       quality: 'near-eod',
       blockNumber: 19_000_000,
+      candidateId: 'defillama-historical',
     })
   })
 })
@@ -106,5 +108,43 @@ describe('evidence persistence', () => {
     expect(sql).toContain('DO UPDATE SET')
     expect(sql).toContain("EXCLUDED.validation_status = 'validated'")
     expect(sql).toContain("COALESCE(token_prices.validation_status, 'legacy-unvalidated') = 'legacy-unvalidated'")
+  })
+
+  test('preserves multiple derived adapters under distinct candidate identities', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] })
+    const base = {
+      chain: 'ethereum',
+      token: TOKEN,
+      timestamp: EOD,
+      price: 1,
+      symbol: 'LP',
+      confidence: null,
+      source: 'derived' as const,
+      observedTimestamp: EOD,
+      classification: 'derived' as const,
+      quality: 'exact' as const,
+      validationStatus: 'validated' as const,
+      inputs: [{
+        chain: 'ethereum',
+        token: '0x0000000000000000000000000000000000000002',
+        observedTimestamp: EOD,
+        priceUsd: 1,
+        source: 'defillama',
+        adapter: 'defillama-historical',
+        classification: 'observed' as const,
+        quality: 'exact' as const,
+      }],
+    }
+
+    await insertTokenPrices({ query } as unknown as Pool, [
+      { ...base, adapter: 'amm-reserve-nav' },
+      { ...base, adapter: 'curve-reserve-nav' },
+    ])
+
+    const [sql, params] = query.mock.calls[0]
+    expect(sql).toContain('ON CONFLICT (chain, token, timestamp, source, candidate_id)')
+    expect(params).toContain('amm-reserve-nav')
+    expect(params).toContain('curve-reserve-nav')
+    expect(params).toHaveLength(34)
   })
 })

@@ -17,6 +17,7 @@ function candidate(overrides: Partial<PriceEvidenceCandidate> = {}): PriceEviden
     symbol: 'TEST',
     confidence: 0.99,
     source: 'defillama',
+    candidateId: 'defillama-historical',
     adapter: 'defillama-historical',
     classification: 'observed',
     quality: 'exact',

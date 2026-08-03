@@ -1,6 +1,9 @@
 import { normalizeTokenAddress } from './chains'
+import { priceCandidateId } from './candidate-identity'
+import { selectEodPriceEvidence, type PriceEvidenceSelectionOptions } from './evidence'
 import { normalizeToEndOfDay } from './time'
 import type {
+  PriceEvidenceCandidate,
   PriceEvidenceInput,
   PriceEvidenceKind,
   PriceEvidenceQuality,
@@ -52,8 +55,8 @@ export interface PriceResolutionFailure {
 }
 
 export type RecursivePriceResult =
-  | { path: ResolvedPricePath; failure: null }
-  | { path: null; failure: PriceResolutionFailure }
+  | { path: ResolvedPricePath; candidates?: ResolvedPricePath[]; failure: null }
+  | { path: null; candidates?: ResolvedPricePath[]; failure: PriceResolutionFailure }
 
 export interface RecursivePriceInput {
   path: ResolvedPricePath
@@ -281,6 +284,32 @@ function validatePath(path: ResolvedPricePath, target: RecursivePriceTarget): Re
   return path
 }
 
+function pathToCandidate(path: ResolvedPricePath): PriceEvidenceCandidate {
+  const observationOffsetSeconds = path.observedTimestamp - path.requestedTimestamp
+  return {
+    chain: path.chain,
+    token: path.token,
+    requestedTimestamp: path.requestedTimestamp,
+    observedTimestamp: path.observedTimestamp,
+    observationDistance: Math.abs(observationOffsetSeconds),
+    observationOffsetSeconds,
+    observationDirection: observationOffsetSeconds === 0 ? 'exact' : observationOffsetSeconds < 0 ? 'before' : 'after',
+    priceUsd: path.priceUsd,
+    symbol: path.symbol,
+    confidence: path.confidence,
+    source: path.source,
+    candidateId: priceCandidateId(path),
+    adapter: path.adapter,
+    classification: path.classification,
+    quality: path.quality,
+    blockNumber: path.blockNumber,
+    inputs: path.inputs,
+    validationStatus: 'validated',
+    failureReason: null,
+    metadata: path.metadata,
+  }
+}
+
 function buildAdapterPath(
   target: RecursivePriceTarget,
   adapter: RecursivePriceAdapter,
@@ -322,6 +351,7 @@ export class RecursivePriceEngine {
     private readonly marketPrice: HistoricalMarketPriceResolver,
     private readonly adapters: RecursivePriceAdapter[],
     private readonly maxDepth = 8,
+    private readonly selectionOptions: PriceEvidenceSelectionOptions = {},
     private readonly adapterHints = new Map<string, string>(),
   ) {
     if (!Number.isInteger(maxDepth) || maxDepth < 1) {
@@ -331,6 +361,10 @@ export class RecursivePriceEngine {
 
   resolve(target: RecursivePriceTarget): Promise<RecursivePriceResult> {
     return this.resolveAt(normalizeTarget(target), [])
+  }
+
+  resolveCandidates(target: RecursivePriceTarget): Promise<RecursivePriceResult> {
+    return this.resolveAllAt(normalizeTarget(target), [])
   }
 
   async prefetch(targets: RecursivePriceTarget[]): Promise<void> {
@@ -427,6 +461,115 @@ export class RecursivePriceEngine {
         attempts,
       },
     }
+  }
+
+  private async resolveAllAt(
+    target: RecursivePriceTarget,
+    ancestry: string[],
+  ): Promise<RecursivePriceResult> {
+    if (ancestry.includes(targetKey(target))) {
+      return { path: null, candidates: [], failure: { reason: 'cycle', token: target.token, attempts: [] } }
+    }
+    if (ancestry.length >= this.maxDepth) {
+      return { path: null, candidates: [], failure: { reason: 'max-depth', token: target.token, attempts: [] } }
+    }
+
+    const candidates: ResolvedPricePath[] = []
+    const attempts: PriceResolutionAttempt[] = [
+      ...(this.marketPrice.unavailableAttempts?.(target) ?? []),
+    ]
+    try {
+      const market = await this.marketPrice(target)
+      if (market) candidates.push(validatePath(market, target))
+    } catch (error) {
+      const reason = classifyError(error)
+      attempts.push({ adapter: 'historical-market-price', reason, error: errorMessage(error) })
+    }
+
+    const nextAncestry = [...ancestry, targetKey(target)]
+    const context: RecursivePriceContext = {
+      resolve: child => this.resolveAt(normalizeTarget(child), nextAncestry),
+      require: async (child, label) => {
+        const result = await this.resolveAt(normalizeTarget(child), nextAncestry)
+        if (result.path) return result.path
+        const nested = result.failure.attempts
+          .map(attempt => `${attempt.adapter}: ${attempt.error}`)
+          .join('; ')
+        throw new RecursiveDependencyError(
+          `${label} ${result.failure.token} is unavailable (${result.failure.reason}${nested ? `; ${nested}` : ''})`,
+          result.failure,
+        )
+      },
+    }
+
+    for (const adapter of this.adapters) {
+      try {
+        const quote = await adapter.resolve(target, context)
+        if (!quote) continue
+        candidates.push(buildAdapterPath(target, adapter, quote))
+      } catch (error) {
+        const reason = classifyError(error)
+        attempts.push({ adapter: adapter.name, reason, error: errorMessage(error) })
+      }
+    }
+
+    const distinct = [...new Map(
+      candidates.map(candidate => [
+        `${candidate.source}:${priceCandidateId(candidate)}`,
+        candidate,
+      ]),
+    ).values()]
+    if (distinct.length === 0) {
+      return {
+        path: null,
+        candidates: [],
+        failure: { reason: selectFailureReason(attempts), token: target.token, attempts },
+      }
+    }
+
+    const selection = selectEodPriceEvidence(
+      target.requestedTimestamp,
+      distinct.map(pathToCandidate),
+      this.selectionOptions,
+    )
+    if (!selection.selected) {
+      const reason = selection.validation.failureClass === 'disagreement' ? 'disagreement' : 'invalid'
+      return {
+        path: null,
+        candidates: distinct,
+        failure: {
+          reason,
+          token: target.token,
+          attempts: [
+            ...attempts,
+            {
+              adapter: 'candidate-selection',
+              reason,
+              error: selection.validation.failureReason ?? 'No candidate passed selection',
+            },
+          ],
+        },
+      }
+    }
+
+    const selected = distinct.find(candidate => (
+      candidate.source === selection.selected?.source
+      && priceCandidateId(candidate) === selection.selected.candidateId
+    ))
+    if (!selected) {
+      return {
+        path: null,
+        candidates: distinct,
+        failure: {
+          reason: 'invalid',
+          token: target.token,
+          attempts: [{ adapter: 'candidate-selection', reason: 'invalid', error: 'Selected candidate identity was lost' }],
+        },
+      }
+    }
+    this.successful.set(targetKey(target), selected)
+    this.adapterHints.set(adapterHintKey(target), selected.adapter)
+    return { path: selected, candidates: distinct, failure: null }
   }
 }
 

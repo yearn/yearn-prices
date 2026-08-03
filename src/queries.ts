@@ -12,6 +12,7 @@ import {
   type TokenPriceWrite,
 } from './types'
 import { optionalResponseNumber, toResponseNumber } from './format'
+import { priceCandidateId } from './candidate-identity'
 import { pgTimestampToUnix, unixToIsoTimestamp, isTodayNormalized, normalizeToEndOfDay } from './time'
 
 function buildSourceCaseExpression(column = 'tp.source'): string {
@@ -75,6 +76,7 @@ export async function getBatchHistoricalPriceEvidenceCandidates(
         price.symbol,
         price.confidence,
         price.source,
+        price.candidate_id,
         requested.requested_timestamp,
         ${observedAt} AS observed_timestamp,
         price.evidence_kind,
@@ -92,7 +94,7 @@ export async function getBatchHistoricalPriceEvidenceCandidates(
        AND price.timestamp = requested.requested_timestamp
       WHERE TRUE
         ${sourceFilter}
-      ORDER BY requested.request_index, ${buildSourceCaseExpression('price.source')}, price.adapter
+      ORDER BY requested.request_index, ${buildSourceCaseExpression('price.source')}, price.adapter, price.candidate_id
     `,
     params,
   )
@@ -127,14 +129,19 @@ export async function getBatchHistoricalPrices(
     params.push(source)
     const sourceIndex = params.length
     sql += `
-      SELECT tp.chain, tp.token, tp.timestamp, tp.price, tp.symbol, tp.confidence, tp.source
+      SELECT DISTINCT ON (tp.chain, tp.token, tp.timestamp)
+        tp.chain, tp.token, tp.timestamp, tp.price, tp.symbol, tp.confidence, tp.source
       FROM token_prices tp
       INNER JOIN requested r
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp = r.timestamp
       WHERE tp.source = $${sourceIndex}
-      ORDER BY tp.chain, tp.token, tp.timestamp
+      ORDER BY tp.chain, tp.token, tp.timestamp,
+        CASE COALESCE(tp.validation_status, 'legacy-unvalidated') WHEN 'validated' THEN 0 WHEN 'legacy-unvalidated' THEN 1 ELSE 2 END,
+        CASE COALESCE(tp.evidence_kind, 'legacy') WHEN 'observed' THEN 0 WHEN 'derived' THEN 1 WHEN 'estimated' THEN 2 ELSE 3 END,
+        CASE COALESCE(tp.quality, 'legacy') WHEN 'exact' THEN 0 WHEN 'near-eod' THEN 1 WHEN 'fallback' THEN 2 ELSE 3 END,
+        tp.adapter, tp.candidate_id
     `
   } else {
     sql += `
@@ -145,7 +152,11 @@ export async function getBatchHistoricalPrices(
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp = r.timestamp
-      ORDER BY tp.chain, tp.token, tp.timestamp, ${buildSourceCaseExpression()}
+      ORDER BY tp.chain, tp.token, tp.timestamp, ${buildSourceCaseExpression()},
+        CASE COALESCE(tp.validation_status, 'legacy-unvalidated') WHEN 'validated' THEN 0 WHEN 'legacy-unvalidated' THEN 1 ELSE 2 END,
+        CASE COALESCE(tp.evidence_kind, 'legacy') WHEN 'observed' THEN 0 WHEN 'derived' THEN 1 WHEN 'estimated' THEN 2 ELSE 3 END,
+        CASE COALESCE(tp.quality, 'legacy') WHEN 'exact' THEN 0 WHEN 'near-eod' THEN 1 WHEN 'fallback' THEN 2 ELSE 3 END,
+        tp.adapter, tp.candidate_id
     `
   }
 
@@ -185,14 +196,19 @@ export async function getRangeHistoricalPrices(
     params.push(source)
     const sourceIndex = params.length
     sql += `
-      SELECT tp.chain, tp.token, tp.timestamp, tp.price, tp.symbol, tp.confidence, tp.source
+      SELECT DISTINCT ON (tp.chain, tp.token, tp.timestamp)
+        tp.chain, tp.token, tp.timestamp, tp.price, tp.symbol, tp.confidence, tp.source
       FROM token_prices tp
       INNER JOIN requested r
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp BETWEEN r.start_timestamp AND r.end_timestamp
       WHERE tp.source = $${sourceIndex}
-      ORDER BY tp.chain, tp.token, tp.timestamp
+      ORDER BY tp.chain, tp.token, tp.timestamp,
+        CASE COALESCE(tp.validation_status, 'legacy-unvalidated') WHEN 'validated' THEN 0 WHEN 'legacy-unvalidated' THEN 1 ELSE 2 END,
+        CASE COALESCE(tp.evidence_kind, 'legacy') WHEN 'observed' THEN 0 WHEN 'derived' THEN 1 WHEN 'estimated' THEN 2 ELSE 3 END,
+        CASE COALESCE(tp.quality, 'legacy') WHEN 'exact' THEN 0 WHEN 'near-eod' THEN 1 WHEN 'fallback' THEN 2 ELSE 3 END,
+        tp.adapter, tp.candidate_id
     `
   } else {
     sql += `
@@ -203,7 +219,11 @@ export async function getRangeHistoricalPrices(
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp BETWEEN r.start_timestamp AND r.end_timestamp
-      ORDER BY tp.chain, tp.token, tp.timestamp, ${buildSourceCaseExpression()}
+      ORDER BY tp.chain, tp.token, tp.timestamp, ${buildSourceCaseExpression()},
+        CASE COALESCE(tp.validation_status, 'legacy-unvalidated') WHEN 'validated' THEN 0 WHEN 'legacy-unvalidated' THEN 1 ELSE 2 END,
+        CASE COALESCE(tp.evidence_kind, 'legacy') WHEN 'observed' THEN 0 WHEN 'derived' THEN 1 WHEN 'estimated' THEN 2 ELSE 3 END,
+        CASE COALESCE(tp.quality, 'legacy') WHEN 'exact' THEN 0 WHEN 'near-eod' THEN 1 WHEN 'fallback' THEN 2 ELSE 3 END,
+        tp.adapter, tp.candidate_id
     `
   }
 
@@ -240,7 +260,7 @@ export async function insertTokenPrices(pool: Pool, rows: TokenPriceWrite[]): Pr
 function dedupeTokenPriceWrites(rows: TokenPriceWrite[]): TokenPriceWrite[] {
   const keyedRows = new Map<string, TokenPriceWrite>()
   for (const row of rows) {
-    keyedRows.set(`${row.chain}:${row.token}:${row.timestamp}:${row.source}`, row)
+    keyedRows.set(`${row.chain}:${row.token}:${row.timestamp}:${row.source}:${row.candidateId ?? priceCandidateId(row)}`, row)
   }
   return [...keyedRows.values()]
 }
@@ -256,7 +276,7 @@ async function insertRows(pool: Pool, rows: TokenPriceWrite[], updateOnConflict:
   for (const row of rows) {
     const offset = params.length
     valuesSql.push(
-      `($${offset + 1}, $${offset + 2}, $${offset + 3}::timestamptz, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}::timestamptz, $${offset + 9}, $${offset + 10}, $${offset + 11}, $${offset + 12}, $${offset + 13}::jsonb, $${offset + 14}, $${offset + 15}, $${offset + 16}::jsonb)`,
+      `($${offset + 1}, $${offset + 2}, $${offset + 3}::timestamptz, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9}::timestamptz, $${offset + 10}, $${offset + 11}, $${offset + 12}, $${offset + 13}, $${offset + 14}::jsonb, $${offset + 15}, $${offset + 16}, $${offset + 17}::jsonb)`,
     )
     params.push(
       row.chain,
@@ -266,6 +286,7 @@ async function insertRows(pool: Pool, rows: TokenPriceWrite[], updateOnConflict:
       row.symbol,
       row.confidence,
       row.source,
+      row.candidateId ?? priceCandidateId(row),
       row.observedTimestamp == null ? null : unixToIsoTimestamp(row.observedTimestamp),
       row.classification ?? null,
       row.quality ?? null,
@@ -295,14 +316,14 @@ async function insertRows(pool: Pool, rows: TokenPriceWrite[], updateOnConflict:
   `
   const conflictSql = updateOnConflict
     ? `
-      ON CONFLICT (chain, token, timestamp, source)
+      ON CONFLICT (chain, token, timestamp, source, candidate_id)
       DO UPDATE SET
         ${updateAssignments}
       WHERE EXCLUDED.validation_status = 'validated'
         OR COALESCE(token_prices.validation_status, 'legacy-unvalidated') = 'legacy-unvalidated'
     `
     : `
-      ON CONFLICT (chain, token, timestamp, source)
+      ON CONFLICT (chain, token, timestamp, source, candidate_id)
       DO UPDATE SET
         ${updateAssignments}
       WHERE EXCLUDED.validation_status = 'validated'
@@ -319,6 +340,7 @@ async function insertRows(pool: Pool, rows: TokenPriceWrite[], updateOnConflict:
         symbol,
         confidence,
         source,
+        candidate_id,
         observed_at,
         evidence_kind,
         quality,
@@ -370,6 +392,7 @@ function mapDbRowToEvidenceCandidate(row: DbPriceEvidenceRow): PriceEvidenceCand
     symbol: row.symbol,
     confidence: optionalResponseNumber(row.confidence),
     source: row.source,
+    candidateId: row.candidate_id,
     adapter: row.adapter,
     classification: row.evidence_kind ?? 'legacy',
     quality: row.quality ?? 'legacy',

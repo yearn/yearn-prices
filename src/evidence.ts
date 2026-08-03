@@ -41,6 +41,7 @@ function candidateOrder(left: PriceEvidenceCandidate, right: PriceEvidenceCandid
       - (sourcePriority.get(right.source) ?? Number.MAX_SAFE_INTEGER)
     || left.observationDistance - right.observationDistance
     || (left.adapter ?? '').localeCompare(right.adapter ?? '')
+    || left.candidateId.localeCompare(right.candidateId)
 }
 
 function structuralFailure(candidate: PriceEvidenceCandidate, eodTimestamp: number): string | null {

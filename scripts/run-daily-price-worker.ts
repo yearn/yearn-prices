@@ -80,10 +80,12 @@ const options = parseOptions(process.argv.slice(2))
 const pool = createPool(databaseUrl, process.env.DATABASE_SCHEMA)
 
 try {
+  const disagreementThresholdBps = optionalNumber(process.env.PRICE_DISAGREEMENT_THRESHOLD_BPS)
+  const disagreementWindowSeconds = optionalNumber(process.env.PRICE_DISAGREEMENT_WINDOW_SECONDS)
   const marketPrice = createHistoricalMarketPriceResolver(pool, {
     searchWidth: options.searchWidth,
-    disagreementThresholdBps: optionalNumber(process.env.PRICE_DISAGREEMENT_THRESHOLD_BPS),
-    disagreementWindowSeconds: optionalNumber(process.env.PRICE_DISAGREEMENT_WINDOW_SECONDS),
+    disagreementThresholdBps,
+    disagreementWindowSeconds,
     batchSize: optionalInteger(process.env.PRICE_MARKET_BATCH_SIZE, 'PRICE_MARKET_BATCH_SIZE', 1),
     batchConcurrency: optionalInteger(
       process.env.PRICE_MARKET_BATCH_CONCURRENCY,
@@ -97,7 +99,10 @@ try {
     clientForChain: getChainClient,
     pendleTwapSeconds: optionalNumber(process.env.PRICE_PENDLE_TWAP_SECONDS),
   })
-  const resolver = new RecursivePriceEngine(marketPrice, adapters, options.maxDepth)
+  const resolver = new RecursivePriceEngine(marketPrice, adapters, options.maxDepth, {
+    disagreementThresholdBps,
+    disagreementWindowSeconds,
+  })
   const summary = await runDailyPriceWorker(pool, resolver, {
     batchSize: options.batchSize,
     concurrency: options.concurrency,

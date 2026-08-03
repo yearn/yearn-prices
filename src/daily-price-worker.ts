@@ -1,8 +1,10 @@
 import type { Pool } from '@neondatabase/serverless'
+import { priceCandidateId } from './candidate-identity'
 import {
   buildDailyPriceProgressSnapshot,
   claimDailyPriceTargets,
   getDailyPriceProgress,
+  getNextDailyPriceRetryTimestamp,
   recordDailyPriceOutcome,
   recordDailyPriceOutcomes,
   type DailyPriceOutcome,
@@ -24,6 +26,12 @@ export interface DailyPriceResolver {
     blockNumber: number | null
   }>): Promise<void>
   resolve(target: {
+    chain: string
+    token: string
+    requestedTimestamp: number
+    blockNumber: number | null
+  }): Promise<RecursivePriceResult>
+  resolveCandidates?(target: {
     chain: string
     token: string
     requestedTimestamp: number
@@ -61,7 +69,9 @@ export interface DailyPriceWorkerDependencies extends DailyPriceTargetProcessorD
   validateConfiguration?: () => Promise<void>
   claimTargets?: typeof claimDailyPriceTargets
   loadProgress?: typeof getDailyPriceProgress
+  loadNextRetry?: typeof getNextDailyPriceRetryTimestamp
   recordOutcomes?: typeof recordDailyPriceOutcomes
+  wait?: (milliseconds: number) => Promise<void>
 }
 
 const DEFAULT_BATCH_SIZE = 25
@@ -96,7 +106,11 @@ async function mapConcurrentResults<T, R>(
   return results
 }
 
-function pathToWrite(path: ResolvedPricePath) {
+function pathToWrite(
+  path: ResolvedPricePath,
+  validationStatus: 'validated' | 'quarantined' = 'validated',
+  failureReason: string | null = null,
+) {
   return {
     chain: path.chain,
     token: path.token,
@@ -105,20 +119,22 @@ function pathToWrite(path: ResolvedPricePath) {
     symbol: path.symbol,
     confidence: path.confidence,
     source: path.source,
+    candidateId: priceCandidateId(path),
     observedTimestamp: path.observedTimestamp,
     classification: path.classification,
     quality: path.quality,
     adapter: path.adapter,
     blockNumber: path.blockNumber,
     inputs: path.inputs,
-    validationStatus: 'validated' as const,
+    validationStatus,
+    failureReason,
     metadata: path.metadata,
   }
 }
 
 interface ResolvedDailyPriceTarget {
   outcome: DailyPriceOutcome
-  price: ReturnType<typeof pathToWrite> | null
+  prices: Array<ReturnType<typeof pathToWrite>>
 }
 
 function failureReason(result: Extract<RecursivePriceResult, { path: null }>): string {
@@ -197,22 +213,35 @@ async function resolveDailyPriceTarget(
 ): Promise<ResolvedDailyPriceTarget> {
   let result: RecursivePriceResult
   try {
-    result = await resolver.resolve({
+    const request = {
       chain: target.chain,
       token: target.token,
       requestedTimestamp: target.eodTimestamp,
       blockNumber: null,
-    })
+    }
+    result = resolver.resolveCandidates
+      ? await resolver.resolveCandidates(request)
+      : await resolver.resolve(request)
   } catch (error) {
-    return { outcome: thrownFailure(error, nowTimestamp, retryDelaySeconds), price: null }
+    return { outcome: thrownFailure(error, nowTimestamp, retryDelaySeconds), prices: [] }
   }
 
   if (!result.path) {
-    return { outcome: failureOutcome(result, nowTimestamp, retryDelaySeconds), price: null }
+    const outcome = failureOutcome(result, nowTimestamp, retryDelaySeconds)
+    const candidates = result.candidates ?? []
+    const shouldQuarantineCandidates = outcome.status === 'quarantined'
+    return {
+      outcome,
+      prices: shouldQuarantineCandidates
+        ? candidates.map(path => pathToWrite(path, 'quarantined', outcome.failureReason))
+        : [],
+    }
   }
 
+  const candidates = result.candidates?.length ? result.candidates : [result.path]
+
   return {
-    price: pathToWrite(result.path),
+    prices: candidates.map(path => pathToWrite(path)),
     outcome: {
       status: 'priced',
       adapter: result.path.adapter,
@@ -222,6 +251,9 @@ async function resolveDailyPriceTarget(
         source: result.path.source,
         classification: result.path.classification,
         quality: result.path.quality,
+        candidateId: priceCandidateId(result.path),
+        candidateCount: candidates.length,
+        candidateIds: candidates.map(path => priceCandidateId(path)),
       },
     },
   }
@@ -234,7 +266,7 @@ async function persistResolvedBatch(
   dependencies: DailyPriceWorkerDependencies,
 ): Promise<void> {
   const insertPrices = dependencies.insertPrices ?? insertTokenPrices
-  const prices = resolutions.flatMap(resolution => resolution.price ? [resolution.price] : [])
+  const prices = resolutions.flatMap(resolution => resolution.prices)
   const records = targets.map((target, index) => ({
     targetId: target.id,
     attemptCount: target.attemptCount,
@@ -303,7 +335,7 @@ async function persistResolvedTarget(
   if (dependencies.insertPrices || dependencies.recordOutcome) {
     const insertPrices = dependencies.insertPrices ?? insertTokenPrices
     const recordOutcome = dependencies.recordOutcome ?? recordDailyPriceOutcome
-    if (resolution.price) await insertPrices(pool, [resolution.price])
+    if (resolution.prices.length > 0) await insertPrices(pool, resolution.prices)
     await recordOutcome(pool, target.id, target.attemptCount, resolution.outcome)
     return
   }
@@ -346,6 +378,8 @@ export async function runDailyPriceWorker(
 
   const claimTargets = dependencies.claimTargets ?? claimDailyPriceTargets
   const loadProgress = dependencies.loadProgress ?? getDailyPriceProgress
+  const loadNextRetry = dependencies.loadNextRetry ?? getNextDailyPriceRetryTimestamp
+  const wait = dependencies.wait ?? (milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds)))
   const retryDelaySeconds = assertPositiveInteger(
     options.retryDelaySeconds ?? DEFAULT_RETRY_DELAY_SECONDS,
     'retryDelaySeconds',
@@ -364,7 +398,13 @@ export async function runDailyPriceWorker(
       leaseSeconds,
       maxAttempts,
     })
-    if (targets.length === 0) break
+    if (targets.length === 0) {
+      if (dependencies.claimTargets && !dependencies.loadNextRetry) break
+      const nextRetryTimestamp = await loadNextRetry(pool, maxAttempts)
+      if (nextRetryTimestamp == null) break
+      await wait(Math.max(nextRetryTimestamp - currentTimestamp(), 1) * 1_000)
+      continue
+    }
     claimedBatches += 1
 
     await resolver.prefetch?.(targets.map(target => ({

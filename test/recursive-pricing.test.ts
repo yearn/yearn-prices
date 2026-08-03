@@ -281,4 +281,59 @@ describe('recursive historical pricing', () => {
       .toBe(REQUESTED_TIMESTAMP + 86_400)
     expect(calls).toBe(2)
   })
+
+  test('collects market and every successful root adapter before selection', async () => {
+    const adapter: RecursivePriceAdapter = {
+      name: 'independent-wrapper-nav',
+      async resolve(priceTarget, context) {
+        if (priceTarget.token.toLowerCase() !== WRAPPER.toLowerCase()) return null
+        const underlying = await context.require(target(UNDERLYING), 'wrapper underlying')
+        return {
+          priceUsd: 101,
+          inputs: [{ path: underlying }],
+          metadata: { independenceKey: 'wrapper-nav' },
+        }
+      },
+    }
+    const engine = new RecursivePriceEngine(
+      async priceTarget => priceTarget.token.toLowerCase() === UNDERLYING.toLowerCase()
+        ? marketPath(priceTarget.token, 1)
+        : marketPath(priceTarget.token, 100),
+      [adapter],
+    )
+
+    const result = await engine.resolveCandidates(target())
+
+    expect(result).toMatchObject({ path: { priceUsd: 100 }, failure: null })
+    expect(result.candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ adapter: 'defillama-historical', priceUsd: 100 }),
+      expect.objectContaining({ adapter: 'independent-wrapper-nav', priceUsd: 101 }),
+    ]))
+  })
+
+  test('quarantines disagreement between independently derived root adapters', async () => {
+    const derivedAdapter = (name: string, priceUsd: number): RecursivePriceAdapter => ({
+      name,
+      async resolve(priceTarget, context) {
+        if (priceTarget.token.toLowerCase() !== WRAPPER.toLowerCase()) return null
+        const underlying = await context.require(target(UNDERLYING), 'pool constituent')
+        return { priceUsd, inputs: [{ path: underlying }], metadata: {} }
+      },
+    })
+    const engine = new RecursivePriceEngine(
+      async priceTarget => priceTarget.token.toLowerCase() === UNDERLYING.toLowerCase()
+        ? marketPath(priceTarget.token, 1)
+        : null,
+      [derivedAdapter('reserve-nav-a', 100), derivedAdapter('reserve-nav-b', 80)],
+    )
+
+    const result = await engine.resolveCandidates(target())
+
+    expect(result).toMatchObject({
+      path: null,
+      failure: { reason: 'disagreement' },
+    })
+    expect(result.candidates).toHaveLength(2)
+    expect(result.failure?.attempts.at(-1)?.error).toContain('2000.00 bps')
+  })
 })
