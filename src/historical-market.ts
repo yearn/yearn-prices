@@ -15,6 +15,7 @@ import { getHistoricalPriceEvidenceCandidates } from './queries'
 import {
   DisagreementPricingError,
   InvalidPricingError,
+  isRetryablePricingError,
   type HistoricalMarketPriceResolver,
   type RecursivePriceTarget,
   type ResolvedPricePath,
@@ -477,9 +478,11 @@ export function createHistoricalMarketPriceResolver(
     pending.clear()
     await prefetch(batch.map(item => item.target))
     for (const item of batch) {
-      const entry = providerCache.get(providerTargetKey(item.target))
+      const key = providerTargetKey(item.target)
+      const entry = providerCache.get(key)
       if (entry?.error) {
         for (const waiter of item.waiters) waiter.reject(entry.error)
+        if (isRetryablePricingError(entry.error)) providerCache.delete(key)
       } else {
         for (const waiter of item.waiters) waiter.resolve(entry?.resolution ?? null)
       }
@@ -490,7 +493,10 @@ export function createHistoricalMarketPriceResolver(
     const key = providerTargetKey(target)
     const cached = providerCache.get(key)
     if (cached) {
-      if (cached.error) throw cached.error
+      if (cached.error) {
+        if (isRetryablePricingError(cached.error)) providerCache.delete(key)
+        throw cached.error
+      }
       return cached.resolution
     }
     if (!defiLlama.getBatchHistorical) return loadSingleProviderResolution(target)

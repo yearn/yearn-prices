@@ -142,6 +142,58 @@ describe('historical market resolver', () => {
     expect(getHistorical).not.toHaveBeenCalled()
   })
 
+  test('retries a transient prefetched failure from the provider on the next attempt', async () => {
+    const failure = new RetryablePricingError('DeFiLlama batch HTTP 429')
+    const getBatchHistorical = vi.fn()
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValueOnce({
+        coins: {
+          [`ethereum:${TOKEN}`]: {
+            symbol: 'RETRIED',
+            prices: [{ price: 100, timestamp: REQUESTED_TIMESTAMP - 20 }],
+          },
+        },
+      })
+    const resolver = createHistoricalMarketPriceResolver(pool, {}, {
+      loadCandidates: vi.fn().mockResolvedValue([]),
+      defiLlama: { getHistorical: vi.fn(), getBatchHistorical },
+    })
+    const target = { chain: 'ethereum', token: TOKEN, requestedTimestamp: REQUESTED_TIMESTAMP }
+
+    await resolver.prefetch?.([target])
+    await expect(resolver(target)).rejects.toBe(failure)
+
+    await resolver.prefetch?.([target])
+    await expect(resolver(target)).resolves.toMatchObject({
+      symbol: 'RETRIED',
+      priceUsd: 100,
+    })
+    expect(getBatchHistorical).toHaveBeenCalledTimes(2)
+  })
+
+  test('retries a transient coalesced failure from the provider on the next request', async () => {
+    const failure = new RetryablePricingError('DeFiLlama batch HTTP 503')
+    const getBatchHistorical = vi.fn()
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValueOnce({
+        coins: {
+          [`ethereum:${TOKEN}`]: {
+            symbol: 'RETRIED',
+            prices: [{ price: 100, timestamp: REQUESTED_TIMESTAMP - 20 }],
+          },
+        },
+      })
+    const resolver = createHistoricalMarketPriceResolver(pool, { batchDelayMs: 0 }, {
+      loadCandidates: vi.fn().mockResolvedValue([]),
+      defiLlama: { getHistorical: vi.fn(), getBatchHistorical },
+    })
+    const target = { chain: 'ethereum', token: TOKEN, requestedTimestamp: REQUESTED_TIMESTAMP }
+
+    await expect(resolver(target)).rejects.toBe(failure)
+    await expect(resolver(target)).resolves.toMatchObject({ symbol: 'RETRIED', priceUsd: 100 })
+    expect(getBatchHistorical).toHaveBeenCalledTimes(2)
+  })
+
   test('reuses strict persisted evidence before making a provider request', async () => {
     const getHistorical = vi.fn()
     const resolver = createHistoricalMarketPriceResolver(pool, {}, {
