@@ -77,7 +77,7 @@ function optionalBoolean(value: string | undefined): boolean | undefined {
 }
 
 const options = parseOptions(process.argv.slice(2))
-const pool = createPool(databaseUrl)
+const pool = createPool(databaseUrl, process.env.DATABASE_SCHEMA)
 
 try {
   const marketPrice = createHistoricalMarketPriceResolver(pool, {

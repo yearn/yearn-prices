@@ -100,7 +100,7 @@ function exactEodFromArgs(): number {
 
 await validateConfiguredRpcChainIds()
 const requestedTimestamp = exactEodFromArgs()
-const pool = createPool(databaseUrl)
+const pool = createPool(databaseUrl, process.env.DATABASE_SCHEMA)
 try {
   const baseMarket = createHistoricalMarketPriceResolver(pool, {
     searchWidth: '6h',

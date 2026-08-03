@@ -58,7 +58,7 @@ function chunk<T>(items: T[], size: number): T[][] {
   return result
 }
 
-const pool = createPool(databaseUrl)
+const pool = createPool(databaseUrl, process.env.DATABASE_SCHEMA)
 
 try {
   const args = parseArgs(process.argv.slice(2))

@@ -7,7 +7,7 @@ loadEnv()
 const databaseUrl = process.env.DATABASE_URL
 if (!databaseUrl) throw new Error('DATABASE_URL is required')
 
-const pool = createPool(databaseUrl)
+const pool = createPool(databaseUrl, process.env.DATABASE_SCHEMA)
 try {
   const progress = await getDailyPriceProgress(pool)
   console.info(JSON.stringify({

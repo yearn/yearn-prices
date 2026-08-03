@@ -41,7 +41,7 @@ const acceptedTargets = priceRecords.flatMap(record => (
   classifyProductionPrice(record).accepted ? [productionDailyTarget(record, manifest)] : []
 ))
 
-const pool = createPool(databaseUrl)
+const pool = createPool(databaseUrl, process.env.DATABASE_SCHEMA)
 try {
   for (const batch of chunk(writes, 500)) await insertTokenPrices(pool, batch)
   const targetsInserted = await enqueueDailyPriceTargets(pool, targets)

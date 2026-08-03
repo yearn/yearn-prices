@@ -23,7 +23,7 @@ if (!databaseUrl) {
   throw new Error('DATABASE_URL is required')
 }
 
-const pool = createPool(databaseUrl)
+const pool = createPool(databaseUrl, process.env.DATABASE_SCHEMA)
 const stats: WarmupStats = {
   cacheHits: 0,
   apiCalls: 0,

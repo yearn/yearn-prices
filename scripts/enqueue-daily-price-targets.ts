@@ -42,7 +42,7 @@ const lines = (await readFile(inputPath, 'utf8'))
   .map(line => line.trim())
   .filter(Boolean)
 const targets = lines.map((line, index) => parseTarget(line, index + 1))
-const pool = createPool(databaseUrl)
+const pool = createPool(databaseUrl, process.env.DATABASE_SCHEMA)
 
 try {
   const inserted = await enqueueDailyPriceTargets(pool, targets)

@@ -40,7 +40,7 @@ function countMap(rows: CountRow[]): Record<string, number> {
   return Object.fromEntries(rows.map(row => [row.name, Number(row.count)]))
 }
 
-const pool = createPool(databaseUrl)
+const pool = createPool(databaseUrl, process.env.DATABASE_SCHEMA)
 try {
   const [
     chainResult,
