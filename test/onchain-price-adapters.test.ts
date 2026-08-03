@@ -278,7 +278,7 @@ describe('wrapper and lending price adapters', () => {
     })
   })
 
-  test('marks missing RPC configuration as unsupported with exact adapter attempts', async () => {
+  test('keeps missing RPC configuration retryable instead of terminalizing the asset', async () => {
     const engine = new RecursivePriceEngine(
       async () => null,
       createOnchainPriceAdapters({ clientForChain: () => null }),
@@ -286,10 +286,11 @@ describe('wrapper and lending price adapters', () => {
 
     const result = await engine.resolve(target())
 
-    expect(result).toMatchObject({ path: null, failure: { reason: 'unsupported' } })
+    expect(result).toMatchObject({ path: null, failure: { reason: 'retryable' } })
     expect(result.failure?.attempts[0]).toMatchObject({
       adapter: 'erc4626-convert-to-assets',
-      error: 'RPC_URL_1 is not configured',
+      reason: 'retryable',
+      error: 'RPC_URL_1 is not configured; on-chain pricing is temporarily unavailable',
     })
     expect(result.failure?.attempts).toHaveLength(9)
   })

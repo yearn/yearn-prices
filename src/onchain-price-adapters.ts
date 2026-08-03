@@ -170,7 +170,9 @@ async function contractContext(
   const chainId = chainNameToId(target.chain)
   if (chainId == null) throw new Error(`Unsupported chain: ${target.chain}`)
   const client = options.clientForChain(chainId)
-  if (!client) throw new Error(`RPC_URL_${chainId} is not configured`)
+  if (!client) {
+    throw new RetryablePricingError(`RPC_URL_${chainId} is not configured; on-chain pricing is temporarily unavailable`)
+  }
   const blockNumber = await (options.blockForTarget ?? defaultBlockForTarget)(client, chainId, target)
   const numericBlockNumber = Number(blockNumber)
   if (!Number.isSafeInteger(numericBlockNumber) || numericBlockNumber < 0) {
