@@ -119,6 +119,17 @@ describe('daily price target processor', () => {
     expect(outcome).toMatchObject({
       status: 'retryable',
       nextRetryTimestamp: REQUESTED_TIMESTAMP + 600,
+      metadata: {
+        resolutionFailure: 'retryable',
+        adapterVersion: 'defillama-eod-v1',
+        policyVersion: 'eod-candidate-selection-v1',
+        resolutionAttempts: [{
+          adapter: 'historical-market-price',
+          reason: 'retryable',
+          error: 'HTTP 503',
+          adapterVersion: 'defillama-eod-v1',
+        }],
+      },
     })
     expect(recordOutcome).toHaveBeenCalledOnce()
   })
@@ -142,6 +153,10 @@ describe('daily price target processor', () => {
       status: 'quarantined',
       failureClass: 'invalid',
       failureReason: 'pool-nav (invalid): missing constituent',
+      metadata: {
+        adapterVersion: 'historical-onchain-v1',
+        policyVersion: 'eod-candidate-selection-v1',
+      },
     })
   })
 

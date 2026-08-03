@@ -49,6 +49,10 @@ is limited to 500 targets, requires a human-readable reason, and is scoped eithe
 with optional failure-class, adapter, adapter-version, or policy-version filters. The database audit retains the
 authenticated client id, scope, and complete prior outcomes before attempt state is reset.
 
+Terminal outcomes retain the active candidate-selection policy version and the applicable historical-market or
+on-chain adapter version. Version-scoped requeues therefore select the exact failed methodology recorded by the
+worker rather than inferring it from the currently deployed code.
+
 ## Evidence and selection
 
 Each stored candidate has a durable identity composed from its source, adapter, adapter version, and provider

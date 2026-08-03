@@ -3,6 +3,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createPool } from '../src/db'
 import { normalizeTokenAddress } from '../src/chains'
 import {
+  ONCHAIN_ADAPTER_VERSION,
+  PRICE_SELECTION_POLICY_VERSION,
+} from '../src/candidate-identity'
+import {
   claimDailyPriceTargets,
   enqueueDailyPriceTargets,
   getDailyPriceTargets,
@@ -20,7 +24,10 @@ const TOKEN = '0x00000000000000000000000000000000000000e0'
 const STALE_TOKEN = '0x00000000000000000000000000000000000000e1'
 const CANDIDATE_TOKEN = '0x00000000000000000000000000000000000000e2'
 const RETRY_TOKEN = '0x00000000000000000000000000000000000000e3'
+const VERSION_TOKEN = '0x00000000000000000000000000000000000000e4'
 const EOD = 1_704_153_599
+const VERSION_EOD = 946_771_199
+const TEST_TOKENS = [TOKEN, STALE_TOKEN, CANDIDATE_TOKEN, RETRY_TOKEN, VERSION_TOKEN]
 
 describe.skipIf(!enabled)('isolated Postgres integration', () => {
   let pool: Pool
@@ -29,14 +36,14 @@ describe.skipIf(!enabled)('isolated Postgres integration', () => {
     if (!databaseUrl || !databaseSchema) throw new Error('isolated database is not configured')
     pool = createPool(databaseUrl, databaseSchema)
     await pool.query('DELETE FROM daily_price_requeue_audits WHERE requested_by = $1', ['postgres-integration'])
-    await pool.query('DELETE FROM daily_price_targets WHERE lower(token) = ANY($1::text[])', [[TOKEN, STALE_TOKEN, CANDIDATE_TOKEN, RETRY_TOKEN].map(token => token.toLowerCase())])
-    await pool.query('DELETE FROM token_prices WHERE lower(token) = ANY($1::text[])', [[TOKEN, STALE_TOKEN, CANDIDATE_TOKEN, RETRY_TOKEN].map(token => token.toLowerCase())])
+    await pool.query('DELETE FROM daily_price_targets WHERE lower(token) = ANY($1::text[])', [TEST_TOKENS.map(token => token.toLowerCase())])
+    await pool.query('DELETE FROM token_prices WHERE lower(token) = ANY($1::text[])', [TEST_TOKENS.map(token => token.toLowerCase())])
   })
 
   afterAll(async () => {
     await pool.query('DELETE FROM daily_price_requeue_audits WHERE requested_by = $1', ['postgres-integration'])
-    await pool.query('DELETE FROM daily_price_targets WHERE lower(token) = ANY($1::text[])', [[TOKEN, STALE_TOKEN, CANDIDATE_TOKEN, RETRY_TOKEN].map(token => token.toLowerCase())])
-    await pool.query('DELETE FROM token_prices WHERE lower(token) = ANY($1::text[])', [[TOKEN, STALE_TOKEN, CANDIDATE_TOKEN, RETRY_TOKEN].map(token => token.toLowerCase())])
+    await pool.query('DELETE FROM daily_price_targets WHERE lower(token) = ANY($1::text[])', [TEST_TOKENS.map(token => token.toLowerCase())])
+    await pool.query('DELETE FROM token_prices WHERE lower(token) = ANY($1::text[])', [TEST_TOKENS.map(token => token.toLowerCase())])
     await pool.end()
   })
 
@@ -193,5 +200,66 @@ describe.skipIf(!enabled)('isolated Postgres integration', () => {
           retryExhausted: expect.objectContaining({ originalFailureClass: 'retryable' }),
         }),
       })])
+  })
+
+  it('requeues terminal worker outcomes by adapter and policy version', async () => {
+    const inserted = await pool.query<{ id: string | number }>(
+      `INSERT INTO daily_price_targets (chain, token, eod_at, status, attempt_count)
+       VALUES ('ethereum', $1, to_timestamp($2), 'in_progress', 1)
+       RETURNING id`,
+      [normalizeTokenAddress(VERSION_TOKEN), VERSION_EOD],
+    )
+    const targetId = Number(inserted.rows[0].id)
+    await processDailyPriceTarget(pool, {
+      resolve: async () => ({
+        path: null,
+        failure: {
+          reason: 'unsupported',
+          token: VERSION_TOKEN,
+          attempts: [{
+            adapter: 'curve-reserve-nav',
+            reason: 'unsupported',
+            error: 'Unsupported test constituent',
+          }],
+        },
+      }),
+    }, {
+      id: targetId,
+      chain: 'ethereum',
+      token: VERSION_TOKEN,
+      eodTimestamp: VERSION_EOD,
+      status: 'in_progress',
+      attemptCount: 1,
+      adapter: null,
+      failureClass: null,
+      failureReason: null,
+      metadata: {},
+    })
+
+    await expect(getDailyPriceTargets(pool, [{
+      chain: 'ethereum', token: VERSION_TOKEN, eodTimestamp: VERSION_EOD,
+    }])).resolves.toEqual([expect.objectContaining({
+      status: 'unsupported',
+      adapter: 'curve-reserve-nav',
+      metadata: expect.objectContaining({
+        adapterVersion: ONCHAIN_ADAPTER_VERSION,
+        policyVersion: PRICE_SELECTION_POLICY_VERSION,
+      }),
+    })])
+
+    await expect(requeueDailyPriceTargets(pool, {
+      requestedBy: 'postgres-integration',
+      reason: 'reviewed adapter and policy versions',
+      scope: {
+        filter: {
+          chain: 'ethereum',
+          eodTimestamp: VERSION_EOD,
+          statuses: ['unsupported'],
+          adapter: 'curve-reserve-nav',
+          adapterVersion: ONCHAIN_ADAPTER_VERSION,
+          policyVersion: PRICE_SELECTION_POLICY_VERSION,
+        },
+      },
+    })).resolves.toMatchObject({ requeued: 1 })
   })
 })

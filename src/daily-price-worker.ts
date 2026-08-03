@@ -1,5 +1,10 @@
 import type { Pool } from '@neondatabase/serverless'
-import { priceCandidateId } from './candidate-identity'
+import {
+  HISTORICAL_MARKET_ADAPTER_VERSION,
+  ONCHAIN_ADAPTER_VERSION,
+  PRICE_SELECTION_POLICY_VERSION,
+  priceCandidateId,
+} from './candidate-identity'
 import {
   buildDailyPriceProgressSnapshot,
   claimDailyPriceTargets,
@@ -158,6 +163,21 @@ function failureAdapter(result: Extract<RecursivePriceResult, { path: null }>): 
     ?? null
 }
 
+const HISTORICAL_MARKET_FAILURE_ADAPTERS = new Set([
+  'historical-market-price',
+  'defillama-historical',
+  'defillama-coingecko-alias',
+  'defillama-canonical-market-proxy',
+  'production-yearn-prices-import',
+])
+
+function failureAdapterVersion(adapter: string | null): string | null {
+  if (!adapter || adapter === 'candidate-selection') return null
+  return HISTORICAL_MARKET_FAILURE_ADAPTERS.has(adapter)
+    ? HISTORICAL_MARKET_ADAPTER_VERSION
+    : ONCHAIN_ADAPTER_VERSION
+}
+
 function failureOutcome(
   result: Extract<RecursivePriceResult, { path: null }>,
   nowTimestamp: number,
@@ -165,9 +185,15 @@ function failureOutcome(
 ): DailyPriceOutcome {
   const reason = failureReason(result)
   const adapter = failureAdapter(result)
+  const adapterVersion = failureAdapterVersion(adapter)
   const metadata = {
     resolutionFailure: result.failure.reason,
-    resolutionAttempts: result.failure.attempts,
+    resolutionAttempts: result.failure.attempts.map(attempt => ({
+      ...attempt,
+      adapterVersion: failureAdapterVersion(attempt.adapter),
+    })),
+    adapterVersion,
+    policyVersion: PRICE_SELECTION_POLICY_VERSION,
   }
 
   if (result.failure.reason === 'retryable') {
@@ -198,14 +224,22 @@ function thrownFailure(error: unknown, nowTimestamp: number, retryDelaySeconds: 
       status: 'retryable',
       failureReason: `Resolver threw a retryable error: ${message}`,
       nextRetryTimestamp: nowTimestamp + retryDelaySeconds,
-      metadata: { resolutionFailure: 'retryable' },
+      metadata: {
+        resolutionFailure: 'retryable',
+        adapterVersion: null,
+        policyVersion: PRICE_SELECTION_POLICY_VERSION,
+      },
     }
   }
   return {
     status: 'quarantined',
     failureClass: 'invalid',
     failureReason: `Resolver threw unexpectedly: ${message}`,
-    metadata: { resolutionFailure: 'invalid' },
+    metadata: {
+      resolutionFailure: 'invalid',
+      adapterVersion: null,
+      policyVersion: PRICE_SELECTION_POLICY_VERSION,
+    },
   }
 }
 
