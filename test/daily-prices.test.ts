@@ -5,12 +5,15 @@ import {
   claimDailyPriceTargets,
   enqueueDailyPriceTargets,
   getDailyPriceProgress,
+  getNextDailyPriceRetryTimestamp,
   normalizeDailyPriceTarget,
+  requeueDailyPriceTargets,
   recordDailyPriceOutcome,
   recordDailyPriceOutcomes,
 } from '../src/daily-prices'
 
 const TOKEN = '0x0000000000000000000000000000000000000001'
+const EOD = 1_704_153_599
 
 describe('daily price queue', () => {
   test('enqueues targets idempotently', async () => {
@@ -188,6 +191,50 @@ describe('daily price queue', () => {
     ])).rejects.toThrow('updated 0 of 2 leased targets')
   })
 
+  test('requeues terminal targets transactionally with a durable audit snapshot', async () => {
+    const query = vi.fn().mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT target.*')) {
+        return {
+          rows: [{
+            id: '7',
+            chain: 'ethereum',
+            token: TOKEN,
+            eod_at: '2024-01-01T23:59:59.000Z',
+            status: 'unsupported',
+            attempt_count: 3,
+            adapter: 'legacy-adapter',
+            failure_class: 'unsupported',
+            failure_reason: 'Interface not implemented',
+            metadata: { policyVersion: 'v1' },
+          }],
+        }
+      }
+      if (sql.includes('INSERT INTO daily_price_requeue_audits')) return { rows: [{ id: '42' }] }
+      return { rows: [] }
+    })
+    const client = { query, release: vi.fn() }
+    const transactionalPool = { connect: vi.fn().mockResolvedValue(client) } as unknown as Pool
+
+    const result = await requeueDailyPriceTargets(transactionalPool, {
+      requestedBy: 'operations',
+      reason: 'Policy v2 reviewed',
+      scope: { targets: [{ chain: 'ethereum', token: TOKEN, eodTimestamp: EOD }] },
+      nowTimestamp: EOD + 1,
+    })
+
+    expect(result).toMatchObject({ auditId: 42, requeued: 1, targets: [{ id: 7 }] })
+    const auditCall = query.mock.calls.find(([sql]) => sql.includes('INSERT INTO daily_price_requeue_audits'))
+    expect(auditCall?.[1]).toEqual(expect.arrayContaining([
+      'operations',
+      'Policy v2 reviewed',
+      expect.stringContaining('Interface not implemented'),
+    ]))
+    const updateCall = query.mock.calls.find(([sql]) => sql.includes("status = 'pending'"))
+    expect(updateCall?.[0]).toContain('attempt_count = 0')
+    expect(query.mock.calls.map(([sql]) => sql)).toEqual(expect.arrayContaining(['BEGIN', 'COMMIT']))
+    expect(client.release).toHaveBeenCalledOnce()
+  })
+
   test('reports durable progress, outcomes, adapters, elapsed time, and rate', async () => {
     const query = vi.fn()
       .mockResolvedValueOnce({
@@ -224,5 +271,13 @@ describe('daily price queue', () => {
       processingRate: 0.07,
       current: { chain: 'ethereum', token: TOKEN, eodTimestamp: 1_700_006_399 },
     })
+  })
+
+  test('loads only the next retry still inside the attempt budget', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [{ next_retry_at: '2024-01-02T00:01:00.000Z' }] })
+    await expect(getNextDailyPriceRetryTimestamp({ query } as unknown as Pool, 3))
+      .resolves.toBe(1_704_153_660)
+    expect(query.mock.calls[0][0]).toContain('attempt_count < $1')
+    expect(query.mock.calls[0][1]).toEqual([3])
   })
 })

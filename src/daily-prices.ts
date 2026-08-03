@@ -69,6 +69,33 @@ export interface DailyPriceOutcomeRecord {
   outcome: DailyPriceOutcome
 }
 
+export interface DailyPriceRequeueFilter {
+  chain: string
+  eodTimestamp: number
+  statuses?: Array<'unsupported' | 'quarantined'>
+  failureClass?: DailyPriceFailureClass
+  adapter?: string
+  adapterVersion?: string
+  policyVersion?: string
+}
+
+export type DailyPriceRequeueScope =
+  | { targets: DailyPriceTargetInput[]; filter?: never }
+  | { targets?: never; filter: DailyPriceRequeueFilter }
+
+export interface DailyPriceRequeueRequest {
+  requestedBy: string
+  reason: string
+  scope: DailyPriceRequeueScope
+  nowTimestamp?: number
+}
+
+export interface DailyPriceRequeueResult {
+  auditId: number
+  requeued: number
+  targets: Array<Pick<DailyPriceTarget, 'id' | 'chain' | 'token' | 'eodTimestamp'>>
+}
+
 interface DbDailyPriceProgressRow {
   started_at: string | Date | null
   total: string | number
@@ -102,6 +129,7 @@ export interface DailyPriceProgressSnapshot extends DailyPriceProgress {
 }
 
 const ENQUEUE_BATCH_SIZE = 500
+const REQUEUE_LIMIT = 500
 
 export function normalizeDailyPriceTarget(
   target: DailyPriceTargetInput,
@@ -203,6 +231,195 @@ export async function getDailyPriceTargets(
     params,
   )
   return result.rows.map(mapDailyPriceTarget)
+}
+
+function nonEmptyAuditText(value: string, name: string, maximum: number): string {
+  const normalized = value.trim()
+  if (normalized.length === 0 || normalized.length > maximum) {
+    throw new Error(`${name} must contain between 1 and ${maximum} characters`)
+  }
+  return normalized
+}
+
+function normalizeRequeueFilter(
+  filter: DailyPriceRequeueFilter,
+  nowTimestamp: number,
+): DailyPriceRequeueFilter {
+  const normalized = normalizeDailyPriceTarget({
+    chain: filter.chain,
+    token: '0x0000000000000000000000000000000000000000',
+    eodTimestamp: filter.eodTimestamp,
+  }, nowTimestamp)
+  const statuses: Array<'unsupported' | 'quarantined'> = [
+    ...new Set(filter.statuses ?? ['unsupported', 'quarantined'] as const),
+  ]
+  if (statuses.length === 0) throw new Error('Requeue filter statuses must not be empty')
+  if (filter.failureClass && !['unsupported', 'retryable', 'invalid', 'disagreement'].includes(filter.failureClass)) {
+    throw new Error('Requeue filter failureClass is invalid')
+  }
+  const optional = (value: string | undefined, name: string) => (
+    value == null ? undefined : nonEmptyAuditText(value, name, 100)
+  )
+  return {
+    chain: normalized.chain,
+    eodTimestamp: normalized.eodTimestamp,
+    statuses,
+    failureClass: filter.failureClass,
+    adapter: optional(filter.adapter, 'adapter'),
+    adapterVersion: optional(filter.adapterVersion, 'adapterVersion'),
+    policyVersion: optional(filter.policyVersion, 'policyVersion'),
+  }
+}
+
+export async function requeueDailyPriceTargets(
+  pool: Pool,
+  request: DailyPriceRequeueRequest,
+): Promise<DailyPriceRequeueResult> {
+  const requestedBy = nonEmptyAuditText(request.requestedBy, 'requestedBy', 100)
+  const reason = nonEmptyAuditText(request.reason, 'reason', 500)
+  const nowTimestamp = request.nowTimestamp ?? Math.floor(Date.now() / 1_000)
+  const targetInputs = request.scope.targets
+  const filterInput = request.scope.filter
+  const hasTargets = targetInputs != null
+  const hasFilter = filterInput != null
+  if (hasTargets === hasFilter) throw new Error('Requeue requires exactly one targets or filter scope')
+
+  const params: Array<string | number | string[]> = []
+  let selectorSql: string
+  let normalizedScope: DailyPriceRequeueScope
+  if (hasTargets) {
+    const unique = new Map<string, DailyPriceTargetInput>()
+    for (const input of targetInputs!) {
+      const target = normalizeDailyPriceTarget(input, nowTimestamp)
+      unique.set(`${target.chain}:${target.token}:${target.eodTimestamp}`, target)
+    }
+    const targets = [...unique.values()]
+    if (targets.length === 0 || targets.length > REQUEUE_LIMIT) {
+      throw new Error(`Requeue targets must contain between 1 and ${REQUEUE_LIMIT} unique entries`)
+    }
+    const values = targets.map(target => {
+      const offset = params.length
+      params.push(target.chain, target.token, unixToIsoTimestamp(target.eodTimestamp))
+      return `($${offset + 1}, $${offset + 2}, $${offset + 3}::timestamptz)`
+    })
+    selectorSql = `
+      INNER JOIN (VALUES ${values.join(', ')}) AS requested(chain, token, eod_at)
+        ON target.chain = requested.chain
+       AND target.token = requested.token
+       AND target.eod_at = requested.eod_at
+    `
+    normalizedScope = { targets }
+  } else {
+    const filter = normalizeRequeueFilter(filterInput!, nowTimestamp)
+    params.push(filter.chain, unixToIsoTimestamp(filter.eodTimestamp), filter.statuses!)
+    selectorSql = `
+      WHERE target.chain = $1
+        AND target.eod_at = $2::timestamptz
+        AND target.status = ANY($3::text[])
+    `
+    if (filter.failureClass) {
+      params.push(filter.failureClass)
+      selectorSql += ` AND target.failure_class = $${params.length}`
+    }
+    if (filter.adapter) {
+      params.push(filter.adapter)
+      selectorSql += ` AND target.adapter = $${params.length}`
+    }
+    if (filter.adapterVersion) {
+      params.push(filter.adapterVersion)
+      selectorSql += ` AND target.metadata->>'adapterVersion' = $${params.length}`
+    }
+    if (filter.policyVersion) {
+      params.push(filter.policyVersion)
+      selectorSql += ` AND target.metadata->>'policyVersion' = $${params.length}`
+    }
+    normalizedScope = { filter }
+  }
+
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const selected = await client.query<DbDailyPriceTargetRow>(
+      `
+        SELECT target.*
+        FROM daily_price_targets target
+        ${selectorSql}
+        ${hasTargets ? "WHERE target.status IN ('unsupported', 'quarantined')" : ''}
+        ORDER BY target.chain, target.eod_at, target.token
+        LIMIT ${REQUEUE_LIMIT + 1}
+        FOR UPDATE OF target
+      `,
+      params,
+    )
+    if (selected.rows.length > REQUEUE_LIMIT) {
+      throw new Error(`Requeue scope matches more than ${REQUEUE_LIMIT} targets`)
+    }
+
+    const priorTargets = selected.rows.map(row => ({
+      id: Number(row.id),
+      chain: row.chain,
+      token: row.token,
+      eodTimestamp: pgTimestampToUnix(row.eod_at),
+      status: row.status,
+      attemptCount: Number(row.attempt_count),
+      adapter: row.adapter,
+      failureClass: row.failure_class,
+      failureReason: row.failure_reason,
+      metadata: isRecord(row.metadata) ? row.metadata : {},
+    }))
+    const audit = await client.query<{ id: string | number }>(
+      `
+        INSERT INTO daily_price_requeue_audits (
+          requested_by, reason, scope, targets, target_count
+        ) VALUES ($1, $2, $3::jsonb, $4::jsonb, $5)
+        RETURNING id
+      `,
+      [requestedBy, reason, JSON.stringify(normalizedScope), JSON.stringify(priorTargets), priorTargets.length],
+    )
+    const auditId = Number(audit.rows[0]?.id)
+    if (!Number.isSafeInteger(auditId) || auditId <= 0) throw new Error('Requeue audit insert did not return an id')
+
+    if (priorTargets.length > 0) {
+      const ids = priorTargets.map(target => target.id)
+      await client.query(
+        `
+          UPDATE daily_price_targets
+          SET
+            status = 'pending',
+            attempt_count = 0,
+            adapter = NULL,
+            failure_class = NULL,
+            failure_reason = NULL,
+            next_retry_at = NULL,
+            lease_expires_at = NULL,
+            last_attempt_at = NULL,
+            completed_at = NULL,
+            metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+              'lastRequeue', jsonb_build_object(
+                'auditId', $2::bigint,
+                'requestedBy', $3::text,
+                'reason', $4::text,
+                'requeuedAt', $5::timestamptz
+              )
+            ),
+            updated_at = NOW()
+          WHERE id = ANY($1::bigint[])
+        `,
+        [ids, auditId, requestedBy, reason, unixToIsoTimestamp(nowTimestamp)],
+      )
+    }
+    await client.query('COMMIT')
+    return {
+      auditId,
+      requeued: priorTargets.length,
+      targets: priorTargets.map(({ id, chain, token, eodTimestamp }) => ({ id, chain, token, eodTimestamp })),
+    }
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
 }
 
 export async function markDailyPriceTargetsPriced(
@@ -496,6 +713,20 @@ export async function getDailyPriceProgress(pool: Pool): Promise<DailyPriceProgr
     quarantined: Number(row?.quarantined ?? 0),
     adapterCounts: Object.fromEntries(adaptersResult.rows.map(row => [row.adapter, Number(row.count)])),
   }
+}
+
+export async function getNextDailyPriceRetryTimestamp(pool: Pool, maxAttempts: number): Promise<number | null> {
+  if (!Number.isInteger(maxAttempts) || maxAttempts <= 0) throw new Error('maxAttempts must be a positive integer')
+  const result = await pool.query<{ next_retry_at: string | Date | null }>(
+    `
+      SELECT MIN(next_retry_at) AS next_retry_at
+      FROM daily_price_targets
+      WHERE status = 'retryable'
+        AND attempt_count < $1
+    `,
+    [maxAttempts],
+  )
+  return result.rows[0]?.next_retry_at ? pgTimestampToUnix(result.rows[0].next_retry_at) : null
 }
 
 export function buildDailyPriceProgressSnapshot(

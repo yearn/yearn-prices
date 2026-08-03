@@ -5,7 +5,9 @@ import { ApiError } from '../src/errors'
 import {
   handleDailyEnqueue,
   handleDailyPriceRead,
+  handleDailyRequeue,
   parseDailyEnqueuePayload,
+  parseDailyRequeuePayload,
 } from '../src/routes/daily-prices'
 import type { PriceEvidenceCandidate } from '../src/types'
 
@@ -25,6 +27,7 @@ function candidate(): PriceEvidenceCandidate {
     symbol: 'TEST',
     confidence: 0.99,
     source: 'defillama',
+    candidateId: 'defillama-historical',
     adapter: 'defillama-historical',
     classification: 'observed',
     quality: 'near-eod',
@@ -153,6 +156,70 @@ describe('daily enqueue API', () => {
     expect(enqueue).toHaveBeenCalledWith({}, [
       expect.objectContaining({ token: secondToken, eodTimestamp: EOD }),
     ])
+  })
+})
+
+describe('daily requeue API', () => {
+  test('parses exact targets and reviewed filter scopes', () => {
+    expect(parseDailyRequeuePayload({
+      reason: 'Adapter v2 now supports this contract',
+      targets: [{ chain: 'ethereum', token: TOKEN, day: '2024-01-01' }],
+    }, 'operations', EOD + 1)).toMatchObject({
+      requestedBy: 'operations',
+      scope: { targets: [{ chain: 'ethereum', token: TOKEN, eodTimestamp: EOD }] },
+    })
+
+    expect(parseDailyRequeuePayload({
+      reason: 'Policy review approved adapter version',
+      filter: {
+        chain: 'ethereum',
+        day: '2024-01-01',
+        statuses: ['quarantined'],
+        adapterVersion: 'amm-nav-v2',
+      },
+    }, 'operations', EOD + 1)).toMatchObject({
+      scope: {
+        filter: {
+          chain: 'ethereum',
+          eodTimestamp: EOD,
+          statuses: ['quarantined'],
+          adapterVersion: 'amm-nav-v2',
+        },
+      },
+    })
+  })
+
+  test('requires one bounded scope and an audit reason', () => {
+    expect(() => parseDailyRequeuePayload({ targets: [] }, 'operations', EOD + 1)).toThrow('reason is required')
+    expect(() => parseDailyRequeuePayload({
+      reason: 'ambiguous',
+      targets: [{ chain: 'ethereum', token: TOKEN, day: '2024-01-01' }],
+      filter: { chain: 'ethereum', day: '2024-01-01' },
+    }, 'operations', EOD + 1)).toThrow('exactly one')
+  })
+
+  test('returns the durable audit id from an authenticated requeue', async () => {
+    const requeue = vi.fn().mockResolvedValue({
+      auditId: 42,
+      requeued: 1,
+      targets: [{ id: 7, chain: 'ethereum', token: TOKEN, eodTimestamp: EOD }],
+    })
+    const response = await handleDailyRequeue(
+      new Request('https://prices.local/api/daily-prices/requeue', {
+        method: 'POST',
+        body: JSON.stringify({
+          reason: 'Reviewed mapping added',
+          targets: [{ chain: 'ethereum', token: TOKEN, day: '2024-01-01' }],
+        }),
+      }),
+      {} as Pool,
+      'operations',
+      { requeue },
+    )
+
+    expect(response.status).toBe(202)
+    await expect(response.json()).resolves.toMatchObject({ auditId: 42, requeued: 1 })
+    expect(requeue).toHaveBeenCalledWith({}, expect.objectContaining({ requestedBy: 'operations' }))
   })
 })
 describe('strict daily reads', () => {

@@ -3,6 +3,9 @@ import { normalizeTokenAddress, SUPPORTED_CHAIN_NAMES } from '../chains'
 import {
   enqueueDailyPriceTargets,
   getDailyPriceTargets,
+  requeueDailyPriceTargets,
+  type DailyPriceFailureClass,
+  type DailyPriceRequeueRequest,
   type DailyPriceTargetInput,
 } from '../daily-prices'
 import { selectEodPriceEvidence } from '../evidence'
@@ -29,6 +32,24 @@ export interface DailyEnqueuePayload {
 export interface ParsedDailyEnqueue {
   eodTimestamp: number
   targets: DailyPriceTargetInput[]
+}
+
+interface DailyRequeueTargetInput extends DailyAssetInput {
+  day: string | number
+}
+
+export interface DailyRequeuePayload {
+  reason: string
+  targets?: DailyRequeueTargetInput[]
+  filter?: {
+    chain: string
+    day: string | number
+    statuses?: Array<'unsupported' | 'quarantined'>
+    failureClass?: DailyPriceFailureClass
+    adapter?: string
+    adapterVersion?: string
+    policyVersion?: string
+  }
 }
 
 function parseDay(value: unknown, nowTimestamp: number): number {
@@ -90,6 +111,75 @@ export function parseDailyEnqueuePayload(
     })
   }
   return { eodTimestamp, targets: [...unique.values()] }
+}
+
+export function parseDailyRequeuePayload(
+  value: unknown,
+  requestedBy: string,
+  nowTimestamp = Math.floor(Date.now() / 1_000),
+): DailyPriceRequeueRequest {
+  ensure(value != null && typeof value === 'object' && !Array.isArray(value), 'INVALID_INPUT', 'Body must be an object')
+  const payload = value as Partial<DailyRequeuePayload>
+  ensure(typeof payload.reason === 'string' && payload.reason.trim().length > 0, 'INVALID_INPUT', 'reason is required')
+  ensure(payload.reason.trim().length <= 500, 'INVALID_INPUT', 'reason must not exceed 500 characters')
+  const hasTargets = Array.isArray(payload.targets)
+  const hasFilter = payload.filter != null && typeof payload.filter === 'object' && !Array.isArray(payload.filter)
+  ensure(hasTargets !== hasFilter, 'INVALID_INPUT', 'Provide exactly one targets or filter scope')
+
+  if (hasTargets) {
+    ensure(payload.targets!.length > 0, 'INVALID_INPUT', 'targets must not be empty')
+    ensure(payload.targets!.length <= MAX_ENQUEUE_TARGETS, 'INVALID_INPUT', `A maximum of ${MAX_ENQUEUE_TARGETS} targets is allowed`)
+    const targets = payload.targets!.map(raw => {
+      ensure(raw != null && typeof raw === 'object' && !Array.isArray(raw), 'INVALID_INPUT', 'Each target must be an object')
+      ensure(typeof raw.chain === 'string' && typeof raw.token === 'string', 'INVALID_INPUT', 'Each target requires chain and token')
+      return {
+        chain: raw.chain,
+        token: raw.token,
+        eodTimestamp: parseDay(raw.day, nowTimestamp),
+      }
+    })
+    return { requestedBy, reason: payload.reason.trim(), scope: { targets }, nowTimestamp }
+  }
+
+  const filter = payload.filter!
+  ensure(typeof filter.chain === 'string', 'INVALID_INPUT', 'filter.chain is required')
+  ensure(SUPPORTED_CHAIN_NAMES.has(filter.chain.toLowerCase()), 'INVALID_INPUT', `Unsupported chain: ${filter.chain}`)
+  ensure(
+    filter.statuses == null || (Array.isArray(filter.statuses)
+      && filter.statuses.length > 0
+      && filter.statuses.every(status => status === 'unsupported' || status === 'quarantined')),
+    'INVALID_INPUT',
+    'filter.statuses must contain unsupported or quarantined',
+  )
+  ensure(
+    filter.failureClass == null
+      || ['unsupported', 'retryable', 'invalid', 'disagreement'].includes(filter.failureClass),
+    'INVALID_INPUT',
+    'filter.failureClass is invalid',
+  )
+  for (const [name, field] of [
+    ['adapter', filter.adapter],
+    ['adapterVersion', filter.adapterVersion],
+    ['policyVersion', filter.policyVersion],
+  ] as const) {
+    ensure(field == null || (typeof field === 'string' && field.trim().length > 0 && field.length <= 100), 'INVALID_INPUT', `filter.${name} is invalid`)
+  }
+  return {
+    requestedBy,
+    reason: payload.reason.trim(),
+    scope: {
+      filter: {
+        chain: filter.chain,
+        eodTimestamp: parseDay(filter.day, nowTimestamp),
+        statuses: filter.statuses,
+        failureClass: filter.failureClass,
+        adapter: filter.adapter?.trim(),
+        adapterVersion: filter.adapterVersion?.trim(),
+        policyVersion: filter.policyVersion?.trim(),
+      },
+    },
+    nowTimestamp,
+  }
 }
 
 function targetKey(chain: string, token: string): string {
@@ -206,6 +296,39 @@ export async function handleDailyEnqueue(
       complete: priced === parsed.targets.length,
     },
     targets: finalResults,
+  }, { status: 202, headers: { 'cache-control': 'no-store' } })
+}
+
+export interface DailyRequeueDependencies {
+  requeue?: typeof requeueDailyPriceTargets
+}
+
+export async function handleDailyRequeue(
+  request: Request,
+  pool: Pool,
+  requestedBy: string,
+  dependencies: DailyRequeueDependencies = {},
+): Promise<Response> {
+  const contentLength = Number(request.headers.get('content-length') ?? 0)
+  ensure(
+    Number.isSafeInteger(contentLength) && contentLength >= 0 && contentLength <= MAX_ENQUEUE_BODY_BYTES,
+    'INVALID_INPUT',
+    `Request body must not exceed ${MAX_ENQUEUE_BODY_BYTES} bytes`,
+  )
+  const raw = await request.text()
+  ensure(new TextEncoder().encode(raw).byteLength <= MAX_ENQUEUE_BODY_BYTES, 'INVALID_INPUT', `Request body must not exceed ${MAX_ENQUEUE_BODY_BYTES} bytes`)
+  let body: unknown
+  try {
+    body = JSON.parse(raw)
+  } catch {
+    throw new ApiError('INVALID_INPUT', 'Body must be valid JSON')
+  }
+  const parsed = parseDailyRequeuePayload(body, requestedBy)
+  const requeue = dependencies.requeue ?? requeueDailyPriceTargets
+  const result = await requeue(pool, parsed)
+  return jsonResponse({
+    message: 'daily-price-targets-requeued',
+    ...result,
   }, { status: 202, headers: { 'cache-control': 'no-store' } })
 }
 

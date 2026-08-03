@@ -7,7 +7,7 @@ import { readEdgeCache, writeEdgeCache } from './edge-cache'
 import { ApiError, jsonError } from './errors'
 import { optionsResponse, withCors } from './http'
 import { handleHealth } from './routes/health'
-import { handleDailyEnqueue, handleDailyPriceRead } from './routes/daily-prices'
+import { handleDailyEnqueue, handleDailyPriceRead, handleDailyRequeue } from './routes/daily-prices'
 import { handleBatchHistorical, handleHistorical, handleRangeHistorical, handleSpot, notFoundErrorHeaders } from './routes/prices'
 import type { Env } from './types'
 
@@ -23,7 +23,7 @@ function logRequest(request: Request, clientId: string | null, extra?: Record<st
   )
 }
 
-async function routePriceRequest(request: Request, env: Env, pathname: string): Promise<Response> {
+async function routePriceRequest(request: Request, env: Env, pathname: string, clientId: string): Promise<Response> {
   // Spot is a stateless Enso proxy — no database connection needed.
   if (pathname === '/api/prices/spot' && request.method === 'GET') {
     return handleSpot(request, env)
@@ -41,6 +41,10 @@ async function routePriceRequest(request: Request, env: Env, pathname: string): 
 
     if (pathname === '/api/daily-prices/enqueue' && request.method === 'POST') {
       return await handleDailyEnqueue(request, pool)
+    }
+
+    if (pathname === '/api/daily-prices/requeue' && request.method === 'POST') {
+      return await handleDailyRequeue(request, pool, clientId)
     }
 
     const dailyEvidenceMatch = pathname.match(/^\/api\/daily-prices\/evidence\/([^/]+)\/([^/]+)$/)
@@ -105,7 +109,7 @@ export default {
         return cached
       }
 
-      const response = await routePriceRequest(request, env, pathname)
+      const response = await routePriceRequest(request, env, pathname, clientId)
       if (request.method === 'GET') {
         writeEdgeCache(ctx, request, response)
       }
