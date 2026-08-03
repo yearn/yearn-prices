@@ -48,6 +48,7 @@ bun run dev
 | `bun run daily:enqueue-file <targets.jsonl>` | Idempotently enqueue exact-EOD daily targets |
 | `bun run daily:import-production <snapshot.jsonl>` | Import a read-only exact-EOD production snapshot under the documented trust policy |
 | `bun run daily:run` | Resolve the durable daily queue with bounded concurrency |
+| `bun run daily:cycle` | Discover the latest closed day's Yearn assets and run the complete durable cycle |
 | `bun run daily:status` | Print durable EOD queue progress |
 | `bun run daily:canaries` | Run representative historical live canaries for every on-chain adapter |
 | `bun run daily:report` | Print the complete EOD coverage and evidence breakdown |
@@ -57,7 +58,8 @@ bun run dev
 Full route reference, request/response shapes, error codes, and caching behavior are documented in [`docs/routes.md`](docs/routes.md).
 
 The operator dashboard is served at `/daily-prices`. Queue data remains authenticated at
-`/api/daily-prices/progress`.
+`/api/daily-prices/progress`. Reviewed terminal outcomes can be reactivated through the authenticated and audited
+`POST /api/daily-prices/requeue` operation.
 
 ## Authentication
 
@@ -95,7 +97,7 @@ This only updates the deployed Worker; remember to also update 1Password and `de
 
 ## Deployment
 
-Pushing to `main` runs `.github/workflows/deploy.yml`: install deps, load secrets from 1Password, upload them to the Worker, run migrations, warm the price cache, then `wrangler deploy`. `.github/workflows/warmup.yml` runs the warmup script hourly on a cron. `.github/workflows/pr.yml` runs typecheck and tests on every PR.
+Pushing to `main` runs `.github/workflows/deploy.yml`: install deps, load secrets from 1Password, upload them to the Worker, run migrations, warm the price cache, then `wrangler deploy`. `.github/workflows/warmup.yml` runs the legacy spot-price warmup hourly. `.github/workflows/daily-eod.yml` owns daily EOD orchestration at 00:30 UTC: it migrates the database, discovers current Yearn vault-share and underlying assets from Kong, enqueues the latest closed day, and runs the durable worker through terminal outcomes. `.github/workflows/pr.yml` runs typecheck and tests on every PR.
 
 ## Testing
 

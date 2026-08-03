@@ -130,6 +130,31 @@ Limits:
 
 The `day` field may be omitted to select the latest closed UTC day.
 
+## `POST /api/daily-prices/requeue`
+
+Reactivates reviewed `unsupported` or `quarantined` targets. Authentication is required. The request must include a
+reason and exactly one bounded scope:
+
+- `targets`: up to 500 exact chain, token, and closed-day entries; or
+- `filter`: one chain and closed day, optionally narrowed by terminal status, failure class, adapter, adapter version,
+  or policy version.
+
+```json
+{
+  "reason": "amm-nav-v2 now prices every reviewed constituent",
+  "filter": {
+    "chain": "optimism",
+    "day": "2024-01-01",
+    "statuses": ["quarantined"],
+    "adapterVersion": "amm-nav-v2"
+  }
+}
+```
+
+Before resetting attempt and lease state, the service writes an audit containing the authenticated client id, reason,
+normalized scope, and complete prior target outcomes. The `202 Accepted` response includes the audit id and exact
+targets requeued. Requeueing never resolves prices inside the request.
+
 ## `GET /api/daily-prices/:timestamp/:tokenKey`
 
 Returns only an accepted exact-EOD price. The timestamp must itself be `23:59:59 UTC`; an intraday stored row cannot

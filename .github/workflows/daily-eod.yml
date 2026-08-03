@@ -1,0 +1,45 @@
+name: Daily EOD Prices
+
+on:
+  schedule:
+    - cron: '30 0 * * *'
+  workflow_dispatch:
+    inputs:
+      day:
+        description: Optional closed UTC day (YYYY-MM-DD)
+        required: false
+        type: string
+
+concurrency:
+  group: daily-eod-prices
+  cancel-in-progress: false
+
+jobs:
+  price-closed-day:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - run: bun install --frozen-lockfile
+      - uses: 1Password/install-cli-action@v1
+      - name: Load secrets from 1Password
+        uses: 1Password/load-secrets-action@v2
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          DATABASE_URL: op://webops-prod/yearn-price/DATABASE_URL
+          RPC_URL_1: op://webops-prod/yearn-price/RPC_URL_1
+          RPC_URL_10: op://webops-prod/yearn-price/RPC_URL_10
+          RPC_URL_100: op://webops-prod/yearn-price/RPC_URL_100
+          RPC_URL_137: op://webops-prod/yearn-price/RPC_URL_137
+          RPC_URL_146: op://webops-prod/yearn-price/RPC_URL_146
+          RPC_URL_250: op://webops-prod/yearn-price/RPC_URL_250
+          RPC_URL_8453: op://webops-prod/yearn-price/RPC_URL_8453
+          RPC_URL_42161: op://webops-prod/yearn-price/RPC_URL_42161
+          RPC_URL_80094: op://webops-prod/yearn-price/RPC_URL_80094
+          RPC_URL_747474: op://webops-prod/yearn-price/RPC_URL_747474
+      - name: Run migrations
+        run: bun run migrate
+      - name: Discover and price the closed day
+        run: bun run daily:cycle
+        env:
+          DAILY_EOD_DAY: ${{ inputs.day }}

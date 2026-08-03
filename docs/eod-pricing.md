@@ -16,7 +16,8 @@ The service therefore optimizes for complete, explainable daily coverage rather 
 ## Daily lifecycle
 
 1. A UTC day closes.
-2. An authenticated operator submits the assets required for that day.
+2. The scheduled production cycle discovers current Yearn vault-share and underlying assets from Kong; an
+   authenticated operator may also submit an explicit inventory.
 3. The service converts the day to its exact `23:59:59 UTC` key.
 4. Accepted exact-EOD rows are returned immediately.
 5. Missing targets are inserted idempotently into `daily_price_targets`.
@@ -34,14 +35,25 @@ The queue is unique on `(chain, token, eod_at)` and records attempts, leases, re
 | --- | --- | --- |
 | `priced` | Accepted evidence was persisted before the target completed. | No |
 | `unsupported` | No implemented defensible path supports the asset. | Only after an explicit code or policy change |
-| `retryable` | A temporary provider, RPC, HTTP, rate-limit, or database failure occurred. | Yes, after `next_retry_at` |
-| `quarantined` | A candidate or derivation failed structure, credibility, cycle, depth, or disagreement policy. | Only after explicit review |
+| `retryable` | A temporary provider, RPC, HTTP, rate-limit, configuration, or database failure occurred. | Yes, after `next_retry_at` |
+| `quarantined` | A candidate or derivation failed structure, credibility, cycle, depth, or disagreement policy, or exhausted its retry budget. | Only after explicit review |
 
-Expired `in_progress` leases are reclaimable after a process restart. Attempt counters prevent stale workers from overwriting a reclaimed target. Batches use `FOR UPDATE SKIP LOCKED`, and unsupported rows cannot starve later targets.
+Expired `in_progress` leases are reclaimable after a process restart. Before evidence insertion, the worker locks the
+complete batch and verifies every target id and attempt count. Evidence and outcomes commit in the same transaction,
+so a stale worker cannot leave evidence behind. Batches use `FOR UPDATE SKIP LOCKED`, and unsupported rows cannot
+starve later targets. The worker waits until controlled retry delays elapse; a retry that reaches the configured
+attempt budget moves to quarantine with `failure_class: retryable` and its original transient reason preserved.
+
+Unsupported and quarantined targets can be retried only through the authenticated requeue operation. Every requeue
+is limited to 500 targets, requires a human-readable reason, and is scoped either to exact asset-days or one chain/day
+with optional failure-class, adapter, adapter-version, or policy-version filters. The database audit retains the
+authenticated client id, scope, and complete prior outcomes before attempt state is reset.
 
 ## Evidence and selection
 
-Each stored price may record:
+Each stored candidate has a durable identity composed from its source and adapter/provider identifier. Multiple
+derived adapters therefore coexist at the same asset-day rather than sharing a single `derived` row. Each candidate
+may record:
 
 - requested chain, token, and exact EOD timestamp;
 - requested and provider identifiers;
@@ -53,7 +65,12 @@ Each stored price may record:
 - recursive inputs and conversion state;
 - assumptions and time-bounded mapping references.
 
-Selection is deterministic: classification, quality, source priority, observation distance, then adapter name. Material disagreement between genuinely independent sources quarantines the result; prices are never averaged.
+For a missing root asset-day, the worker evaluates the requested market path and every successfully applicable
+on-chain adapter before selection. Recursive dependencies use their deterministic canonical path to keep the search
+bounded, while every root attempt and successful candidate remains visible. Provider aliases share DefiLlama's
+independence identity; distinct on-chain adapters retain distinct identities. Selection is deterministic:
+classification, quality, source priority, observation distance, adapter, then candidate id. Material disagreement
+between genuinely independent candidates quarantines every produced candidate; prices are never averaged.
 
 Automatic `stable-peg` rows and unvalidated legacy rows are not eligible for strict daily selection. Missing data is unavailable, never zero.
 
@@ -112,6 +129,7 @@ Run and inspect the worker:
 
 ```bash
 bun run daily:run -- --batch-size 75 --concurrency 4 --max-attempts 3
+bun run daily:cycle
 bun run daily:status
 bun run daily:canaries
 bun run daily:report
@@ -122,6 +140,11 @@ EOD block, including separate Compound and Iron Bank exchange-rate cases. `daily
 source, adapter, quality, import-policy, failure, alias, and incident-proxy breakdown without exposing provider URLs.
 
 The authenticated progress API is `GET /api/daily-prices/progress`. The operator dashboard is `/daily-prices`; its API key remains in browser session storage only.
+
+Production orchestration lives in `.github/workflows/daily-eod.yml`, scheduled for 00:30 UTC. Its inventory contract is
+the supported-chain vault list returned by Kong's `list/vaults?origin=yearn` route; both vault-share and underlying
+addresses are deduplicated and recorded with discovery provenance. A manual workflow dispatch may select a reviewed
+closed `YYYY-MM-DD` day. The cycle fails if discovery is empty or if any queue work remains non-terminal.
 
 ## Supported chains
 
