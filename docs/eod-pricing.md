@@ -51,8 +51,10 @@ authenticated client id, scope, and complete prior outcomes before attempt state
 
 ## Evidence and selection
 
-Each stored candidate has a durable identity composed from its source and adapter/provider identifier. Multiple
-derived adapters therefore coexist at the same asset-day rather than sharing a single `derived` row. Each candidate
+Each stored candidate has a durable identity composed from its source, adapter, adapter version, and provider
+identifier. Multiple derived adapters and reviewed methodology versions therefore coexist at the same asset-day
+rather than sharing a single `derived` row. A validated candidate may replace the same quarantined identity only
+after its target has passed through the audited requeue flow; accepted evidence is immutable. Each candidate
 may record:
 
 - requested chain, token, and exact EOD timestamp;

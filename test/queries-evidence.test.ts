@@ -1,6 +1,6 @@
 import type { Pool } from '@neondatabase/serverless'
 import { describe, expect, test, vi } from 'vitest'
-import { getHistoricalPriceEvidenceCandidates, insertTokenPrices } from '../src/queries'
+import { getBatchHistoricalPrices, getHistoricalPriceEvidenceCandidates, insertTokenPrices } from '../src/queries'
 
 const EOD = 1_704_153_599
 const TOKEN = '0x0000000000000000000000000000000000000001'
@@ -88,7 +88,7 @@ describe('evidence persistence', () => {
     expect(params).toContain(JSON.stringify({ convertToAssets: '2000000' }))
   })
 
-  test('allows accepted EOD evidence to upgrade an unvalidated legacy conflict', async () => {
+  test('allows accepted EOD evidence to upgrade an existing non-validated candidate', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [] })
     await insertTokenPrices({ query } as unknown as Pool, [{
       chain: 'ethereum',
@@ -107,7 +107,15 @@ describe('evidence persistence', () => {
     const [sql] = query.mock.calls[0]
     expect(sql).toContain('DO UPDATE SET')
     expect(sql).toContain("EXCLUDED.validation_status = 'validated'")
-    expect(sql).toContain("COALESCE(token_prices.validation_status, 'legacy-unvalidated') = 'legacy-unvalidated'")
+    expect(sql).toContain("COALESCE(token_prices.validation_status, 'legacy-unvalidated') <> 'validated'")
+  })
+
+  test('never serves quarantined candidates through compatibility reads', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] })
+    await getBatchHistoricalPrices({ query } as unknown as Pool, [{
+      chain: 'ethereum', token: TOKEN, timestamp: EOD,
+    }])
+    expect(query.mock.calls[0][0]).toContain("validation_status, 'legacy-unvalidated') <> 'quarantined'")
   })
 
   test('preserves multiple derived adapters under distinct candidate identities', async () => {

@@ -1,5 +1,9 @@
 import type { PriceSource } from './types'
 
+export const PRICE_SELECTION_POLICY_VERSION = 'eod-candidate-selection-v1'
+export const ONCHAIN_ADAPTER_VERSION = 'historical-onchain-v1'
+export const HISTORICAL_MARKET_ADAPTER_VERSION = 'defillama-eod-v1'
+
 interface CandidateIdentityInput {
   source: PriceSource
   adapter?: string | null
@@ -25,7 +29,12 @@ function nestedProviderIdentifier(metadata: Record<string, unknown>): string | n
 export function priceCandidateId(input: CandidateIdentityInput): string {
   const adapter = input.adapter?.trim() || input.source
   const providerIdentifier = input.metadata ? nestedProviderIdentifier(input.metadata) : null
-  return providerIdentifier
-    ? `${adapter}|provider:${providerIdentifier.toLowerCase()}`
-    : adapter
+  const adapterVersion = input.metadata && typeof input.metadata.adapterVersion === 'string'
+    ? input.metadata.adapterVersion.trim()
+    : ''
+  return [
+    adapter,
+    adapterVersion ? `version:${adapterVersion}` : null,
+    providerIdentifier ? `provider:${providerIdentifier.toLowerCase()}` : null,
+  ].filter(Boolean).join('|')
 }

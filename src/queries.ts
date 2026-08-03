@@ -137,6 +137,7 @@ export async function getBatchHistoricalPrices(
        AND tp.token = r.token
        AND tp.timestamp = r.timestamp
       WHERE tp.source = $${sourceIndex}
+        AND COALESCE(tp.validation_status, 'legacy-unvalidated') <> 'quarantined'
       ORDER BY tp.chain, tp.token, tp.timestamp,
         CASE COALESCE(tp.validation_status, 'legacy-unvalidated') WHEN 'validated' THEN 0 WHEN 'legacy-unvalidated' THEN 1 ELSE 2 END,
         CASE COALESCE(tp.evidence_kind, 'legacy') WHEN 'observed' THEN 0 WHEN 'derived' THEN 1 WHEN 'estimated' THEN 2 ELSE 3 END,
@@ -152,6 +153,7 @@ export async function getBatchHistoricalPrices(
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp = r.timestamp
+      WHERE COALESCE(tp.validation_status, 'legacy-unvalidated') <> 'quarantined'
       ORDER BY tp.chain, tp.token, tp.timestamp, ${buildSourceCaseExpression()},
         CASE COALESCE(tp.validation_status, 'legacy-unvalidated') WHEN 'validated' THEN 0 WHEN 'legacy-unvalidated' THEN 1 ELSE 2 END,
         CASE COALESCE(tp.evidence_kind, 'legacy') WHEN 'observed' THEN 0 WHEN 'derived' THEN 1 WHEN 'estimated' THEN 2 ELSE 3 END,
@@ -204,6 +206,7 @@ export async function getRangeHistoricalPrices(
        AND tp.token = r.token
        AND tp.timestamp BETWEEN r.start_timestamp AND r.end_timestamp
       WHERE tp.source = $${sourceIndex}
+        AND COALESCE(tp.validation_status, 'legacy-unvalidated') <> 'quarantined'
       ORDER BY tp.chain, tp.token, tp.timestamp,
         CASE COALESCE(tp.validation_status, 'legacy-unvalidated') WHEN 'validated' THEN 0 WHEN 'legacy-unvalidated' THEN 1 ELSE 2 END,
         CASE COALESCE(tp.evidence_kind, 'legacy') WHEN 'observed' THEN 0 WHEN 'derived' THEN 1 WHEN 'estimated' THEN 2 ELSE 3 END,
@@ -219,6 +222,7 @@ export async function getRangeHistoricalPrices(
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp BETWEEN r.start_timestamp AND r.end_timestamp
+      WHERE COALESCE(tp.validation_status, 'legacy-unvalidated') <> 'quarantined'
       ORDER BY tp.chain, tp.token, tp.timestamp, ${buildSourceCaseExpression()},
         CASE COALESCE(tp.validation_status, 'legacy-unvalidated') WHEN 'validated' THEN 0 WHEN 'legacy-unvalidated' THEN 1 ELSE 2 END,
         CASE COALESCE(tp.evidence_kind, 'legacy') WHEN 'observed' THEN 0 WHEN 'derived' THEN 1 WHEN 'estimated' THEN 2 ELSE 3 END,
@@ -327,7 +331,7 @@ async function insertRows(pool: Pool, rows: TokenPriceWrite[], updateOnConflict:
       DO UPDATE SET
         ${updateAssignments}
       WHERE EXCLUDED.validation_status = 'validated'
-        AND COALESCE(token_prices.validation_status, 'legacy-unvalidated') = 'legacy-unvalidated'
+        AND COALESCE(token_prices.validation_status, 'legacy-unvalidated') <> 'validated'
     `
 
   await pool.query(

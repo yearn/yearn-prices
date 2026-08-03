@@ -110,6 +110,7 @@ function pathToWrite(
   path: ResolvedPricePath,
   validationStatus: 'validated' | 'quarantined' = 'validated',
   failureReason: string | null = null,
+  failureClass: 'invalid' | 'disagreement' | null = null,
 ) {
   return {
     chain: path.chain,
@@ -128,7 +129,10 @@ function pathToWrite(
     inputs: path.inputs,
     validationStatus,
     failureReason,
-    metadata: path.metadata,
+    metadata: {
+      ...path.metadata,
+      ...(failureClass ? { validationFailureClass: failureClass } : {}),
+    },
   }
 }
 
@@ -233,7 +237,7 @@ async function resolveDailyPriceTarget(
     return {
       outcome,
       prices: shouldQuarantineCandidates
-        ? candidates.map(path => pathToWrite(path, 'quarantined', outcome.failureReason))
+        ? candidates.map(path => pathToWrite(path, 'quarantined', outcome.failureReason, outcome.failureClass))
         : [],
     }
   }
@@ -254,6 +258,8 @@ async function resolveDailyPriceTarget(
         candidateId: priceCandidateId(result.path),
         candidateCount: candidates.length,
         candidateIds: candidates.map(path => priceCandidateId(path)),
+        adapterVersion: result.path.metadata.adapterVersion ?? null,
+        policyVersion: result.path.metadata.policyVersion ?? null,
       },
     },
   }

@@ -1,5 +1,9 @@
 import type { Pool } from '@neondatabase/serverless'
 import { normalizeTokenAddress, normalizeTokenKey } from './chains'
+import {
+  HISTORICAL_MARKET_ADAPTER_VERSION,
+  PRICE_SELECTION_POLICY_VERSION,
+} from './candidate-identity'
 import { DefiLlamaClient } from './defillama'
 import {
   getDefiLlamaCoinGeckoAlias,
@@ -268,6 +272,8 @@ function productionDailyImportToPath(candidate: PriceEvidenceCandidate): Resolve
     inputs: [],
     metadata: {
       ...candidate.metadata,
+      adapterVersion: candidate.metadata.adapterVersion ?? HISTORICAL_MARKET_ADAPTER_VERSION,
+      policyVersion: candidate.metadata.policyVersion ?? PRICE_SELECTION_POLICY_VERSION,
       recursiveSeedPolicy: 'explicit-production-eod-import',
       directObservationClaimed: false,
     },
@@ -575,6 +581,8 @@ export function createHistoricalMarketPriceResolver(
       blockNumber: null,
       inputs: [],
       metadata: {
+        adapterVersion: HISTORICAL_MARKET_ADAPTER_VERSION,
+        policyVersion: PRICE_SELECTION_POLICY_VERSION,
         provider: 'defillama',
         lookupKind,
         requestedIdentifier,

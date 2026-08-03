@@ -1,5 +1,9 @@
 import { normalizeTokenAddress } from './chains'
-import { priceCandidateId } from './candidate-identity'
+import {
+  ONCHAIN_ADAPTER_VERSION,
+  PRICE_SELECTION_POLICY_VERSION,
+  priceCandidateId,
+} from './candidate-identity'
 import { selectEodPriceEvidence, type PriceEvidenceSelectionOptions } from './evidence'
 import { normalizeToEndOfDay } from './time'
 import type {
@@ -340,7 +344,13 @@ function buildAdapterPath(
     quality: weakestQuality(requestedQuality, quote.inputs),
     blockNumber: quote.blockNumber ?? target.blockNumber ?? null,
     inputs: quote.inputs.map(toEvidenceInput),
-    metadata: quote.metadata,
+    metadata: {
+      ...quote.metadata,
+      adapterVersion: typeof quote.metadata.adapterVersion === 'string'
+        ? quote.metadata.adapterVersion
+        : ONCHAIN_ADAPTER_VERSION,
+      policyVersion: PRICE_SELECTION_POLICY_VERSION,
+    },
   }, target)
 }
 

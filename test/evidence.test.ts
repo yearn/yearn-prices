@@ -144,4 +144,20 @@ describe('EOD price evidence selection', () => {
     expect(result.selected?.source).toBe('defillama')
     expect(result.validation.disagreementBps).toBeNull()
   })
+
+  test('keeps persisted disagreement candidates quarantined on later reads', () => {
+    const result = selectEodPriceEvidence(EOD, [
+      candidate({
+        validationStatus: 'quarantined',
+        failureReason: 'Independent observations disagree by 2000.00 bps',
+        metadata: { validationFailureClass: 'disagreement' },
+      }),
+    ])
+
+    expect(result.selected).toBeNull()
+    expect(result.validation).toMatchObject({
+      status: 'quarantined',
+      failureClass: 'disagreement',
+    })
+  })
 })

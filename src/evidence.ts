@@ -105,13 +105,17 @@ export function selectEodPriceEvidence(
   const failures = ordered.map(candidate => structuralFailure(candidate, eodTimestamp))
   const valid = ordered.filter((_, index) => failures[index] === null)
   if (valid.length === 0) {
+    const quarantined = ordered.filter(candidate => candidate.validationStatus === 'quarantined')
+    const quarantinedFailureClass = quarantined.find(candidate => (
+      candidate.metadata.validationFailureClass === 'disagreement'
+    )) ? 'disagreement' : 'invalid'
     return {
       selected: null,
       candidates: ordered,
       validation: {
-        status: 'unavailable',
+        status: quarantined.length > 0 ? 'quarantined' : 'unavailable',
         disagreementBps: null,
-        failureClass: 'invalid',
+        failureClass: quarantined.length > 0 ? quarantinedFailureClass : 'invalid',
         failureReason: failures.filter(reason => reason !== null).join('; '),
       },
     }

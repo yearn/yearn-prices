@@ -307,7 +307,14 @@ describe('recursive historical pricing', () => {
     expect(result).toMatchObject({ path: { priceUsd: 100 }, failure: null })
     expect(result.candidates).toEqual(expect.arrayContaining([
       expect.objectContaining({ adapter: 'defillama-historical', priceUsd: 100 }),
-      expect.objectContaining({ adapter: 'independent-wrapper-nav', priceUsd: 101 }),
+      expect.objectContaining({
+        adapter: 'independent-wrapper-nav',
+        priceUsd: 101,
+        metadata: expect.objectContaining({
+          adapterVersion: 'historical-onchain-v1',
+          policyVersion: 'eod-candidate-selection-v1',
+        }),
+      }),
     ]))
   })
 
