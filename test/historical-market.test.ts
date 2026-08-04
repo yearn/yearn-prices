@@ -267,7 +267,8 @@ describe('historical market resolver', () => {
         adapter: 'production-yearn-prices-import',
         metadata: {
           origin: 'production-yearn-prices',
-          importClassification: 'trusted-production-observation-structural',
+          importClassification: 'known-production-observation-structural',
+          observedTimestampKnown: true,
           independentlyValidated: false,
         },
       })]),

@@ -222,6 +222,9 @@ function candidateToPath(candidate: PriceEvidenceCandidate): ResolvedPricePath {
   if (candidate.classification === 'legacy' || candidate.quality === 'legacy') {
     throw new InvalidPricingError('Legacy evidence cannot seed strict recursive pricing')
   }
+  if (candidate.observedTimestamp === null) {
+    throw new InvalidPricingError('Evidence with an unknown observation time cannot seed strict recursive pricing')
+  }
   return {
     chain: candidate.chain,
     token: candidate.token,
@@ -243,7 +246,8 @@ function candidateToPath(candidate: PriceEvidenceCandidate): ResolvedPricePath {
 function isProductionDailyImport(candidate: PriceEvidenceCandidate): boolean {
   return candidate.adapter === 'production-yearn-prices-import'
     && candidate.metadata.origin === 'production-yearn-prices'
-    && candidate.metadata.importClassification === 'trusted-production-observation-structural'
+    && candidate.metadata.importClassification === 'known-production-observation-structural'
+    && candidate.metadata.observedTimestampKnown === true
     && candidate.metadata.independentlyValidated === false
     && candidate.validationStatus === 'validated'
     && candidate.classification === 'legacy'
@@ -256,6 +260,9 @@ function isProductionDailyImport(candidate: PriceEvidenceCandidate): boolean {
 function productionDailyImportToPath(candidate: PriceEvidenceCandidate): ResolvedPricePath {
   if (!isProductionDailyImport(candidate)) {
     throw new InvalidPricingError('Candidate is not an eligible production daily import')
+  }
+  if (candidate.observedTimestamp === null) {
+    throw new InvalidPricingError('Production import has an unknown observation time')
   }
   return {
     chain: candidate.chain,

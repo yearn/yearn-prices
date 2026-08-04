@@ -29,6 +29,7 @@ export type PriceEvidenceFailureClass = 'not-found' | 'invalid' | 'disagreement'
 export interface Env {
   DATABASE_URL: string
   DATABASE_SCHEMA?: string
+  DAILY_PRICE_OPERATOR_API_KEY?: string
   ENSO_API_KEY?: string
   [key: string]: string | undefined
 }
@@ -52,7 +53,7 @@ export interface DbPriceRow {
 export interface DbPriceEvidenceRow extends DbPriceRow {
   candidate_id: string
   requested_timestamp: string | Date
-  observed_timestamp: string | Date
+  observed_timestamp: string | Date | null
   evidence_kind: PriceEvidenceKind | null
   quality: PriceEvidenceQuality | null
   adapter: string | null
@@ -87,10 +88,10 @@ export interface PriceEvidenceCandidate {
   chain: string
   token: string
   requestedTimestamp: number
-  observedTimestamp: number
-  observationDistance: number
-  observationOffsetSeconds: number
-  observationDirection: PriceObservationDirection
+  observedTimestamp: number | null
+  observationDistance: number | null
+  observationOffsetSeconds: number | null
+  observationDirection: PriceObservationDirection | null
   priceUsd: number
   symbol: string | null
   confidence: number | null

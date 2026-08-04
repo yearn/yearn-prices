@@ -6,7 +6,7 @@ import { SOURCE_PRIORITY, type PriceSource, type TokenPriceWrite } from './types
 export const PRODUCTION_EOD_SNAPSHOT_SCHEMA_VERSION = 1
 
 export type ProductionImportClassification =
-  | 'trusted-production-observation-structural'
+  | 'unknown-observation-time'
   | 'requires-independent-validation'
   | 'automatic-peg-repair'
   | 'missing'
@@ -210,9 +210,9 @@ export function classifyProductionPrice(record: ProductionEodPriceRecord): Produ
     && STRUCTURALLY_TRUSTED_PRODUCTION_SOURCES.has(record.source)
   ) {
     return {
-      classification: 'trusted-production-observation-structural',
-      accepted: true,
-      reason: null,
+      classification: 'unknown-observation-time',
+      accepted: false,
+      reason: 'Production snapshot does not preserve the provider observation timestamp',
     }
   }
   return {

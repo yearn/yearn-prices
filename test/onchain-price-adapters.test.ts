@@ -427,7 +427,7 @@ describe('pool and LP price adapters', () => {
       async readContract(request: { functionName: string }) {
         if (request.functionName === 'readTokens') return [SY, PT, YT] as const
         if (request.functionName === 'assetInfo') return [0, UNDERLYING, 6] as const
-        if (request.functionName === 'getLpToAssetRate') return 1_200_000n
+        if (request.functionName === 'getLpToAssetRate') return 1_200_000_000_000_000_000n
         throw new Error('method unavailable')
       },
     } as unknown as PublicClient
@@ -442,6 +442,8 @@ describe('pool and LP price adapters', () => {
         metadata: {
           method: 'getLpToAssetRate',
           asset: UNDERLYING,
+          assetDecimals: 6,
+          rateDecimals: 18,
           twapSeconds: 900,
         },
       },

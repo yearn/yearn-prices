@@ -67,7 +67,27 @@ try {
       eodTimestamp,
       grouped.get(`${target.chain}:${target.token.toLowerCase()}`) ?? [],
     )
-    return selection.selected ? [{ target, adapter: selection.selected.adapter ?? selection.selected.source }] : []
+    if (!selection.selected) return []
+    const selected = selection.selected
+    return [{
+      target: {
+        ...target,
+        metadata: {
+          ...target.metadata,
+          observedTimestamp: selected.observedTimestamp,
+          observationDistance: selected.observationDistance,
+          source: selected.source,
+          classification: selected.classification,
+          quality: selected.quality,
+          candidateId: selected.candidateId,
+          candidateCount: selection.candidates.length,
+          candidateIds: selection.candidates.map(candidate => candidate.candidateId),
+          adapterVersion: selected.metadata.adapterVersion ?? null,
+          policyVersion: selected.metadata.policyVersion ?? null,
+        },
+      },
+      adapter: selected.adapter ?? selected.source,
+    }]
   })
 
   const inserted = await enqueueDailyPriceTargets(pool, targets)

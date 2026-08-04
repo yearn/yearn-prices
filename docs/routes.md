@@ -4,7 +4,7 @@ This service exposes a small JSON API for health checks and historical token pri
 
 ## Base Behavior
 
-- Read routes support `GET`; the scoped daily enqueue route uses `POST`.
+- Read routes support `GET`; the scoped daily enqueue and requeue routes use `POST`.
 - `OPTIONS` requests return `204` with CORS headers.
 - All JSON responses include permissive CORS headers.
 - `/api/health` is public.
@@ -12,7 +12,9 @@ This service exposes a small JSON API for health checks and historical token pri
   - `Authorization: Bearer <api-key>`
   - `x-api-key: <api-key>`
 
-The worker accepts API keys from environment variables named `API_KEY_*`. The matched suffix is logged as the client id.
+The worker accepts read-only application keys from environment variables named `API_KEY_*`. The matched suffix is
+logged as the client id. `POST /api/daily-prices/enqueue` and `POST /api/daily-prices/requeue` instead require the
+dedicated `DAILY_PRICE_OPERATOR_API_KEY`; application keys receive `403 FORBIDDEN` on those routes.
 
 ## Token Keys
 
@@ -105,7 +107,7 @@ Response:
 
 ## `POST /api/daily-prices/enqueue`
 
-Authenticates and idempotently registers the assets needed for one closed UTC day. Existing accepted EOD evidence is
+Operator-authenticates and idempotently registers the assets needed for one closed UTC day. Existing accepted EOD evidence is
 returned immediately; missing asset-days are inserted into the durable worker queue. The request never resolves a
 price inline.
 
@@ -132,7 +134,7 @@ The `day` field may be omitted to select the latest closed UTC day.
 
 ## `POST /api/daily-prices/requeue`
 
-Reactivates reviewed `unsupported` or `quarantined` targets. Authentication is required. The request must include a
+Reactivates reviewed `unsupported` or `quarantined` targets. Operator authentication is required. The request must include a
 reason and exactly one bounded scope:
 
 - `targets`: up to 500 exact chain, token, and closed-day entries; or
@@ -166,6 +168,9 @@ The response adds `adapter`, `classification`, and `quality` without changing th
 
 Returns the deterministic selection, every persisted candidate for the exact EOD key, and its validation result. It
 never performs repair and uses `no-store` caching so operators see current policy state.
+
+For strict daily routes, `source` constrains the already-computed canonical selection; it never filters candidates
+before disagreement validation. A requested source therefore cannot hide an independent conflicting candidate.
 
 ## `GET /api/daily-prices/progress`
 
@@ -417,6 +422,7 @@ Known error codes:
 
 - `INVALID_INPUT`: `400`
 - `UNAUTHORIZED`: `401`
+- `FORBIDDEN`: `403`
 - `NOT_FOUND`: `404`
 - `RATE_LIMITED`: `429`
 - `INTERNAL_ERROR`: `500`
@@ -425,6 +431,7 @@ Common error cases:
 
 - Missing API key: `UNAUTHORIZED`.
 - Invalid API key: `UNAUTHORIZED`.
+- Read-only application key used on a queue mutation route: `FORBIDDEN`.
 - Missing `coins` query parameter: `INVALID_INPUT`.
 - Invalid `coins` JSON: `INVALID_INPUT`.
 - Unsupported `source`: `INVALID_INPUT`.

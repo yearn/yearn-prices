@@ -44,7 +44,7 @@ so a stale worker cannot leave evidence behind. Batches use `FOR UPDATE SKIP LOC
 starve later targets. The worker waits until controlled retry delays elapse; a retry that reaches the configured
 attempt budget moves to quarantine with `failure_class: retryable` and its original transient reason preserved.
 
-Unsupported and quarantined targets can be retried only through the authenticated requeue operation. Every requeue
+Unsupported and quarantined targets can be retried only through the operator-authenticated requeue operation. Every requeue
 is limited to 500 targets, requires a human-readable reason, and is scoped either to exact asset-days or one chain/day
 with optional failure-class, adapter, adapter-version, or policy-version filters. The database audit retains the
 authenticated client id, scope, and complete prior outcomes before attempt state is reset.
@@ -106,16 +106,15 @@ The production snapshot import is read-only: it consumes a local JSONL snapshot 
 Every price record must have an exact EOD key and a positive finite value. The original value, source, timestamp, and
 snapshot provenance are retained.
 
-Direct `defillama`, `on-chain-oracle`, `bobs-api`, and `enso` rows that production already accepted may serve after
-structural validation, but remain classified as legacy quality with unknown observation time. The import explicitly
-records that this is not independent validation. Rows from automatic pegs, aliases, proxies, the legacy Curve path,
-or undocumented derivations remain ineligible until independently repaired. Their values remain available as audit
-evidence, and their asset-days remain pending in the durable queue. A production `stable-peg` row can never become
-strict EOD evidence through import.
+Production snapshots do not preserve provider observation timestamps, so imported rows are classified as
+`unknown-observation-time` and cannot serve strict reads or seed recursive pricing. Their original values and provenance
+remain available as audit evidence while every asset-day stays queued for independent repair. Rows from automatic pegs,
+aliases, proxies, the legacy Curve path, or undocumented derivations remain equally ineligible. A production
+`stable-peg` row can never become strict EOD evidence through import.
 
-When explicitly enabled for a repair run, an accepted trusted import may seed a recursive conversion as estimated,
-fallback-quality input. The original stored row remains legacy evidence, and the derived candidate retains the import
-policy and a `directObservationClaimed: false` marker.
+Only evidence that explicitly preserves a verified provider observation timestamp may be enabled as a fallback
+recursive seed. The current production snapshot format does not meet that requirement; its rows remain audit-only
+until the worker produces complete evidence.
 
 ## Operations
 
@@ -123,7 +122,7 @@ Enqueue one closed day:
 
 ```bash
 curl -X POST \
-  -H "Authorization: Bearer $API_KEY" \
+  -H "Authorization: Bearer $DAILY_PRICE_OPERATOR_API_KEY" \
   -H "Content-Type: application/json" \
   https://prices.example/api/daily-prices/enqueue \
   --data '{"day":"2024-01-01","targets":[{"chain":"ethereum","token":"0x..."}]}'
@@ -145,7 +144,8 @@ bun run daily:report
 EOD block, including separate Compound and Iron Bank exchange-rate cases. `daily:report` emits the final chain,
 source, adapter, quality, import-policy, failure, alias, and incident-proxy breakdown without exposing provider URLs.
 
-The authenticated progress API is `GET /api/daily-prices/progress`. The operator dashboard is `/daily-prices`; its API key remains in browser session storage only.
+The authenticated progress API is `GET /api/daily-prices/progress`. The operator dashboard is `/daily-prices`; its read
+key remains in browser session storage only. Queue mutation requests require the separate operator key.
 
 Production orchestration lives in `.github/workflows/daily-eod.yml`, scheduled for 00:30 UTC. Its inventory contract is
 the supported-chain vault list returned by Kong's `list/vaults?origin=yearn` route; both vault-share and underlying

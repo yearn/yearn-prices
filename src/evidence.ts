@@ -1,6 +1,9 @@
 import {
+  PRICE_EVIDENCE_KINDS,
+  PRICE_EVIDENCE_QUALITIES,
   SOURCE_PRIORITY,
   type PriceEvidenceCandidate,
+  type PriceEvidenceInput,
   type PriceEvidenceKind,
   type PriceEvidenceQuality,
   type PriceEvidenceSelection,
@@ -39,16 +42,76 @@ function candidateOrder(left: PriceEvidenceCandidate, right: PriceEvidenceCandid
     || qualityPriority[left.quality] - qualityPriority[right.quality]
     || (sourcePriority.get(left.source) ?? Number.MAX_SAFE_INTEGER)
       - (sourcePriority.get(right.source) ?? Number.MAX_SAFE_INTEGER)
-    || left.observationDistance - right.observationDistance
+    || (left.observationDistance ?? Number.MAX_SAFE_INTEGER) - (right.observationDistance ?? Number.MAX_SAFE_INTEGER)
     || (left.adapter ?? '').localeCompare(right.adapter ?? '')
     || left.candidateId.localeCompare(right.candidateId)
+}
+
+function recursiveInputFailure(
+  input: PriceEvidenceInput,
+  eodTimestamp: number,
+  depth = 0,
+): string | null {
+  if (depth >= 32) return 'recursive input evidence exceeds the maximum depth'
+  if (typeof input.chain !== 'string' || input.chain.length === 0) {
+    return 'recursive input has an invalid chain'
+  }
+  if (typeof input.token !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(input.token)) {
+    return 'recursive input has an invalid token'
+  }
+  if (!Number.isSafeInteger(input.observedTimestamp) || input.observedTimestamp < 0) {
+    return 'recursive input has an invalid observation timestamp'
+  }
+  if (input.observedTimestamp > eodTimestamp) {
+    return 'recursive input contains a future observation'
+  }
+  if (!Number.isFinite(input.priceUsd) || input.priceUsd <= 0) {
+    return 'recursive input has an invalid price'
+  }
+  if (typeof input.source !== 'string' || !SOURCE_PRIORITY.includes(input.source as typeof SOURCE_PRIORITY[number])) {
+    return 'recursive input has an invalid source'
+  }
+  if (input.adapter !== null && typeof input.adapter !== 'string') {
+    return 'recursive input has an invalid adapter'
+  }
+  if (!PRICE_EVIDENCE_KINDS.includes(input.classification)) {
+    return 'recursive input has an invalid classification'
+  }
+  if (!PRICE_EVIDENCE_QUALITIES.includes(input.quality)) {
+    return 'recursive input has an invalid quality'
+  }
+  if (input.source === 'stable-peg' || input.classification === 'legacy' || input.quality === 'legacy') {
+    return 'recursive input is not strict-price eligible'
+  }
+  const nested = input.inputs ?? []
+  if (input.classification === 'derived' && nested.length === 0) {
+    return 'derived recursive input has no recursive inputs'
+  }
+  for (const child of nested) {
+    const failure = recursiveInputFailure(child, eodTimestamp, depth + 1)
+    if (failure) return failure
+  }
+  if (
+    input.classification === 'derived'
+    && input.observedTimestamp > Math.min(...nested.map(child => child.observedTimestamp))
+  ) {
+    return 'derived recursive input hides a staler nested observation'
+  }
+  return null
 }
 
 function structuralFailure(candidate: PriceEvidenceCandidate, eodTimestamp: number): string | null {
   if (candidate.requestedTimestamp !== eodTimestamp) return `${candidate.source}: candidate has the wrong EOD key`
   if (!Number.isFinite(candidate.priceUsd) || candidate.priceUsd <= 0) return `${candidate.source}: invalid price`
-  if (!Number.isSafeInteger(candidate.observedTimestamp) || candidate.observedTimestamp < 0) {
+  if (
+    candidate.observedTimestamp === null
+    || !Number.isSafeInteger(candidate.observedTimestamp)
+    || candidate.observedTimestamp < 0
+  ) {
     return `${candidate.source}: invalid observation timestamp`
+  }
+  if (candidate.observedTimestamp > eodTimestamp) {
+    return `${candidate.source}: observation is after the EOD cutoff`
   }
   if (candidate.source === 'stable-peg') return 'stable-peg: automatic peg evidence is not strict-price eligible'
   if (candidate.validationStatus === 'legacy-unvalidated') {
@@ -57,6 +120,10 @@ function structuralFailure(candidate: PriceEvidenceCandidate, eodTimestamp: numb
   if (candidate.validationStatus === 'quarantined') return `${candidate.source}: candidate is quarantined`
   if (candidate.classification === 'derived' && candidate.inputs.length === 0) {
     return `${candidate.source}: derived evidence has no recursive inputs`
+  }
+  for (const input of candidate.inputs) {
+    const failure = recursiveInputFailure(input, eodTimestamp)
+    if (failure) return `${candidate.source}: ${failure}`
   }
   return null
 }
@@ -124,6 +191,8 @@ export function selectEodPriceEvidence(
   const selected = valid[0]
   const comparable = valid.filter(candidate => (
     independenceKey(candidate) !== independenceKey(selected)
+    && selected.observedTimestamp !== null
+    && candidate.observedTimestamp !== null
     && Math.abs(selected.observedTimestamp - candidate.observedTimestamp) <= disagreementWindowSeconds
   ))
   let maximumDisagreementBps = 0

@@ -256,6 +256,62 @@ describe('recursive historical pricing', () => {
     })
   })
 
+  test('continues to recursive adapters after an unsupported market exception', async () => {
+    const adapter: RecursivePriceAdapter = {
+      name: 'onchain-oracle',
+      async resolve() {
+        return {
+          priceUsd: 3,
+          inputs: [],
+          metadata: {},
+          source: 'on-chain-oracle',
+          classification: 'observed',
+          quality: 'exact',
+          observedTimestamp: REQUESTED_TIMESTAMP,
+        }
+      },
+    }
+    const engine = new RecursivePriceEngine(async () => {
+      throw new Error('Historical market does not support this asset')
+    }, [adapter])
+
+    await expect(engine.resolve(target())).resolves.toMatchObject({
+      path: { adapter: 'onchain-oracle', priceUsd: 3 },
+      failure: null,
+    })
+  })
+
+  test('captures market unavailability details produced during resolution', async () => {
+    let lookupComplete = false
+    const market = Object.assign(
+      async () => {
+        lookupComplete = true
+        return null
+      },
+      {
+        unavailableAttempts: () => lookupComplete
+          ? [{
+              adapter: 'defillama-canonical-market-proxy',
+              reason: 'unsupported' as const,
+              error: 'incident boundary reached',
+            }]
+          : [],
+      },
+    )
+    const engine = new RecursivePriceEngine(market, [])
+
+    await expect(engine.resolveCandidates(target())).resolves.toMatchObject({
+      path: null,
+      failure: {
+        reason: 'unsupported',
+        attempts: [{
+          adapter: 'defillama-canonical-market-proxy',
+          error: 'incident boundary reached',
+        }],
+      },
+    })
+  })
+
   test('classifies opaque RPC transport failures as retryable without retrying contract reverts', () => {
     const rpcFailure = new Error('An unknown RPC error occurred. Cannot destructure property error from null')
     rpcFailure.name = 'UnknownRpcError'

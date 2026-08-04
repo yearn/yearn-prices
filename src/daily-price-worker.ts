@@ -49,7 +49,7 @@ export interface DailyPriceTargetProcessorOptions {
   nowTimestamp?: number
 }
 
-export interface DailyPriceWorkerOptions extends DailyPriceTargetProcessorOptions {
+export interface DailyPriceWorkerOptions extends Omit<DailyPriceTargetProcessorOptions, 'nowTimestamp'> {
   batchSize?: number
   concurrency?: number
   leaseSeconds?: number
@@ -77,6 +77,7 @@ export interface DailyPriceWorkerDependencies extends DailyPriceTargetProcessorD
   loadNextRetry?: typeof getNextDailyPriceRetryTimestamp
   recordOutcomes?: typeof recordDailyPriceOutcomes
   wait?: (milliseconds: number) => Promise<void>
+  now?: () => number
 }
 
 const DEFAULT_BATCH_SIZE = 25
@@ -424,7 +425,7 @@ export async function runDailyPriceWorker(
     options.retryDelaySeconds ?? DEFAULT_RETRY_DELAY_SECONDS,
     'retryDelaySeconds',
   )
-  const currentTimestamp = () => options.nowTimestamp ?? Math.floor(Date.now() / 1_000)
+  const currentTimestamp = dependencies.now ?? (() => Math.floor(Date.now() / 1_000))
   const startedTimestamp = currentTimestamp()
   let processed = 0
   let claimedBatches = 0

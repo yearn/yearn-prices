@@ -39,14 +39,14 @@ function priceLine(overrides: Record<string, unknown> = {}) {
 }
 
 describe('production EOD snapshot', () => {
-  it('accepts structurally valid trusted observations without claiming independent validation', () => {
+  it('keeps structurally valid imports unavailable when their observation time is unknown', () => {
     const record = parseProductionEodSnapshotLine(priceLine(), 2)
     if (record.kind !== 'price') throw new Error('expected price')
 
     expect(classifyProductionPrice(record)).toEqual({
-      classification: 'trusted-production-observation-structural',
-      accepted: true,
-      reason: null,
+      classification: 'unknown-observation-time',
+      accepted: false,
+      reason: 'Production snapshot does not preserve the provider observation timestamp',
     })
     expect(productionPriceWrite(record, manifest)).toMatchObject({
       timestamp: EOD,
@@ -54,18 +54,18 @@ describe('production EOD snapshot', () => {
       source: 'defillama',
       classification: 'legacy',
       quality: 'legacy',
-      validationStatus: 'validated',
+      validationStatus: 'legacy-unvalidated',
       adapter: 'production-yearn-prices-import',
       metadata: {
         origin: 'production-yearn-prices',
-        importClassification: 'trusted-production-observation-structural',
+        importClassification: 'unknown-observation-time',
         observedTimestampKnown: false,
         independentlyValidated: false,
       },
     })
     expect(productionDailyTarget(record, manifest)).toMatchObject({
       eodTimestamp: EOD,
-      metadata: { importAccepted: true, source: 'defillama' },
+      metadata: { importAccepted: false, source: 'defillama' },
     })
   })
 

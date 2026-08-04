@@ -8,6 +8,7 @@ import {
   type DailyPriceRequeueRequest,
   type DailyPriceTargetInput,
 } from '../daily-prices'
+import { sanitizeFailureReason } from '../daily-price-dashboard'
 import { selectEodPriceEvidence } from '../evidence'
 import { ApiError, ensure } from '../errors'
 import { jsonResponse } from '../http'
@@ -259,7 +260,10 @@ export async function handleDailyEnqueue(
       token: target.token,
       eodTimestamp: target.eodTimestamp,
       status: 'missing' as const,
-      validation: selection.validation,
+      validation: {
+        ...selection.validation,
+        failureReason: sanitizeFailureReason(selection.validation.failureReason),
+      },
     }
   })
 
@@ -277,7 +281,7 @@ export async function handleDailyEnqueue(
           status: target.status,
           attempts: target.attemptCount,
           failureClass: target.failureClass,
-          failureReason: target.failureReason,
+          failureReason: sanitizeFailureReason(target.failureReason),
         }
       : result
   })
@@ -355,8 +359,22 @@ export async function handleDailyPriceRead(
     chain,
     token,
     timestamp: eodTimestamp,
-  }], source)
-  const selection = selectEodPriceEvidence(eodTimestamp, candidates)
+  }])
+  const canonicalSelection = selectEodPriceEvidence(eodTimestamp, candidates)
+  const selection = source && canonicalSelection.selected?.source !== source
+    ? {
+        ...canonicalSelection,
+        selected: null,
+        validation: canonicalSelection.selected
+          ? {
+              status: 'unavailable' as const,
+              disagreementBps: canonicalSelection.validation.disagreementBps,
+              failureClass: 'not-found' as const,
+              failureReason: `The accepted canonical source is ${canonicalSelection.selected.source}, not ${source}`,
+            }
+          : canonicalSelection.validation,
+      }
+    : canonicalSelection
 
   if (evidenceOnly) {
     return jsonResponse(selection, { headers: { 'cache-control': 'no-store' } })

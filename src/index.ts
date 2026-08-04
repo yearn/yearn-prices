@@ -1,4 +1,4 @@
-import { authenticateRequest } from './auth'
+import { authenticateRequest, requireDailyPriceOperator, type AuthenticatedClient } from './auth'
 import { CACHE_CONTROL_NO_STORE } from './cache'
 import { createPool } from './db'
 import { handleDailyPriceDashboardAsset } from './daily-price-dashboard-page'
@@ -23,10 +23,20 @@ function logRequest(request: Request, clientId: string | null, extra?: Record<st
   )
 }
 
-async function routePriceRequest(request: Request, env: Env, pathname: string, clientId: string): Promise<Response> {
+async function routePriceRequest(
+  request: Request,
+  env: Env,
+  pathname: string,
+  client: AuthenticatedClient,
+): Promise<Response> {
   // Spot is a stateless Enso proxy — no database connection needed.
   if (pathname === '/api/prices/spot' && request.method === 'GET') {
     return handleSpot(request, env)
+  }
+  const dailyMutation = request.method === 'POST'
+    && (pathname === '/api/daily-prices/enqueue' || pathname === '/api/daily-prices/requeue')
+  if (dailyMutation) {
+    requireDailyPriceOperator(client)
   }
 
   if (!env.DATABASE_URL) {
@@ -44,7 +54,7 @@ async function routePriceRequest(request: Request, env: Env, pathname: string, c
     }
 
     if (pathname === '/api/daily-prices/requeue' && request.method === 'POST') {
-      return await handleDailyRequeue(request, pool, clientId)
+      return await handleDailyRequeue(request, pool, client.clientId)
     }
 
     const dailyEvidenceMatch = pathname.match(/^\/api\/daily-prices\/evidence\/([^/]+)\/([^/]+)$/)
@@ -88,6 +98,7 @@ export default {
 
     let clientId: string | null = null
 
+    let authenticatedClient: AuthenticatedClient | null = null
     try {
       const dashboardAsset = handleDailyPriceDashboardAsset(pathname, request.method)
       if (dashboardAsset) {
@@ -100,7 +111,8 @@ export default {
         return handleHealth()
       }
 
-      ;({ clientId } = authenticateRequest(request, env))
+      authenticatedClient = authenticateRequest(request, env)
+      ;({ clientId } = authenticatedClient)
       logRequest(request, clientId)
 
       // Serve from Cloudflare's edge cache before doing any work (Enso fetch / DB query).
@@ -109,7 +121,7 @@ export default {
         return cached
       }
 
-      const response = await routePriceRequest(request, env, pathname, clientId)
+      const response = await routePriceRequest(request, env, pathname, authenticatedClient)
       if (request.method === 'GET') {
         writeEdgeCache(ctx, request, response)
       }

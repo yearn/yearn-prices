@@ -46,6 +46,17 @@ describe('EOD price evidence selection', () => {
     expect(result.validation.failureReason).toContain('wrong EOD key')
   })
 
+  test('rejects observations after the EOD cutoff', () => {
+    const result = selectEodPriceEvidence(EOD, [candidate({
+      observedTimestamp: EOD + 60,
+      observationDistance: 60,
+      observationOffsetSeconds: 60,
+      observationDirection: 'after',
+    })])
+    expect(result.selected).toBeNull()
+    expect(result.validation.failureReason).toContain('after the EOD cutoff')
+  })
+
   test.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])(
     'rejects invalid price %s',
     priceUsd => {
@@ -106,6 +117,35 @@ describe('EOD price evidence selection', () => {
     expect(selectEodPriceEvidence(EOD, [derived]).selected?.inputs).toEqual(derived.inputs)
   })
 
+  test('recursively validates every persisted derived input', () => {
+    const result = selectEodPriceEvidence(EOD, [candidate({
+      source: 'derived',
+      classification: 'derived',
+      inputs: [{
+        chain: 'ethereum',
+        token: '0x0000000000000000000000000000000000000002',
+        observedTimestamp: EOD,
+        priceUsd: 2,
+        source: 'derived',
+        adapter: 'wrapper',
+        classification: 'derived',
+        quality: 'exact',
+        inputs: [{
+          chain: 'ethereum',
+          token: '0x0000000000000000000000000000000000000003',
+          observedTimestamp: EOD,
+          priceUsd: 1,
+          source: 'stable-peg',
+          adapter: 'peg',
+          classification: 'estimated',
+          quality: 'fallback',
+        }],
+      }],
+    })])
+
+    expect(result.selected).toBeNull()
+    expect(result.validation.failureReason).toContain('not strict-price eligible')
+  })
   test('selects deterministically by classification, quality, source, and adapter', () => {
     const estimated = candidate({
       source: 'defillama-coingecko-alias',

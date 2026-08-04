@@ -950,6 +950,7 @@ function pendleAdapter(options: OnchainAdapterOptions, twapSeconds: number): Rec
         asset,
         assetType: Number(assetInfo[0]),
         assetDecimals,
+        rateDecimals: 18,
         lpToAssetRateRaw: rawState(rateRaw),
       }
       const input = await context.require(
@@ -959,9 +960,9 @@ function pendleAdapter(options: OnchainAdapterOptions, twapSeconds: number): Rec
       return {
         priceUsd: calculateWrapperPrice(
           rateRaw,
-          assetDecimals,
-          10n ** BigInt(assetDecimals),
-          assetDecimals,
+          18,
+          10n ** 18n,
+          18,
           input.priceUsd,
         ),
         blockNumber: state.numericBlockNumber,

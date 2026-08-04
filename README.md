@@ -22,7 +22,8 @@ cp .env.example .dev.vars   # wrangler dev reads secrets from .dev.vars
 cp .env.example .env        # scripts (warmup, backfill, migrate) read from .env via dotenv
 ```
 
-Fill in `.dev.vars` and `.env` with real values: a `DATABASE_URL`, one `API_KEY_*` per consumer, `ENSO_API_KEY`, and an `RPC_URL_<chainId>` per supported chain. Both files are gitignored — never commit them.
+Fill in `.dev.vars` and `.env` with real values: a `DATABASE_URL`, one read-only `API_KEY_*` per consumer,
+`ENSO_API_KEY`, and an `RPC_URL_<chainId>` per supported chain. Both files are gitignored — never commit them.
 
 For isolated validation and previews, `DATABASE_SCHEMA` may select a safe Postgres schema without duplicating or
 printing the database URL.
@@ -57,9 +58,9 @@ bun run dev
 
 Full route reference, request/response shapes, error codes, and caching behavior are documented in [`docs/routes.md`](docs/routes.md).
 
-The operator dashboard is served at `/daily-prices`. Queue data remains authenticated at
-`/api/daily-prices/progress`. Reviewed terminal outcomes can be reactivated through the authenticated and audited
-`POST /api/daily-prices/requeue` operation.
+The operator dashboard is served at `/daily-prices`. Queue data remains authenticated with a read key at
+`/api/daily-prices/progress`. Enqueue and audited requeue operations require the dedicated operator key; consumer
+application keys cannot mutate queue state.
 
 ## Authentication
 
@@ -68,9 +69,14 @@ All `/api/prices/*` routes require an API key, sent as either:
 - `Authorization: Bearer <api-key>`
 - `x-api-key: <api-key>`
 
-The worker has no token database — it checks the presented key against every worker environment variable/secret named `API_KEY_*` (see `src/auth.ts`). The matched variable's suffix, lowercased, becomes the `client_id` used in request logs (e.g. `API_KEY_FRONTEND` → `frontend`).
+The worker has no token database — it checks read requests against environment variables/secrets named `API_KEY_*` (see `src/auth.ts`). The matched variable's suffix, lowercased, becomes the `client_id` used in request logs (e.g. `API_KEY_FRONTEND` → `frontend`). These application keys cannot enqueue or requeue daily targets.
 
 Production secrets, including every `API_KEY_*`, live in the 1Password vault `webops-prod`, item `yearn-price`. `.github/workflows/deploy.yml` pulls them via `1Password/load-secrets-action` and uploads them to the Cloudflare Worker with `wrangler secret bulk` on every push to `main`.
+
+Application keys remain read-only. Queue mutation routes require the separate `DAILY_PRICE_OPERATOR_API_KEY`; when it
+is not configured, enqueue and requeue remain disabled while all read APIs continue to work. Configure it independently
+for local operation or with `wrangler secret put DAILY_PRICE_OPERATOR_API_KEY` in production. Do not reuse a consumer
+application key for this value.
 
 ### Generating a new API token
 

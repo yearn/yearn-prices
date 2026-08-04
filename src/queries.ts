@@ -1,5 +1,7 @@
 import type { Pool } from '@neondatabase/serverless'
 import {
+  PRICE_EVIDENCE_KINDS,
+  PRICE_EVIDENCE_QUALITIES,
   SOURCE_PRIORITY,
   type DbPriceEvidenceRow,
   type DbPriceRow,
@@ -61,7 +63,6 @@ export async function getBatchHistoricalPriceEvidenceCandidates(
         return `AND price.source = $${params.length}`
       })()
     : ''
-  const observedAt = 'COALESCE(price.observed_at, price.timestamp)'
 
   const result = await pool.query<DbPriceEvidenceRow>(
     `
@@ -78,7 +79,7 @@ export async function getBatchHistoricalPriceEvidenceCandidates(
         price.source,
         price.candidate_id,
         requested.requested_timestamp,
-        ${observedAt} AS observed_timestamp,
+        price.observed_at AS observed_timestamp,
         price.evidence_kind,
         price.quality,
         price.adapter,
@@ -376,8 +377,8 @@ function mapDbRowToExactRecord(row: DbPriceRow): ExactPriceRecord {
 
 function mapDbRowToEvidenceCandidate(row: DbPriceEvidenceRow): PriceEvidenceCandidate {
   const requestedTimestamp = pgTimestampToUnix(row.requested_timestamp)
-  const observedTimestamp = pgTimestampToUnix(row.observed_timestamp)
-  const observationOffsetSeconds = observedTimestamp - requestedTimestamp
+  const observedTimestamp = row.observed_timestamp == null ? null : pgTimestampToUnix(row.observed_timestamp)
+  const observationOffsetSeconds = observedTimestamp == null ? null : observedTimestamp - requestedTimestamp
   const blockNumber = row.block_number == null ? null : Number(row.block_number)
 
   return {
@@ -385,13 +386,15 @@ function mapDbRowToEvidenceCandidate(row: DbPriceEvidenceRow): PriceEvidenceCand
     token: row.token,
     requestedTimestamp,
     observedTimestamp,
-    observationDistance: Math.abs(observationOffsetSeconds),
+    observationDistance: observationOffsetSeconds == null ? null : Math.abs(observationOffsetSeconds),
     observationOffsetSeconds,
-    observationDirection: observationOffsetSeconds === 0
-      ? 'exact'
-      : observationOffsetSeconds < 0
-        ? 'before'
-        : 'after',
+    observationDirection: observationOffsetSeconds == null
+      ? null
+      : observationOffsetSeconds === 0
+        ? 'exact'
+        : observationOffsetSeconds < 0
+          ? 'before'
+          : 'after',
     priceUsd: toResponseNumber(row.price),
     symbol: row.symbol,
     confidence: optionalResponseNumber(row.confidence),
@@ -409,7 +412,45 @@ function mapDbRowToEvidenceCandidate(row: DbPriceEvidenceRow): PriceEvidenceCand
 }
 
 function parseEvidenceInputs(value: unknown): PriceEvidenceInput[] {
-  return Array.isArray(value) ? value.filter(isRecord) as unknown as PriceEvidenceInput[] : []
+  if (!Array.isArray(value)) return []
+  const parsed = value.map(parseEvidenceInput)
+  return parsed.every((input): input is PriceEvidenceInput => input !== null) ? parsed : []
+}
+
+function parseEvidenceInput(value: unknown): PriceEvidenceInput | null {
+  if (!isRecord(value)) return null
+  if (
+    typeof value.chain !== 'string'
+    || typeof value.token !== 'string'
+    || typeof value.observedTimestamp !== 'number'
+    || typeof value.priceUsd !== 'number'
+    || typeof value.source !== 'string'
+    || (value.adapter !== null && typeof value.adapter !== 'string')
+    || typeof value.classification !== 'string'
+    || !PRICE_EVIDENCE_KINDS.includes(value.classification as typeof PRICE_EVIDENCE_KINDS[number])
+    || typeof value.quality !== 'string'
+    || !PRICE_EVIDENCE_QUALITIES.includes(value.quality as typeof PRICE_EVIDENCE_QUALITIES[number])
+    || (value.conversion != null && !isRecord(value.conversion))
+    || (value.inputs != null && !Array.isArray(value.inputs))
+  ) {
+    return null
+  }
+
+  const nested = value.inputs == null ? undefined : parseEvidenceInputs(value.inputs)
+  if (Array.isArray(value.inputs) && nested?.length !== value.inputs.length) return null
+
+  return {
+    chain: value.chain,
+    token: value.token,
+    observedTimestamp: value.observedTimestamp,
+    priceUsd: value.priceUsd,
+    source: value.source,
+    adapter: value.adapter,
+    classification: value.classification as PriceEvidenceInput['classification'],
+    quality: value.quality as PriceEvidenceInput['quality'],
+    ...(value.conversion ? { conversion: value.conversion } : {}),
+    ...(nested ? { inputs: nested } : {}),
+  }
 }
 
 function parseEvidenceMetadata(value: unknown): Record<string, unknown> {

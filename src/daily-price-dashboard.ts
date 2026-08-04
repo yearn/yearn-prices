@@ -168,7 +168,7 @@ function inferRunState(
 }
 
 function safeResolutionFailure(value: string | null): string | null {
-  return value && ['unsupported', 'retryable', 'invalid', 'disagreement', 'cyclic', 'over-depth'].includes(value)
+  return value && ['unsupported', 'retryable', 'invalid', 'disagreement', 'cycle', 'max-depth'].includes(value)
     ? value
     : null
 }
@@ -255,7 +255,7 @@ export async function getDailyPriceDashboardSnapshot(
         status,
         failure_class,
         CASE
-          WHEN metadata->>'resolutionFailure' IN ('unsupported', 'retryable', 'invalid', 'disagreement', 'cyclic', 'over-depth')
+          WHEN metadata->>'resolutionFailure' IN ('unsupported', 'retryable', 'invalid', 'disagreement', 'cycle', 'max-depth')
             THEN metadata->>'resolutionFailure'
           ELSE NULL
         END AS resolution_failure,
@@ -283,7 +283,7 @@ export async function getDailyPriceDashboardSnapshot(
         failure_class,
         failure_reason,
         CASE
-          WHEN metadata->>'resolutionFailure' IN ('unsupported', 'retryable', 'invalid', 'disagreement', 'cyclic', 'over-depth')
+          WHEN metadata->>'resolutionFailure' IN ('unsupported', 'retryable', 'invalid', 'disagreement', 'cycle', 'max-depth')
             THEN metadata->>'resolutionFailure'
           ELSE NULL
         END AS resolution_failure,

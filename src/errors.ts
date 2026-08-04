@@ -3,6 +3,7 @@ import type { ErrorBody } from './types'
 export type ErrorCode =
   | 'INVALID_INPUT'
   | 'UNAUTHORIZED'
+  | 'FORBIDDEN'
   | 'NOT_FOUND'
   | 'RATE_LIMITED'
   | 'INTERNAL_ERROR'
@@ -10,6 +11,7 @@ export type ErrorCode =
 const ERROR_STATUS: Record<ErrorCode, number> = {
   INVALID_INPUT: 400,
   UNAUTHORIZED: 401,
+  FORBIDDEN: 403,
   NOT_FOUND: 404,
   RATE_LIMITED: 429,
   INTERNAL_ERROR: 500,

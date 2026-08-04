@@ -62,6 +62,29 @@ describe('daily enqueue API', () => {
     })
   })
 
+  test('rejects read-only application keys before opening the database', async () => {
+    const response = await worker.fetch(
+      new Request('https://prices.local/api/daily-prices/enqueue', {
+        method: 'POST',
+        headers: { authorization: 'Bearer frontend-key' },
+        body: JSON.stringify({
+          day: '2024-01-01',
+          targets: [{ chain: 'ethereum', token: TOKEN }],
+        }),
+      }),
+      {
+        DATABASE_URL: 'postgres://unused',
+        API_KEY_FRONTEND: 'frontend-key',
+      },
+      { waitUntil: vi.fn(), passThroughOnException: vi.fn() } as unknown as ExecutionContext,
+    )
+
+    expect(response.status).toBe(403)
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'FORBIDDEN' },
+    })
+  })
+
   test('scopes and deduplicates a closed UTC day', () => {
     const parsed = parseDailyEnqueuePayload({
       day: '2024-01-01',
@@ -116,11 +139,11 @@ describe('daily enqueue API', () => {
       chain: 'ethereum',
       token: secondToken,
       eodTimestamp: EOD,
-      status: 'pending',
+      status: 'retryable',
       attemptCount: 0,
       adapter: null,
       failureClass: null,
-      failureReason: null,
+      failureReason: 'HTTP 503 from https://rpc.example/v1?apiKey=secret-value',
       metadata: {},
     }])
     const response = await handleDailyEnqueue(
@@ -156,6 +179,9 @@ describe('daily enqueue API', () => {
     expect(enqueue).toHaveBeenCalledWith({}, [
       expect.objectContaining({ token: secondToken, eodTimestamp: EOD }),
     ])
+    expect(body.targets[1].failureReason).toContain('<redacted-url>')
+    expect(body.targets[1].failureReason).not.toContain('rpc.example')
+    expect(body.targets[1].failureReason).not.toContain('secret-value')
   })
 })
 
@@ -246,5 +272,50 @@ describe('strict daily reads', () => {
       error: { code: 'NOT_FOUND' },
       validation: { status: 'unavailable' },
     })
+  })
+
+  test('does not let a source filter hide canonical disagreement', async () => {
+    const row = (source: 'defillama' | 'on-chain-oracle', price: string, candidateId: string) => ({
+      chain: 'ethereum',
+      token: TOKEN,
+      timestamp: new Date(EOD * 1_000).toISOString(),
+      requested_timestamp: new Date(EOD * 1_000).toISOString(),
+      observed_timestamp: new Date((EOD - 60) * 1_000).toISOString(),
+      price,
+      symbol: 'TEST',
+      confidence: '0.9',
+      source,
+      candidate_id: candidateId,
+      evidence_kind: 'observed',
+      quality: 'near-eod',
+      adapter: candidateId,
+      block_number: null,
+      input_evidence: [],
+      validation_status: 'validated',
+      failure_reason: null,
+      evidence_metadata: {},
+    })
+    const query = vi.fn().mockResolvedValue({
+      rows: [
+        row('defillama', '100', 'defillama-historical'),
+        row('on-chain-oracle', '80', 'oracle'),
+      ],
+    })
+
+    const response = await handleDailyPriceRead(
+      new Request('https://prices.local?source=defillama'),
+      { query } as unknown as Pool,
+      String(EOD),
+      `ethereum:${TOKEN}`,
+    )
+
+    expect(response.status).toBe(409)
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: 'QUARANTINED' },
+      validation: { failureClass: 'disagreement' },
+    })
+    const [sql, params] = query.mock.calls[0]
+    expect(sql).not.toContain('price.source =')
+    expect(params).not.toContain('defillama')
   })
 })

@@ -402,6 +402,7 @@ export class RecursivePriceEngine {
     const cached = this.successful.get(key)
     if (cached) return { path: cached, failure: null }
 
+    const attempts: PriceResolutionAttempt[] = []
     try {
       const market = await this.marketPrice(target)
       if (market) {
@@ -411,17 +412,13 @@ export class RecursivePriceEngine {
       }
     } catch (error) {
       const reason = classifyError(error)
+      attempts.push({ adapter: 'historical-market-price', reason, error: errorMessage(error) })
       if (reason !== 'unsupported') {
         return {
           path: null,
-          failure: {
-            reason,
-            token: target.token,
-            attempts: [{ adapter: 'historical-market-price', reason, error: errorMessage(error) }],
-          },
+          failure: { reason, token: target.token, attempts },
         }
       }
-      throw error
     }
 
     const nextAncestry = [...ancestry, key]
@@ -445,9 +442,7 @@ export class RecursivePriceEngine {
           ...this.adapters.filter(adapter => adapter.name !== hint),
         ]
       : this.adapters
-    const attempts: PriceResolutionAttempt[] = [
-      ...(this.marketPrice.unavailableAttempts?.(target) ?? []),
-    ]
+    attempts.push(...(this.marketPrice.unavailableAttempts?.(target) ?? []))
 
     for (const adapter of orderedAdapters) {
       try {
@@ -485,9 +480,7 @@ export class RecursivePriceEngine {
     }
 
     const candidates: ResolvedPricePath[] = []
-    const attempts: PriceResolutionAttempt[] = [
-      ...(this.marketPrice.unavailableAttempts?.(target) ?? []),
-    ]
+    const attempts: PriceResolutionAttempt[] = []
     try {
       const market = await this.marketPrice(target)
       if (market) candidates.push(validatePath(market, target))
@@ -496,6 +489,7 @@ export class RecursivePriceEngine {
       attempts.push({ adapter: 'historical-market-price', reason, error: errorMessage(error) })
     }
 
+    attempts.push(...(this.marketPrice.unavailableAttempts?.(target) ?? []))
     const nextAncestry = [...ancestry, targetKey(target)]
     const context: RecursivePriceContext = {
       resolve: child => this.resolveAt(normalizeTarget(child), nextAncestry),

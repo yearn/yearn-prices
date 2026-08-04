@@ -1,5 +1,6 @@
 import type { Pool } from '@neondatabase/serverless'
 import { describe, expect, test, vi } from 'vitest'
+import { selectEodPriceEvidence } from '../src/evidence'
 import { getBatchHistoricalPrices, getHistoricalPriceEvidenceCandidates, insertTokenPrices } from '../src/queries'
 
 const EOD = 1_704_153_599
@@ -49,6 +50,79 @@ describe('EOD evidence queries', () => {
       quality: 'near-eod',
       blockNumber: 19_000_000,
       candidateId: 'defillama-historical',
+    })
+  })
+
+  test('keeps an unknown observation time unavailable instead of treating it as exact EOD', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [{
+      chain: 'ethereum',
+      token: TOKEN,
+      timestamp: new Date(EOD * 1_000).toISOString(),
+      requested_timestamp: new Date(EOD * 1_000).toISOString(),
+      observed_timestamp: null,
+      price: '100.5',
+      symbol: 'TEST',
+      confidence: '0.9',
+      source: 'defillama',
+      candidate_id: 'production-import',
+      evidence_kind: 'legacy',
+      quality: 'legacy',
+      adapter: 'production-yearn-prices-import',
+      block_number: null,
+      input_evidence: [],
+      validation_status: 'validated',
+      failure_reason: null,
+      evidence_metadata: { observedTimestampKnown: false },
+    }] })
+
+    const candidates = await getHistoricalPriceEvidenceCandidates(
+      { query } as unknown as Pool,
+      { chain: 'ethereum', token: TOKEN, timestamp: EOD },
+    )
+
+    expect(candidates[0]).toMatchObject({
+      observedTimestamp: null,
+      observationDistance: null,
+      observationDirection: null,
+    })
+    expect(selectEodPriceEvidence(EOD, candidates)).toMatchObject({
+      selected: null,
+      validation: { failureClass: 'invalid' },
+    })
+    expect(query.mock.calls[0][0]).not.toContain('COALESCE(price.observed_at, price.timestamp)')
+  })
+
+  test('rejects malformed persisted recursive input evidence', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [{
+      chain: 'ethereum',
+      token: TOKEN,
+      timestamp: new Date(EOD * 1_000).toISOString(),
+      requested_timestamp: new Date(EOD * 1_000).toISOString(),
+      observed_timestamp: new Date(EOD * 1_000).toISOString(),
+      price: '2',
+      symbol: 'LP',
+      confidence: null,
+      source: 'derived',
+      candidate_id: 'pool-nav',
+      evidence_kind: 'derived',
+      quality: 'exact',
+      adapter: 'pool-nav',
+      block_number: null,
+      input_evidence: [{ chain: 'ethereum', token: TOKEN, priceUsd: 1 }],
+      validation_status: 'validated',
+      failure_reason: null,
+      evidence_metadata: {},
+    }] })
+
+    const candidates = await getHistoricalPriceEvidenceCandidates(
+      { query } as unknown as Pool,
+      { chain: 'ethereum', token: TOKEN, timestamp: EOD },
+    )
+
+    expect(candidates[0].inputs).toEqual([])
+    expect(selectEodPriceEvidence(EOD, candidates)).toMatchObject({
+      selected: null,
+      validation: { failureReason: expect.stringContaining('no recursive inputs') },
     })
   })
 })

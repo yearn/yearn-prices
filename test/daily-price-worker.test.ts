@@ -424,7 +424,10 @@ describe('daily price worker', () => {
     const loadNextRetry = vi.fn()
       .mockResolvedValueOnce(REQUESTED_TIMESTAMP + 10)
       .mockResolvedValueOnce(null)
-    const wait = vi.fn().mockResolvedValue(undefined)
+    let currentTimestamp = REQUESTED_TIMESTAMP
+    const wait = vi.fn().mockImplementation(async (milliseconds: number) => {
+      currentTimestamp += milliseconds / 1_000
+    })
     const resolver: DailyPriceResolver = {
       resolve: vi.fn().mockResolvedValue({
         path: null,
@@ -433,18 +436,20 @@ describe('daily price worker', () => {
     }
 
     const summary = await runDailyPriceWorker(pool, resolver, {
-      nowTimestamp: REQUESTED_TIMESTAMP,
       maxAttempts: 3,
     }, {
       claimTargets,
       loadNextRetry,
       wait,
       recordOutcome: vi.fn().mockResolvedValue(undefined),
+      now: () => currentTimestamp,
       loadProgress: vi.fn().mockResolvedValue(progress({ priced: 0, unsupported: 1 })),
     })
 
     expect(summary.processed).toBe(1)
     expect(wait).toHaveBeenCalledWith(10_000)
     expect(loadNextRetry).toHaveBeenCalledTimes(2)
+    expect(claimTargets.mock.calls[1][2]).toMatchObject({ nowTimestamp: REQUESTED_TIMESTAMP + 10 })
+    expect(currentTimestamp).toBe(REQUESTED_TIMESTAMP + 10)
   })
 })

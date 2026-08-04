@@ -123,7 +123,27 @@ try {
               VALUES ${valuesSql.join(', ')}
             ),
             copied AS (
-              INSERT INTO token_prices (chain, token, timestamp, price, symbol, confidence, source, created_at)
+              INSERT INTO token_prices (
+                chain,
+                token,
+                timestamp,
+                price,
+                symbol,
+                confidence,
+                source,
+                candidate_id,
+                observed_at,
+                evidence_kind,
+                quality,
+                adapter,
+                block_number,
+                input_evidence,
+                validation_status,
+                failure_reason,
+                evidence_metadata,
+                created_at,
+                updated_at
+              )
               SELECT
                 tp.chain,
                 mappings.new_token,
@@ -132,12 +152,23 @@ try {
                 tp.symbol,
                 tp.confidence,
                 tp.source,
-                tp.created_at
+                tp.candidate_id,
+                tp.observed_at,
+                tp.evidence_kind,
+                tp.quality,
+                tp.adapter,
+                tp.block_number,
+                tp.input_evidence,
+                tp.validation_status,
+                tp.failure_reason,
+                tp.evidence_metadata,
+                tp.created_at,
+                tp.updated_at
               FROM token_prices tp
               INNER JOIN mappings
                 ON tp.token = mappings.old_token
               WHERE mappings.old_token <> mappings.new_token
-              ON CONFLICT (chain, token, timestamp, source) DO NOTHING
+              ON CONFLICT (chain, token, timestamp, source, candidate_id) DO NOTHING
               RETURNING 1
             ),
             deleted AS (
