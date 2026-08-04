@@ -19,7 +19,6 @@
     "warmup": "bun run scripts/warmup-prices.ts",
     "backfill:token-address-checksums": "bun run scripts/backfill-token-address-checksums.ts",
     "daily:enqueue-file": "bun run scripts/enqueue-daily-price-targets.ts",
-    "daily:import-production": "bun run scripts/import-production-eod-snapshot.ts",
     "daily:run": "bun run scripts/run-daily-price-worker.ts",
     "daily:cycle": "bun run scripts/run-daily-price-cycle.ts",
     "daily:status": "bun run scripts/daily-price-status.ts",

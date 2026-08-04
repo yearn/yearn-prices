@@ -47,7 +47,6 @@ bun run dev
 | `bun run warmup` | Pre-populate today's prices for known vaults/tokens |
 | `bun run backfill:token-address-checksums` | One-off backfill of checksummed token addresses |
 | `bun run daily:enqueue-file <targets.jsonl>` | Idempotently enqueue exact-EOD daily targets |
-| `bun run daily:import-production <snapshot.jsonl>` | Import a read-only exact-EOD production snapshot under the documented trust policy |
 | `bun run daily:run` | Resolve the durable daily queue with bounded concurrency |
 | `bun run daily:cycle` | Discover the latest closed day's Yearn assets and run the complete durable cycle |
 | `bun run daily:status` | Print durable EOD queue progress |
@@ -58,7 +57,7 @@ bun run dev
 
 Full route reference, request/response shapes, error codes, and caching behavior are documented in [`docs/routes.md`](docs/routes.md).
 
-The operator dashboard is served at `/daily-prices`. Queue data remains authenticated with a read key at
+Queue data is available to authenticated readers at
 `/api/daily-prices/progress`. Enqueue and audited requeue operations require the dedicated operator key; consumer
 application keys cannot mutate queue state.
 

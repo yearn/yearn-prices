@@ -1,8 +1,7 @@
 import { authenticateRequest, requireDailyPriceOperator, type AuthenticatedClient } from './auth'
 import { CACHE_CONTROL_NO_STORE } from './cache'
 import { createPool } from './db'
-import { handleDailyPriceDashboardAsset } from './daily-price-dashboard-page'
-import { handleDailyPriceProgress } from './daily-price-dashboard'
+import { handleDailyPriceProgress } from './daily-price-progress'
 import { readEdgeCache, writeEdgeCache } from './edge-cache'
 import { ApiError, jsonError } from './errors'
 import { optionsResponse, withCors } from './http'
@@ -100,12 +99,6 @@ export default {
 
     let authenticatedClient: AuthenticatedClient | null = null
     try {
-      const dashboardAsset = handleDailyPriceDashboardAsset(pathname, request.method)
-      if (dashboardAsset) {
-        logRequest(request, null)
-        return dashboardAsset
-      }
-
       if (pathname === '/api/health' && request.method === 'GET') {
         logRequest(request, null)
         return handleHealth()

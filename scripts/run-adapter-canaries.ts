@@ -104,7 +104,6 @@ const pool = createPool(databaseUrl, process.env.DATABASE_SCHEMA)
 try {
   const baseMarket = createHistoricalMarketPriceResolver(pool, {
     searchWidth: '6h',
-    allowProductionDailyImport: true,
   })
   const adapters = createOnchainPriceAdapters({ clientForChain: getChainClient })
   const results: Array<Record<string, unknown>> = []

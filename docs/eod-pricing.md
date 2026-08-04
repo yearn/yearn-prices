@@ -4,14 +4,11 @@
 
 Yearn Prices maintains one canonical historical price for each supported chain, token address, and closed UTC calendar day. The key is the day's exact `23:59:59 UTC` timestamp.
 
-Consumers use that accepted day-end price for every event in the same UTC day. They do not request event-specific prices. This choice is supported by a 46,307 asset-day validation set:
-
-- 43,293 asset-days had an EOD price (93.49%).
-- Those prices covered 69,948 of 74,199 events.
-- The aggregate fee difference versus event-time valuation was -4.98 basis points.
-- Median absolute price difference was 0.17%; p95 was 5.51%; p99 was 16.02%.
-
-The service therefore optimizes for complete, explainable daily coverage rather than arbitrary timestamp reconstruction.
+Consumers use that accepted day-end price for every event in the same UTC day. They do not request event-specific
+prices. In the retained Yearn Fees evaluation cohort, the existing production prices covered 40,144 of 74,199
+non-zero fee transactions (54.1%) and 241 of 396 unique assets (60.9%). The strict pipeline covers 65,376 transactions
+(88.1%) and 370 assets (93.4%). The service therefore optimizes for complete, explainable daily coverage rather than
+arbitrary timestamp reconstruction.
 
 ## Daily lifecycle
 
@@ -100,22 +97,6 @@ Every derived result retains its inputs and inherits the weakest input quality. 
 
 Pool NAV requires every constituent used by the formula. The service does not use Curve `virtual_price × coin0`, single-sided reserve ratios, or assumed stablecoin pegs.
 
-## Production import policy
-
-The production snapshot import is read-only: it consumes a local JSONL snapshot and never calls a production mutation.
-Every price record must have an exact EOD key and a positive finite value. The original value, source, timestamp, and
-snapshot provenance are retained.
-
-Production snapshots do not preserve provider observation timestamps, so imported rows are classified as
-`unknown-observation-time` and cannot serve strict reads or seed recursive pricing. Their original values and provenance
-remain available as audit evidence while every asset-day stays queued for independent repair. Rows from automatic pegs,
-aliases, proxies, the legacy Curve path, or undocumented derivations remain equally ineligible. A production
-`stable-peg` row can never become strict EOD evidence through import.
-
-Only evidence that explicitly preserves a verified provider observation timestamp may be enabled as a fallback
-recursive seed. The current production snapshot format does not meet that requirement; its rows remain audit-only
-until the worker produces complete evidence.
-
 ## Operations
 
 Enqueue one closed day:
@@ -142,10 +123,10 @@ bun run daily:report
 
 `daily:canaries` forces representative live contracts through each registered on-chain adapter at the latest closed
 EOD block, including separate Compound and Iron Bank exchange-rate cases. `daily:report` emits the final chain,
-source, adapter, quality, import-policy, failure, alias, and incident-proxy breakdown without exposing provider URLs.
+source, adapter, quality, failure, alias, and incident-proxy breakdown without exposing provider URLs.
 
-The authenticated progress API is `GET /api/daily-prices/progress`. The operator dashboard is `/daily-prices`; its read
-key remains in browser session storage only. Queue mutation requests require the separate operator key.
+The authenticated progress API is `GET /api/daily-prices/progress`. Queue mutation requests require the separate
+operator key.
 
 Production orchestration lives in `.github/workflows/daily-eod.yml`, scheduled for 00:30 UTC. Its inventory contract is
 the supported-chain vault list returned by Kong's `list/vaults?origin=yearn` route; both vault-share and underlying

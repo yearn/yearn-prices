@@ -251,46 +251,6 @@ describe('historical market resolver', () => {
     )
   })
 
-  test('can explicitly use exact production EOD imports as fallback recursive seeds', async () => {
-    const getHistorical = vi.fn()
-    const resolver = createHistoricalMarketPriceResolver(pool, {
-      allowProductionDailyImport: true,
-    }, {
-      loadCandidates: vi.fn().mockResolvedValue([candidate({
-        observedTimestamp: REQUESTED_TIMESTAMP,
-        observationDistance: 0,
-        observationOffsetSeconds: 0,
-        observationDirection: 'exact',
-        classification: 'legacy',
-        quality: 'legacy',
-        validationStatus: 'validated',
-        adapter: 'production-yearn-prices-import',
-        metadata: {
-          origin: 'production-yearn-prices',
-          importClassification: 'known-production-observation-structural',
-          observedTimestampKnown: true,
-          independentlyValidated: false,
-        },
-      })]),
-      defiLlama: { getHistorical },
-    })
-
-    await expect(resolver({
-      chain: 'ethereum',
-      token: TOKEN,
-      requestedTimestamp: REQUESTED_TIMESTAMP,
-    })).resolves.toMatchObject({
-      priceUsd: 100,
-      classification: 'estimated',
-      quality: 'fallback',
-      adapter: 'production-yearn-prices-import',
-      metadata: {
-        recursiveSeedPolicy: 'explicit-production-eod-import',
-        directObservationClaimed: false,
-      },
-    })
-    expect(getHistorical).not.toHaveBeenCalled()
-  })
 
   test('does not let persisted derived evidence bypass its recursive adapter', async () => {
     const getHistorical = vi.fn().mockResolvedValue({ coins: {} })

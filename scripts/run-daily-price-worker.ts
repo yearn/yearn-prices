@@ -69,12 +69,6 @@ function optionalInteger(value: string | undefined, name: string, minimum: numbe
   return parsed
 }
 
-function optionalBoolean(value: string | undefined): boolean | undefined {
-  if (value == null || value === '') return undefined
-  if (value === 'true') return true
-  if (value === 'false') return false
-  throw new Error(`Invalid boolean: ${value}; expected true or false`)
-}
 
 const options = parseOptions(process.argv.slice(2))
 const pool = createPool(databaseUrl, process.env.DATABASE_SCHEMA)
@@ -93,7 +87,6 @@ try {
       1,
     ),
     batchDelayMs: optionalInteger(process.env.PRICE_MARKET_BATCH_DELAY_MS, 'PRICE_MARKET_BATCH_DELAY_MS', 0),
-    allowProductionDailyImport: optionalBoolean(process.env.PRICE_ALLOW_PRODUCTION_DAILY_IMPORT),
   })
   const adapters = createOnchainPriceAdapters({
     clientForChain: getChainClient,

@@ -169,7 +169,6 @@ const HISTORICAL_MARKET_FAILURE_ADAPTERS = new Set([
   'defillama-historical',
   'defillama-coingecko-alias',
   'defillama-canonical-market-proxy',
-  'production-yearn-prices-import',
 ])
 
 function failureAdapterVersion(adapter: string | null): string | null {

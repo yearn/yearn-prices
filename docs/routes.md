@@ -176,7 +176,7 @@ before disagreement validation. A requested source therefore cannot hide an inde
 
 Returns authenticated live queue state: chain distribution, current leases, total/attempted/remaining counts, durable
 outcomes, source/adapter/quality counts, elapsed time, rolling processing rate, ETA, and recent sanitized failure
-reasons. The matching dashboard is available at `/daily-prices`.
+reasons.
 
 ## `GET /api/prices/historical/:timestamp/:tokenKey`
 

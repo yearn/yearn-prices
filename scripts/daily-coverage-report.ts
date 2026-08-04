@@ -1,7 +1,7 @@
 import { config as loadEnv } from 'dotenv'
 import { SUPPORTED_CHAIN_NAMES } from '../src/chains'
 import { createPool } from '../src/db'
-import { sanitizeFailureReason } from '../src/daily-price-dashboard'
+import { sanitizeFailureReason } from '../src/daily-price-progress'
 
 loadEnv()
 
@@ -17,7 +17,6 @@ interface ChainRow {
   chain: string
   total: string | number
   priced: string | number
-  production_priced: string | number
   unsupported: string | number
   retryable: string | number
   quarantined: string | number
@@ -49,7 +48,6 @@ try {
     qualityResult,
     classificationResult,
     failureResult,
-    importResult,
     proxyResult,
   ] = await Promise.all([
     pool.query<ChainRow>(`
@@ -57,9 +55,6 @@ try {
         chain,
         COUNT(*) AS total,
         COUNT(*) FILTER (WHERE status = 'priced') AS priced,
-        COUNT(*) FILTER (
-          WHERE status = 'priced' AND adapter = 'production-yearn-prices-import'
-        ) AS production_priced,
         COUNT(*) FILTER (WHERE status = 'unsupported') AS unsupported,
         COUNT(*) FILTER (WHERE status = 'retryable') AS retryable,
         COUNT(*) FILTER (WHERE status = 'quarantined') AS quarantined,
@@ -112,12 +107,6 @@ try {
       GROUP BY chain, token, status, failure_class, adapter, resolution_failure, failure_reason
       ORDER BY status, asset_days DESC, chain, token
     `),
-    pool.query<CountRow>(`
-      SELECT COALESCE(metadata->>'importClassification', 'unknown') AS name, COUNT(*) AS count
-      FROM daily_price_targets
-      GROUP BY name
-      ORDER BY count DESC, name
-    `),
     pool.query<{
       chain: string
       token: string
@@ -169,8 +158,7 @@ try {
     byChain: chainResult.rows.map(row => ({
       chain: row.chain,
       total: Number(row.total),
-      startingPriced: Number(row.production_priced),
-      endingPriced: Number(row.priced),
+      priced: Number(row.priced),
       unsupported: Number(row.unsupported),
       retryable: Number(row.retryable),
       quarantined: Number(row.quarantined),
@@ -181,7 +169,6 @@ try {
     pricedByAdapter: countMap(adapterResult.rows),
     pricedByQuality: countMap(qualityResult.rows),
     pricedByClassification: countMap(classificationResult.rows),
-    productionImports: countMap(importResult.rows),
     failures: failuresByOutcome,
     explicitMappingsAndProxies: proxyResult.rows.map(row => ({
       chain: row.chain,

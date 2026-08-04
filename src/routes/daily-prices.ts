@@ -8,7 +8,7 @@ import {
   type DailyPriceRequeueRequest,
   type DailyPriceTargetInput,
 } from '../daily-prices'
-import { sanitizeFailureReason } from '../daily-price-dashboard'
+import { sanitizeFailureReason } from '../daily-price-progress'
 import { selectEodPriceEvidence } from '../evidence'
 import { ApiError, ensure } from '../errors'
 import { jsonResponse } from '../http'

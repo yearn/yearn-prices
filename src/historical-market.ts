@@ -32,7 +32,6 @@ export interface HistoricalMarketResolverOptions extends PriceEvidenceSelectionO
   batchSize?: number
   batchConcurrency?: number
   batchDelayMs?: number
-  allowProductionDailyImport?: boolean
 }
 
 export interface HistoricalMarketResolverDependencies {
@@ -240,51 +239,6 @@ function candidateToPath(candidate: PriceEvidenceCandidate): ResolvedPricePath {
     blockNumber: candidate.blockNumber,
     inputs: candidate.inputs,
     metadata: candidate.metadata,
-  }
-}
-
-function isProductionDailyImport(candidate: PriceEvidenceCandidate): boolean {
-  return candidate.adapter === 'production-yearn-prices-import'
-    && candidate.metadata.origin === 'production-yearn-prices'
-    && candidate.metadata.importClassification === 'known-production-observation-structural'
-    && candidate.metadata.observedTimestampKnown === true
-    && candidate.metadata.independentlyValidated === false
-    && candidate.validationStatus === 'validated'
-    && candidate.classification === 'legacy'
-    && candidate.quality === 'legacy'
-    && candidate.source !== 'stable-peg'
-    && candidate.observedTimestamp === candidate.requestedTimestamp
-    && candidate.failureReason === null
-}
-
-function productionDailyImportToPath(candidate: PriceEvidenceCandidate): ResolvedPricePath {
-  if (!isProductionDailyImport(candidate)) {
-    throw new InvalidPricingError('Candidate is not an eligible production daily import')
-  }
-  if (candidate.observedTimestamp === null) {
-    throw new InvalidPricingError('Production import has an unknown observation time')
-  }
-  return {
-    chain: candidate.chain,
-    token: candidate.token,
-    requestedTimestamp: candidate.requestedTimestamp,
-    observedTimestamp: candidate.observedTimestamp,
-    priceUsd: candidate.priceUsd,
-    symbol: candidate.symbol,
-    confidence: candidate.confidence,
-    source: candidate.source,
-    adapter: candidate.adapter ?? 'production-yearn-prices-import',
-    classification: 'estimated',
-    quality: 'fallback',
-    blockNumber: null,
-    inputs: [],
-    metadata: {
-      ...candidate.metadata,
-      adapterVersion: candidate.metadata.adapterVersion ?? HISTORICAL_MARKET_ADAPTER_VERSION,
-      policyVersion: candidate.metadata.policyVersion ?? PRICE_SELECTION_POLICY_VERSION,
-      recursiveSeedPolicy: 'explicit-production-eod-import',
-      directObservationClaimed: false,
-    },
   }
 }
 
@@ -536,14 +490,9 @@ export function createHistoricalMarketPriceResolver(
         strictSelection.validation.failureReason ?? 'Stored price evidence is quarantined for disagreement',
       )
     }
-    const productionDailyImport = options.allowProductionDailyImport
-      ? candidates.find(isProductionDailyImport) ?? null
-      : null
     const persistedPath = strictSelection.selected
       ? candidateToPath(strictSelection.selected)
-      : productionDailyImport
-        ? productionDailyImportToPath(productionDailyImport)
-        : null
+      : null
     if (
       persistedPath
       && (widthSeconds == null

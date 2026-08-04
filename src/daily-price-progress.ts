@@ -60,7 +60,7 @@ interface TargetRow {
   updated_at?: string | Date | null
 }
 
-export interface DailyPriceDashboardSnapshot {
+export interface DailyPriceProgressSnapshot {
   generatedAt: number
   state: DailyPriceRunState
   queue: {
@@ -88,7 +88,7 @@ export interface DailyPriceDashboardSnapshot {
     }
     etaSeconds: number | null
   }
-  chains: Array<DailyPriceDashboardSnapshot['queue'] & { chain: string }>
+  chains: Array<DailyPriceProgressSnapshot['queue'] & { chain: string }>
   adapters: Array<{ adapter: string; count: number; pricedPercent: number }>
   sources: Array<{ source: string; count: number; pricedPercent: number }>
   qualities: Array<{ quality: string; count: number; pricedPercent: number }>
@@ -155,7 +155,7 @@ function queueFromRow(row: Omit<ChainRow, 'chain'> & Partial<Pick<SummaryRow, 'a
 }
 
 function inferRunState(
-  queue: DailyPriceDashboardSnapshot['queue'],
+  queue: DailyPriceProgressSnapshot['queue'],
   lastActivityAt: number | null,
   nowTimestamp: number,
 ): DailyPriceRunState {
@@ -181,10 +181,10 @@ export function sanitizeFailureReason(value: string | null | undefined): string 
     .slice(0, 1_000)
 }
 
-export async function getDailyPriceDashboardSnapshot(
+export async function getDailyPriceProgressSnapshot(
   pool: Pool,
   nowTimestamp = Math.floor(Date.now() / 1_000),
-): Promise<DailyPriceDashboardSnapshot> {
+): Promise<DailyPriceProgressSnapshot> {
   const now = unixToIsoTimestamp(nowTimestamp)
   const [
     summaryResult,
@@ -374,7 +374,7 @@ export async function getDailyPriceDashboardSnapshot(
 }
 
 export async function handleDailyPriceProgress(pool: Pool): Promise<Response> {
-  return jsonResponse(await getDailyPriceDashboardSnapshot(pool), {
+  return jsonResponse(await getDailyPriceProgressSnapshot(pool), {
     headers: { 'cache-control': CACHE_CONTROL_NO_STORE },
   })
 }

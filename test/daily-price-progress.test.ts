@@ -1,8 +1,8 @@
 import type { Pool } from '@neondatabase/serverless'
 import { describe, expect, test, vi } from 'vitest'
-import { getDailyPriceDashboardSnapshot, handleDailyPriceProgress } from '../src/daily-price-dashboard'
+import { getDailyPriceProgressSnapshot, handleDailyPriceProgress } from '../src/daily-price-progress'
 
-function dashboardPool() {
+function progressPool() {
   const query = vi.fn()
     .mockResolvedValueOnce({
       rows: [{
@@ -75,12 +75,12 @@ function dashboardPool() {
   return { query, pool: { query } as unknown as Pool }
 }
 
-describe('daily price dashboard snapshot', () => {
+describe('daily price progress snapshot', () => {
   test('reports live queue semantics, rolling throughput, and ETA', async () => {
-    const { pool } = dashboardPool()
+    const { pool } = progressPool()
     const nowTimestamp = Date.parse('2026-08-01T10:10:00.000Z') / 1_000
 
-    const snapshot = await getDailyPriceDashboardSnapshot(pool, nowTimestamp)
+    const snapshot = await getDailyPriceProgressSnapshot(pool, nowTimestamp)
 
     expect(snapshot).toMatchObject({
       generatedAt: nowTimestamp,
@@ -117,7 +117,7 @@ describe('daily price dashboard snapshot', () => {
   })
 
   test('returns a no-store response and sanitizes precise failure messages', async () => {
-    const { query, pool } = dashboardPool()
+    const { query, pool } = progressPool()
 
     const response = await handleDailyPriceProgress(pool)
     const body = await response.text()
