@@ -625,7 +625,17 @@ function pairAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
         throw new InvalidPricingError(`AMM constituent is not safely substitutable: ${JSON.stringify(blockingFailure)}`)
       }
       if (!paths[0] || !paths[1]) {
-        throw new InvalidPricingError('AMM reserve NAV requires every constituent price')
+        const unavailableConstituents = [
+          { address: token0, resolution: resolutions[0] },
+          { address: token1, resolution: resolutions[1] },
+        ].flatMap(({ address, resolution }) => (
+          resolution.path
+            ? []
+            : [{ address, failureClass: resolution.failure?.reason ?? 'unavailable' }]
+        ))
+        throw new InvalidPricingError(
+          `AMM reserve NAV requires every constituent price: ${JSON.stringify(unavailableConstituents)}`,
+        )
       }
 
       const decimals = [token0Decimals, token1Decimals]

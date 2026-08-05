@@ -341,7 +341,20 @@ describe('pool and LP price adapters', () => {
     expect(incomplete.failure?.attempts).toEqual(expect.arrayContaining([
       expect.objectContaining({
         adapter: 'amm-reserve-nav',
-        error: 'AMM reserve NAV requires every constituent price',
+        error: `AMM reserve NAV requires every constituent price: ${JSON.stringify([
+          { address: SECOND_UNDERLYING, failureClass: 'unsupported' },
+        ])}`,
+      }),
+    ]))
+
+    const unavailable = await poolEngine(client, {}).resolve(target())
+    expect(unavailable.failure?.attempts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        adapter: 'amm-reserve-nav',
+        error: `AMM reserve NAV requires every constituent price: ${JSON.stringify([
+          { address: UNDERLYING, failureClass: 'unsupported' },
+          { address: SECOND_UNDERLYING, failureClass: 'unsupported' },
+        ])}`,
       }),
     ]))
   })
