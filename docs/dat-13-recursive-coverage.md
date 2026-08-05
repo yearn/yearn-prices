@@ -11,13 +11,17 @@ This report classifies every recursive constituent promoted by the DAT-5 schema 
 
 Primary references: [ERC-4626 previewRedeem](https://eips.ethereum.org/EIPS/eip-4626), [YIP-88](https://docs.yearn.fi/contributing/governance/yips/yip-88), [Yearn stYFI deployment](https://github.com/yearn/stYFI/blob/master/deployment.json), [LiquidLockerRedemption source](https://github.com/yearn/stYFI/blob/master/contracts/LiquidLockerRedemption.vy), [Abracadabra omnichain MIM](https://dev.abracadabra.money/token-related/omnichain-mim), [Superchain token list](https://github.com/ethereum-optimism/ethereum-optimism.github.io/blob/master/optimism.tokenlist.json), and [CoinGecko Optimism MIM contract mapping](https://api.coingecko.com/api/v3/coins/optimistic-ethereum/contract/0xb153fb3d196a8eb25522705560ac152eeec57901).
 
+Additional reviewed references: [YieldNest ynETH deployment](https://docs.yieldnest.finance/resources/deployment-addresses), [YieldNest ynETH source](https://github.com/yieldnest/yieldnest-eigenlayer-lrt/blob/main/src/ynETH.sol), [Reserve rgUSD RFC](https://forum.reserve.org/t/rfc-introducing-rgusd/649), [Reserve RToken redemption source](https://github.com/reserve-protocol/protocol/blob/master/contracts/p1/RToken.sol), and [Overnight contract addresses](https://docs.overnight.fi/advanced/contract-addresses).
+
 ## Prioritized implementation
 
 1. Use standard ERC-4626 `previewRedeem(oneShare)` only when `convertToAssets(oneShare)` is unavailable. This recovers waDAI and stataEthDAI without assuming parity.
 2. Re-run existing dependency-complete Balancer NAV topologically. The two wrapper recoveries can unlock three promoted BPTs; no BPT is priced from a partial constituent set.
 3. Add the reviewed Optimism MIM provider alias. It remains `estimated` / `fallback`, and provider timestamp validation remains latest-at-or-before-EOD.
 4. Price upYFI and coveYFI from their executable YIP-88 net redemption value. Read the exact-block fee, scale, enabled flag, remaining capacity, YFI liquidity, and the upYFI-to-supYFI ERC-4626 conversion; never substitute gross nominal parity.
-5. Retain explicit unsupported outcomes for all other targets until a historical market observation or deterministic on-chain conversion is documented.
+5. Price ynETH from its exact-block share conversion into native ETH, with WETH as the recursive price dependency; do not assume ETH parity.
+6. Price reviewed Reserve RTokens from the exact complete redemption basket only when the protocol is unfrozen, fully collateralized, and has one-token redemption capacity.
+7. Retain explicit unsupported outcomes for all other targets until a historical market observation or deterministic on-chain conversion is documented.
 
 ## Asset-level classification
 
@@ -26,7 +30,7 @@ Primary references: [ERC-4626 previewRedeem](https://eips.ethereum.org/EIPS/eip-
 | `1:0x005f893ecd7bf9667195642f7649da8163e23658` | dgnETH | current + historical | market or lock token | `1:0x021cf6b7ebb8c8efcf21396eb4c94658976172c7`<br>`1:0x5ba541585d6297b756f08b7c61a7e37752123b4f` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `1:0x04bc0ab673d88ae9dbc9da2380cb6b79c4bca9ae` | yBUSD | current + historical | legacy wrapper | `1:0x3b3ac5386837dc563660fb6a0937dfaa5924333b` | Unsupported: historical share rate exists, but underlying BUSD has no acceptable EOD observation. |
 | `1:0x098256c06ab24f5655c5506a6488781bd711c14b` | waDAI | historical | standard wrapper | `1:0x6667c6fa9f2b3fc1cc8d85320b62703d938e4385` | Derived: previewRedeem(one share) times dependency price; full input provenance required. |
-| `1:0x09db87a538bd693e9d08544577d5ccfaa6373a48` | ynETH | current + historical | market or lock token | `1:0x19b8524665abac613d82ece5d8347ba44c714bdd`<br>`1:0x1f59cc10c6360da918b0235c98e58008452816eb`<br>`1:0xd04e38dae7203f6ab49238ede14df7a5ba7da63e` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
+| `1:0x09db87a538bd693e9d08544577d5ccfaa6373a48` | ynETH | current + historical | non-rebasing native-ETH share | `1:0x19b8524665abac613d82ece5d8347ba44c714bdd`<br>`1:0x1f59cc10c6360da918b0235c98e58008452816eb`<br>`1:0xd04e38dae7203f6ab49238ede14df7a5ba7da63e` | Derived: exact-block `convertToAssets(one share)` times the recursively resolved WETH price. |
 | `1:0x09fd37d9aa613789c517e76df1c53aece2b60df4` | ebUSD | current + historical | market or lock token | `1:0xd25f2cc6819fbd34641712122397efbaf9b6a6e2` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `1:0x196f4727526ea7fb1e17b2071b3d8eaa38486988` | RSV | current + historical | market or lock token | `1:0xc2ee6b0334c261ed60c72f6054450b61b8f18e35` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `1:0x1cc481ce2bd2ec7bf67d1be64d4878b16078f309` | ibCHF | current + historical | market or lock token | `1:0x08cea8e5b4551722deb97113c139dd83c26c5398`<br>`1:0x9c2c8910f113181783c249d8f6aa41b51cde0f0c` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
@@ -47,7 +51,7 @@ Primary references: [ERC-4626 previewRedeem](https://eips.ethereum.org/EIPS/eip-
 | `1:0x69681f8fde45345c3870bcd5eaf4a05a60e7d227` | ibGBP | current + historical | market or lock token | `1:0x22cf19eb64226e0e1a79c69b345b31466fd273a7`<br>`1:0xd6ac1cb9019137a896343da59dde6d097f710538` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `1:0x699e04f98de2fc395a7dcbf36b48ec837a976490` | tacUSD | current + historical | market or lock token | `1:0x51f5466690978173f45270f57e06e25b0c888261` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `1:0x6ba75d640bebfe5da1197bb5a2aff3327789b5d3` | VEUR | historical | market or lock token | `1:0xf05cfb8b4382c69f3b451c5fb55210b232e0edfa` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
-| `1:0x78da5799cf427fee11e9996982f4150ece7a99a7` | rgUSD | current + historical | market or lock token | `1:0x20bb4a325924917e3336753ba5350a84f70f392e`<br>`1:0x627c22bd39c69e65f749f6307430da881709941c`<br>`1:0x6fc7ea6ca8cd2759803eb78159c931a8ff5e0557`<br>`1:0xde73e407efc75edbafc5bcd62ebb1e7a9b38ebcd`<br>`1:0xdf9015472ea23e3bea6fbd6092915f9ed6980a99`<br>`1:0xf5a7906b41b858b66d3a7cbe167df1fb43ffe977` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
+| `1:0x78da5799cf427fee11e9996982f4150ece7a99a7` | rgUSD | current + historical | deprecated Reserve RToken | `1:0x20bb4a325924917e3336753ba5350a84f70f392e`<br>`1:0x627c22bd39c69e65f749f6307430da881709941c`<br>`1:0x6fc7ea6ca8cd2759803eb78159c931a8ff5e0557`<br>`1:0xde73e407efc75edbafc5bcd62ebb1e7a9b38ebcd`<br>`1:0xdf9015472ea23e3bea6fbd6092915f9ed6980a99`<br>`1:0xf5a7906b41b858b66d3a7cbe167df1fb43ffe977` | Derived: exact complete Reserve redemption basket; exact-block unfrozen, full-collateralization, and one-token redemption-capacity checks required. |
 | `1:0x836a808d4828586a69364065a1e064609f5078c7` | pETH | historical | market or lock token | `1:0x9848482da3ee3076165ce6497eda906e66bb85c5` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `1:0x8c0d76c9b18779665475f3e212d9ca1ed6a1a0e6` | zunUSD | historical | market or lock token | `1:0x8c24b3213fd851db80245fccc42c40b94ac9a745` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `1:0x95710bde45c8d384a976cc58cc7a7e489576b098` | upYFI | current + historical | 69,420:1 liquid locker, wrapped 1:1 into supYFI for redemption | `1:0x13120b7599ddf33782c748a847cc1d3c96387ecd` | Derived: exact-block YIP-88 net redemption into YFI after the decaying fee, with enabled status, wrapper availability, remaining capacity, and facility liquidity all required. |
@@ -55,21 +59,21 @@ Primary references: [ERC-4626 previewRedeem](https://eips.ethereum.org/EIPS/eip-
 | `1:0x97983236be88107cc8998733ef73d8d969c52e37` | sdYFI | current + historical | market or lock token | `1:0x79e281bc69a03dabccd66858c65ef6724e50aebe`<br>`1:0x852b90239c5034b5bb7a5e54ef1bef3ce3359cc8` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `1:0x97effb790f2fbb701d88f89db4521348a2b77be8` | CVG | historical | market or lock token | `1:0x004c167d27ada24305b76d80762997fa6eb8d9b2` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `1:0xab846fb6c81370327e784ae7cbb6d6a6af6ff4bf` | PAL | current + historical | market or lock token | `1:0xbe4f3ad6c9458b901c81b734cb22d9eae9ad8b50` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
-| `1:0xacdf0dba4b9839b96221a8487e9ca660a48212be` | hyUSD | current + historical | market or lock token | `1:0xc794c6a95f30d0ebf7b3bbe85e8a0a95c9e411c1` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
+| `1:0xacdf0dba4b9839b96221a8487e9ca660a48212be` | hyUSD | current + historical | Reserve RToken | `1:0xc794c6a95f30d0ebf7b3bbe85e8a0a95c9e411c1` | Unsupported at EOD: the exact redemption basket is valid, but constituent `0x27F2...f37a` is unsupported; incomplete-basket pricing is forbidden. |
 | `1:0xb9d7dddca9a4ac480991865efef82e01273f79c3` | bLUSD | current + historical | market or lock token | `1:0x5ca0313d44551e32e0d7a298ec024321c4bc59b4` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `1:0xbcb8b7fc9197feda75c101fa69d3211b5a30dcd9` | xFraxTempleLP | historical | market or lock token | `1:0xdadfd00a2bbeb1abc4936b1644a3033e1b653228` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `1:0xc2e660c62f72c2ad35ace6db78a616215e2f2222` | zunETH | current + historical | market or lock token | `1:0x17d964da2bd337cfeaed30a27c9ab6580676e730`<br>`1:0x3a65cbaebbfecbea5d0cb523ab56fdbda7ff9aaa` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `1:0xc443c15033fcb6cf72cc24f1bda0db070ddd9786` | bb-a-USD | historical | Balancer BPT | `1:0xc2b021133d1b0cf07dba696fd5dd89338428225b` | Derived: existing complete Balancer Vault NAV after every wrapper/underlying dependency resolves. |
 | `1:0xc55126051b22ebb829d00368f4b12bde432de5da` | BTRFLY | current + historical | market or lock token | `1:0x7483dd57f6488b0e194a151c57df6ec85c00ace9` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `1:0xc56c2b7e71b54d38aab6d52e94a04cbfa8f604fa` | ZUSD | historical | market or lock token | `1:0x400d4c984779a747462e88373c3fe369ef9f5b50` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
-| `1:0xc581b735a1688071a1746c968e0798d642ede491` | EURT | current + historical | market or lock token | `1:0x3b6831c0077a1e44ed0a21841c3bc4dc11bce833`<br>`1:0x3fb78e61784c9c637d560ede23ad57ca1294c14a`<br>`1:0xb9446c4ef5ebe66268da6700d26f96273de3d571`<br>`1:0xfd5db7463a3ab53fd211b4af195c5bccc1a03890` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
+| `1:0xc581b735a1688071a1746c968e0798d642ede491` | EURT | current + historical | Tether euro stablecoin | `1:0x3b6831c0077a1e44ed0a21841c3bc4dc11bce833`<br>`1:0x3fb78e61784c9c637d560ede23ad57ca1294c14a`<br>`1:0xb9446c4ef5ebe66268da6700d26f96273de3d571`<br>`1:0xfd5db7463a3ab53fd211b4af195c5bccc1a03890` | Unsupported at EOD: reviewed CoinGecko identity produced only a future observation and a prior observation outside the six-hour window; no euro peg is assumed. |
 | `1:0xd7c9f0e536dc865ae858b0c0453fe76d13c3beac` | XAI | current + historical | market or lock token | `1:0x326290a1b0004eee78fa6ed4f1d8f4b2523ab669` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `1:0xdf574c24545e5ffecb9a659c229253d4111d87e1` | HUSD | current + historical | market or lock token | `1:0x5b5cfe992adac0c9d48e05854b2d91c73a003858` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `1:0xe80c0cd204d654cebe8dd64a4857cab6be8345a3` | JPEG | current + historical | market or lock token | `1:0x23e7817bc73645063fb2fa85c1d098effe84be90`<br>`1:0xda68f66fc0f10ee61048e70106df4bdb26baf595` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `1:0xeb708639e8e518b86a916db3685f90216b1c1c67` | stataEthDAI | historical | standard wrapper | `1:0xc443c15033fcb6cf72cc24f1bda0db070ddd9786` | Derived: previewRedeem(one share) times dependency price; full input provenance required. |
 | `1:0xfa24a90a3f2bbe5feea92b95cd0d14ce709649f9` | bb-a-DAI | historical | Balancer BPT | `1:0xc443c15033fcb6cf72cc24f1bda0db070ddd9786` | Derived: existing complete Balancer Vault NAV after every wrapper/underlying dependency resolves. |
 | `1:0xfafdf0c4c1cb09d430bf88c75d88bb46dae09967` | ibAUD | current + historical | market or lock token | `1:0x3f1b0278a9ee595635b61817630cc19de792f506`<br>`1:0x54c8ecf46a81496eeb0608bd3353388b5d7a2a33` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
-| `1:0xfc0b1eef20e4c68b3dcf36c4537cfa7ce46ca70b` | USDC+ | current + historical | market or lock token | `1:0xfed2b54453f75634bcdaea5e5b11a3f99b9c28fa` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
+| `1:0xfc0b1eef20e4c68b3dcf36c4537cfa7ce46ca70b` | USDC+ | current + historical | Reserve RToken | `1:0xfed2b54453f75634bcdaea5e5b11a3f99b9c28fa` | Unsupported at EOD: the exact redemption basket is valid, but constituent `0x093c...e4Af` is unsupported; incomplete-basket pricing is forbidden. |
 | `1:0xff71841eefca78a64421db28060855036765c248` | coveYFI | current + historical | 1:1-denominated liquid locker | `1:0xa3f152837492340daaf201f4dfec6cd73a8a9760` | Derived: exact-block YIP-88 net redemption into YFI after the decaying fee, with enabled status, remaining capacity, and facility liquidity all required. |
 | `10:0x00a35fd824c717879bf370e70ac6868b95870dfb` | IB | current + historical | market or lock token | `10:0xb545592e38b603f4a904a5260a6ffc538bfcb424` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `10:0x00e1724885473b63bce08a9f0a52f35b0979e35a` | OATH | current + historical | market or lock token | `10:0xc3439bc1a747e545887192d6b7f8be47f608473f` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
@@ -78,7 +82,7 @@ Primary references: [ERC-4626 previewRedeem](https://eips.ethereum.org/EIPS/eip-
 | `10:0x3417e54a51924c225330f8770514ad5560b9098d` | RED | current + historical | market or lock token | `10:0x4e316557f63c2156eafdfec08f31df4957136203`<br>`10:0x7a7f1187c4710010db17d0a9ad3fce85e6ecd90a` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `10:0x50c5725949a6f0c72e6c4a641f24049a917db0cb` | LYRA | current + historical | market or lock token | `10:0xdb61f9b480f0a8b817811cfaa89a1c219c355224` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `10:0x5d47baba0d66083c52009271faf3f50dcc01023c` | UNIDX | current + historical | market or lock token | `10:0xc0a0adf5e3b07e383c2c1533b2f0878a3195c622`<br>`10:0xe39120b27e5bfec953524402c2e261763c76519e` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
-| `10:0x73cb180bf0521828d8849bc8cf2b920918e23032` | USD+ | current + historical | market or lock token | `10:0x0b28c2e41058edc7d66c516c617b664ea86eec5d`<br>`10:0x667002f9dc61ebcba8ee1cbeb2ad04060388f223`<br>`10:0x844d7d2fca6786be7de6721aabdff6957ace73a0`<br>`10:0xd330841ef9527e3bd0abc28a230c7ca8dec9423b`<br>`10:0xd95e98fc33670dc033424e7aa0578d742d00f9c7` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
+| `10:0x73cb180bf0521828d8849bc8cf2b920918e23032` | USD+ | current + historical | retired Overnight rebasing stablecoin | `10:0x0b28c2e41058edc7d66c516c617b664ea86eec5d`<br>`10:0x667002f9dc61ebcba8ee1cbeb2ad04060388f223`<br>`10:0x844d7d2fca6786be7de6721aabdff6957ace73a0`<br>`10:0xd330841ef9527e3bd0abc28a230c7ca8dec9423b`<br>`10:0xd95e98fc33670dc033424e7aa0578d742d00f9c7` | Unsupported at EOD: supply was zero and token redemption was paused with zero availability; no $1 or USDC parity is assumed. |
 | `10:0x7ae97042a4a0eb4d1eb370c34bfec71042a056b7` | UNLOCK | current + historical | market or lock token | `10:0x6e6046e9b5e3d90eac2abba610bca725834ca5b3` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `10:0x920cf626a271321c151d027030d5d08af699456b` | KWENTA | current + historical | market or lock token | `10:0x8f47041adbef5bf321c9f63a0660326614ab6b60` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `10:0x970d50d09f3a656b43e11b0d45241a84e3a6e011` | DAI+ | current + historical | market or lock token | `10:0x667002f9dc61ebcba8ee1cbeb2ad04060388f223` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
@@ -130,6 +134,37 @@ The exact new recoveries at `2026-08-04T23:59:59Z` were:
 - coveYFI/YFI Curve parent `0xa3f152...`: `$2,032.6074725455665`, derived only after both reserves were priceable.
 
 Relative to the preserved DAT-2 baseline, the final outcome is 484 priced, 176 unsupported, and 43 quarantined: a net change of +11 priced, -12 unsupported, and +1 quarantined. Eight of the 74 promoted constituents are now priced and 66 remain unsupported. The YIP-88 idempotency rerun inserted 0 targets, updated 0 metadata rows, and processed 0 work items.
+
+### User-evidence follow-up
+
+The rgUSD, ynETH, EURT, and Optimism USD+ evidence led to a third fresh isolated schema, `codex_dat13_user_assets_validation_20260805`. The reusable Reserve adapter was also applied to the promoted hyUSD and USDC+ RTokens, but remained dependency-complete and failed closed when any redemption constituent was unavailable.
+
+| Outcome | With YIP-88 | User-evidence follow-up | Increment |
+| --- | ---: | ---: | ---: |
+| Priced | 484 | 493 | +9 |
+| Unsupported | 176 | 166 | -10 |
+| Quarantined | 43 | 44 | +1 |
+
+Two promoted constituents became priced:
+
+- ynETH `0x09db87...`: `$2,023.5354588021619`, derived from `1.080340686311753659` native ETH per share and the WETH dependency;
+- rgUSD `0x78da57...`: `$1.0011353066145032`, derived from the complete sDAI redemption basket.
+
+Seven immediate parent targets became recoverable:
+
+- ynETH Curve parents `0x19b852...` at `$4,391.068489842723` and `0xd04e38...` at `$1,931.6530428839806`;
+- rgUSD Curve parents `0x20bb4a...` at `$0.9990678664823794`, `0x627c22...` at `$2.489153734426762`, `0x6fc7ea...` at `$1.0087548061730383`, `0xdf9015...` at `$1.005577904660927`, and `0xf5a790...` at `$0.9712874440797704`.
+
+The remaining reviewed failures stayed semantically unavailable:
+
+- hyUSD requires unsupported redemption constituent `0x27F2...f37a`;
+- USDC+ requires unsupported redemption constituent `0x093c...e4Af`;
+- EURT had no accepted at-or-before-EOD observation inside the six-hour window;
+- Optimism USD+ had zero supply, paused token redemption, and zero redemption availability at EOD;
+- ynETH parent `0x1f59cc...` still requires unsupported constituent `0x35Ec...630c`;
+- rgUSD parent `0xde73e4...` was quarantined because the Curve LP token had no circulating supply.
+
+Relative to the preserved DAT-2 baseline, the final outcome is 493 priced, 166 unsupported, and 44 quarantined: a net change of +20 priced, -22 unsupported, and +2 quarantined. Ten of the 74 promoted constituents are now priced and 64 remain unsupported. The final idempotency rerun inserted 0 targets, updated 0 metadata rows, and processed 0 work items.
 
 ## External dependency boundary
 

@@ -25,6 +25,16 @@ const YIP88_LIQUID_LOCKERS = new Map<string, bigint>([
   ['0x95710bde45c8d384a976cc58cc7a7e489576b098', 1n],
   ['0xff71841eefca78a64421db28060855036765c248', 2n],
 ])
+const NATIVE_SHARE_WRAPPERS: Record<number, ReadonlySet<string>> = {
+  1: new Set(['0x09db87a538bd693e9d08544577d5ccfaa6373a48']),
+}
+const RESERVE_RTOKENS: Record<number, ReadonlySet<string>> = {
+  1: new Set([
+    '0x78da5799cf427fee11e9996982f4150ece7a99a7',
+    '0xacdf0dba4b9839b96221a8487e9ca660a48212be',
+    '0xfc0b1eef20e4c68b3dcf36c4537cfa7ce46ca70b',
+  ]),
+}
 
 const WRAPPED_NATIVE: Record<number, string> = {
   1: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
@@ -71,6 +81,19 @@ const liquidLockerRedemptionAbi = parseAbi([
   'function capacities(uint256 index) view returns (uint256)',
   'function enabled(uint256 index) view returns (bool)',
   'function used(uint256 index) view returns (uint256)',
+])
+const reserveRTokenAbi = parseAbi([
+  'function main() view returns (address)',
+  'function basketsNeeded() view returns (uint192)',
+  'function redemptionAvailable() view returns (uint256)',
+])
+const reserveMainAbi = parseAbi([
+  'function basketHandler() view returns (address)',
+  'function frozen() view returns (bool)',
+])
+const reserveBasketHandlerAbi = parseAbi([
+  'function fullyCollateralized() view returns (bool)',
+  'function quote(uint192 amount, uint8 rounding) view returns (address[] erc20s, uint256[] quantities)',
 ])
 const yearnUnderlyingAbis = [
   parseAbi(['function token() view returns (address)']),
@@ -361,6 +384,180 @@ function yip88LiquidLockerAdapter(options: OnchainAdapterOptions): RecursivePric
         blockNumber: state.numericBlockNumber,
         inputs: [recursiveInput(input, conversion)],
         metadata: conversion,
+      }
+    },
+  }
+}
+
+function nativeShareAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
+  return {
+    name: 'native-share-convert-to-assets',
+    async resolve(target, context) {
+      const chainId = chainNameToId(target.chain)
+      if (chainId == null || !NATIVE_SHARE_WRAPPERS[chainId]?.has(target.token.toLowerCase())) return null
+      const nativeAsset = WRAPPED_NATIVE[chainId]
+      if (!nativeAsset) return null
+
+      const state = await contractContext(target, options)
+      const shareDecimals = await tokenDecimals(state.client, target.token, state.blockNumber)
+      const oneShareRaw = 10n ** BigInt(shareDecimals)
+      let method = 'convertToAssets'
+      let convertedAssetsRaw = await maybe(() => state.client.readContract({
+        address: state.address,
+        abi: erc4626Abi,
+        functionName: 'convertToAssets',
+        args: [oneShareRaw],
+        blockNumber: state.blockNumber,
+      }))
+      if (convertedAssetsRaw == null) {
+        method = 'previewRedeem'
+        convertedAssetsRaw = await maybe(() => state.client.readContract({
+          address: state.address,
+          abi: erc4626Abi,
+          functionName: 'previewRedeem',
+          args: [oneShareRaw],
+          blockNumber: state.blockNumber,
+        }))
+      }
+      if (convertedAssetsRaw == null || convertedAssetsRaw === 0n) return null
+
+      const conversion = {
+        ...historicalBlockEvidence(state, target),
+        method,
+        underlying: nativeAsset,
+        shareDecimals,
+        underlyingDecimals: 18,
+        oneShareRaw: rawState(oneShareRaw),
+        convertedAssetsRaw: rawState(convertedAssetsRaw),
+        valuationRule: 'allowlisted-native-share-conversion',
+      }
+      const input = await context.require(
+        childTarget(target, nativeAsset, state.numericBlockNumber),
+        'native share underlying',
+      )
+      return {
+        priceUsd: calculateWrapperPrice(
+          convertedAssetsRaw,
+          18,
+          oneShareRaw,
+          shareDecimals,
+          input.priceUsd,
+        ),
+        blockNumber: state.numericBlockNumber,
+        inputs: [recursiveInput(input, conversion)],
+        metadata: conversion,
+      }
+    },
+  }
+}
+
+function reserveRTokenAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
+  return {
+    name: 'reserve-rtoken-redemption',
+    async resolve(target, context) {
+      const chainId = chainNameToId(target.chain)
+      if (chainId == null || !RESERVE_RTOKENS[chainId]?.has(target.token.toLowerCase())) return null
+
+      const state = await contractContext(target, options)
+      const [mainRaw, tokenDecimalsRaw, totalSupplyRaw, basketsNeededRaw, redemptionAvailableRaw] = await Promise.all([
+        state.client.readContract({ address: state.address, abi: reserveRTokenAbi, functionName: 'main', blockNumber: state.blockNumber }),
+        state.client.readContract({ address: state.address, abi: erc20Abi, functionName: 'decimals', blockNumber: state.blockNumber }),
+        state.client.readContract({ address: state.address, abi: erc20Abi, functionName: 'totalSupply', blockNumber: state.blockNumber }),
+        state.client.readContract({ address: state.address, abi: reserveRTokenAbi, functionName: 'basketsNeeded', blockNumber: state.blockNumber }),
+        state.client.readContract({ address: state.address, abi: reserveRTokenAbi, functionName: 'redemptionAvailable', blockNumber: state.blockNumber }),
+      ])
+      const main = normalizedAddress(mainRaw)
+      if (!main || totalSupplyRaw === 0n || basketsNeededRaw === 0n) return null
+
+      const rTokenDecimals = Number(tokenDecimalsRaw)
+      const oneTokenRaw = 10n ** BigInt(rTokenDecimals)
+      if (redemptionAvailableRaw < oneTokenRaw) return null
+      const basketUnitsRaw = basketsNeededRaw * oneTokenRaw / totalSupplyRaw
+      if (basketUnitsRaw === 0n) return null
+
+      const [basketHandlerRaw, frozen] = await Promise.all([
+        state.client.readContract({ address: main, abi: reserveMainAbi, functionName: 'basketHandler', blockNumber: state.blockNumber }),
+        state.client.readContract({ address: main, abi: reserveMainAbi, functionName: 'frozen', blockNumber: state.blockNumber }),
+      ])
+      const basketHandler = normalizedAddress(basketHandlerRaw)
+      if (!basketHandler || frozen) return null
+
+      const fullyCollateralized = await state.client.readContract({
+        address: basketHandler,
+        abi: reserveBasketHandlerAbi,
+        functionName: 'fullyCollateralized',
+        blockNumber: state.blockNumber,
+      })
+      if (!fullyCollateralized) return null
+      const quote = await state.client.readContract({
+        address: basketHandler,
+        abi: reserveBasketHandlerAbi,
+        functionName: 'quote',
+        args: [basketUnitsRaw, 0],
+        blockNumber: state.blockNumber,
+      })
+      if (quote[0].length === 0 || quote[0].length !== quote[1].length) return null
+
+      const constituents: Array<{ address: string; amountRaw: bigint }> = []
+      for (const [index, address] of quote[0].entries()) {
+        const amountRaw = quote[1][index]
+        if (amountRaw === 0n) continue
+        const normalized = normalizedAddress(address)
+        if (!normalized) return null
+        constituents.push({ address: normalized, amountRaw })
+      }
+      if (constituents.length === 0) return null
+
+      const [decimals, inputs] = await Promise.all([
+        Promise.all(constituents.map(asset => tokenDecimals(state.client, asset.address, state.blockNumber))),
+        requireChildren(
+          context,
+          target,
+          constituents.map(asset => asset.address),
+          state.numericBlockNumber,
+          'Reserve RToken redemption constituent',
+        ),
+      ])
+      const metadata = {
+        ...historicalBlockEvidence(state, target),
+        method: 'reserve-rtoken-basket-redemption',
+        valuationRule: 'fully-collateralized-complete-redemption-basket',
+        main,
+        basketHandler,
+        tokenDecimals: rTokenDecimals,
+        oneTokenRaw: rawState(oneTokenRaw),
+        totalSupplyRaw: rawState(totalSupplyRaw),
+        basketsNeededRaw: rawState(basketsNeededRaw),
+        basketUnitsRaw: rawState(basketUnitsRaw),
+        redemptionAvailableRaw: rawState(redemptionAvailableRaw),
+        constituents: constituents.map((asset, index) => ({
+          address: asset.address,
+          decimals: decimals[index],
+          amountRaw: rawState(asset.amountRaw),
+        })),
+        references: [
+          'https://github.com/reserve-protocol/protocol/blob/master/contracts/p1/RToken.sol',
+          'https://github.com/reserve-protocol/protocol/blob/master/contracts/p1/BasketHandler.sol',
+        ],
+      }
+      return {
+        priceUsd: calculatePoolNavPrice(
+          constituents.map((asset, index) => ({
+            address: asset.address,
+            balanceRaw: asset.amountRaw,
+            decimals: decimals[index],
+            priceUsd: inputs[index].priceUsd,
+          })),
+          oneTokenRaw,
+          rTokenDecimals,
+        ),
+        blockNumber: state.numericBlockNumber,
+        inputs: inputs.map((path, index) => recursiveInput(path, {
+          method: 'reserve-rtoken-basket-redemption',
+          amountRaw: rawState(constituents[index].amountRaw),
+          decimals: decimals[index],
+        })),
+        metadata,
       }
     },
   }
@@ -1127,6 +1324,8 @@ export function createOnchainPriceAdapters(options: OnchainAdapterOptions): Recu
   }
   return [
     yip88LiquidLockerAdapter(options),
+    nativeShareAdapter(options),
+    reserveRTokenAdapter(options),
     beetsBarAdapter(options),
     erc4626Adapter(options),
     yearnShareAdapter(options),

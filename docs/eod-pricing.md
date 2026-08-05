@@ -85,6 +85,8 @@ If direct evidence is unavailable, the recursive engine tries historical on-chai
 
 - ERC-4626 `convertToAssets`, with the standard `previewRedeem` fallback when conversion is unavailable;
 - allow-listed YIP-88 liquid-locker net redemption, gated by exact-block fee, enabled status, capacity, wrapper conversion, and YFI liquidity;
+- allow-listed native-asset shares using their exact `convertToAssets` or `previewRedeem` rate and the wrapped-native dependency;
+- allow-listed Reserve RTokens using the exact complete redemption basket, only while unfrozen, fully collateralized, and redeemable for at least one token;
 - Yearn vault share rates;
 - Compound and Iron Bank exchange rates;
 - Aave underlying parity;
