@@ -54,6 +54,7 @@ const beetsBarAbi = parseAbi(['function vestingToken() view returns (address)'])
 const erc4626Abi = parseAbi([
   'function asset() view returns (address)',
   'function convertToAssets(uint256 shares) view returns (uint256)',
+  'function previewRedeem(uint256 shares) view returns (uint256)',
 ])
 const yearnUnderlyingAbis = [
   parseAbi(['function token() view returns (address)']),
@@ -263,20 +264,29 @@ function erc4626Adapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
 
       const shareDecimals = Number(shareDecimalsRaw)
       const oneShareRaw = 10n ** BigInt(shareDecimals)
-      const [convertedAssetsRaw, underlyingDecimals] = await Promise.all([
-        maybe(() => state.client.readContract({
+      let method = 'convertToAssets'
+      let convertedAssetsRaw = await maybe(() => state.client.readContract({
+        address: state.address,
+        abi: erc4626Abi,
+        functionName: 'convertToAssets',
+        args: [oneShareRaw],
+        blockNumber: state.blockNumber,
+      }))
+      if (convertedAssetsRaw == null) {
+        method = 'previewRedeem'
+        convertedAssetsRaw = await maybe(() => state.client.readContract({
           address: state.address,
           abi: erc4626Abi,
-          functionName: 'convertToAssets',
+          functionName: 'previewRedeem',
           args: [oneShareRaw],
           blockNumber: state.blockNumber,
-        })),
-        tokenDecimals(state.client, underlying, state.blockNumber),
-      ])
+        }))
+      }
       if (convertedAssetsRaw == null) return null
+      const underlyingDecimals = await tokenDecimals(state.client, underlying, state.blockNumber)
       const conversion = {
         ...historicalBlockEvidence(state, target),
-        method: 'convertToAssets',
+        method,
         underlying,
         shareDecimals,
         underlyingDecimals,

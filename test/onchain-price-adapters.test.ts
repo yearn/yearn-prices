@@ -183,6 +183,46 @@ describe('wrapper and lending price adapters', () => {
     })
   })
 
+  test('uses ERC-4626 previewRedeem when convertToAssets is unavailable', async () => {
+    const client = {
+      async readContract(request: { address: string; functionName: string; blockNumber: bigint }) {
+        expect(request.blockNumber).toBe(BigInt(BLOCK_NUMBER))
+        if (request.functionName === 'asset') return UNDERLYING
+        if (request.functionName === 'decimals') {
+          return request.address.toLowerCase() === WRAPPER.toLowerCase() ? 18 : 6
+        }
+        if (request.functionName === 'convertToAssets') throw new Error('method unavailable')
+        if (request.functionName === 'previewRedeem') return 1_250_000n
+        throw new Error('method unavailable')
+      },
+    } as unknown as PublicClient
+
+    const result = await engineFor(client).resolve(target())
+
+    expect(result).toMatchObject({
+      failure: null,
+      path: {
+        adapter: 'erc4626-convert-to-assets',
+        priceUsd: 2.5,
+        inputs: [{ conversion: { method: 'previewRedeem', convertedAssetsRaw: '1250000' } }],
+      },
+    })
+  })
+
+  test('leaves ERC-4626 shares unavailable when neither standard conversion is readable', async () => {
+    const client = {
+      async readContract(request: { functionName: string }) {
+        if (request.functionName === 'asset') return UNDERLYING
+        if (request.functionName === 'decimals') return 18
+        throw new Error('method unavailable')
+      },
+    } as unknown as PublicClient
+
+    const result = await engineFor(client).resolve(target())
+
+    expect(result).toMatchObject({ path: null, failure: { reason: 'unsupported' } })
+  })
+
   test('falls through ERC-4626 and prices a Yearn share rate', async () => {
     const client = {
       async readContract(request: { address: string; functionName: string }) {
