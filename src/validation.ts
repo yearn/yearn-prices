@@ -1,6 +1,6 @@
 import { parseTokenKey } from './chains'
 import { ApiError, ensure } from './errors'
-import { normalizeToEndOfDay, normalizedRangeDayCount } from './time'
+import { latestClosedUtcDayEnd, normalizeToEndOfDay, normalizedRangeDayCount } from './time'
 import {
   SOURCE_PRIORITY,
   type HistoricalRequestTuple,
@@ -11,6 +11,8 @@ import {
 
 const MAX_BATCH_TOKENS = 50
 const MAX_BATCH_TIMESTAMPS_PER_TOKEN = 90
+const MAX_STRICT_BATCH_TIMESTAMPS_PER_TOKEN = 31
+const MAX_STRICT_BATCH_TARGETS = 500
 const MAX_RANGE_TOKENS = 50
 const MAX_RANGE_DAYS = 366
 const MAX_SPOT_TOKENS = 50
@@ -116,6 +118,73 @@ export function parseBatchCoins(raw: string | null): HistoricalRequestTuple[] {
   }
 
   return requests
+}
+
+export function parseStrictEodBatchCoins(
+  raw: string | null,
+  nowTimestamp = Math.floor(Date.now() / 1_000),
+): HistoricalRequestTuple[] {
+  ensure(raw, 'INVALID_INPUT', 'Missing coins query parameter')
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new ApiError('INVALID_INPUT', 'Invalid coins query parameter')
+  }
+
+  ensure(parsed && typeof parsed === 'object' && !Array.isArray(parsed), 'INVALID_INPUT', 'Coins payload must be an object')
+  const entries = Object.entries(parsed)
+  ensure(entries.length > 0, 'INVALID_INPUT', 'Coins payload must not be empty')
+  ensure(entries.length <= MAX_BATCH_TOKENS, 'INVALID_INPUT', `A maximum of ${MAX_BATCH_TOKENS} token keys is allowed`)
+
+  const requests = new Map<string, HistoricalRequestTuple>()
+  const latestClosedEod = latestClosedUtcDayEnd(nowTimestamp)
+  for (const [tokenKey, timestamps] of entries) {
+    ensure(Array.isArray(timestamps), 'INVALID_INPUT', `Batch timestamps for ${tokenKey} must be an array`)
+    ensure(timestamps.length > 0, 'INVALID_INPUT', `Batch timestamps for ${tokenKey} must not be empty`)
+    ensure(
+      timestamps.length <= MAX_STRICT_BATCH_TIMESTAMPS_PER_TOKEN,
+      'INVALID_INPUT',
+      `A maximum of ${MAX_STRICT_BATCH_TIMESTAMPS_PER_TOKEN} timestamps is allowed per token`,
+    )
+
+    let parsedTokenKey
+    try {
+      parsedTokenKey = parseTokenKey(tokenKey)
+    } catch (error) {
+      throw new ApiError('INVALID_INPUT', error instanceof Error ? error.message : `Invalid token key: ${tokenKey}`)
+    }
+
+    for (const value of timestamps) {
+      ensure(
+        typeof value === 'number' || (typeof value === 'string' && /^\d+$/.test(value)),
+        'INVALID_INPUT',
+        `Invalid timestamp for ${tokenKey}`,
+      )
+      const timestamp = Number(value)
+      ensure(Number.isSafeInteger(timestamp) && timestamp >= 0, 'INVALID_INPUT', `Invalid timestamp for ${tokenKey}`)
+      ensure(
+        normalizeToEndOfDay(timestamp) === timestamp,
+        'INVALID_INPUT',
+        `Batch timestamps for ${tokenKey} must be exactly 23:59:59 UTC`,
+      )
+      ensure(timestamp <= latestClosedEod, 'INVALID_INPUT', `Batch timestamps for ${tokenKey} must be closed UTC days`)
+      const request = { chain: parsedTokenKey.chain, token: parsedTokenKey.token, timestamp }
+      requests.set(`${request.chain}:${request.token.toLowerCase()}:${timestamp}`, request)
+      ensure(
+        requests.size <= MAX_STRICT_BATCH_TARGETS,
+        'INVALID_INPUT',
+        `A maximum of ${MAX_STRICT_BATCH_TARGETS} token and timestamp targets is allowed`,
+      )
+    }
+  }
+
+  return [...requests.values()].sort((left, right) => (
+    left.chain.localeCompare(right.chain)
+    || left.token.toLowerCase().localeCompare(right.token.toLowerCase())
+    || left.timestamp - right.timestamp
+  ))
 }
 
 export function parseRangeCoins(raw: string | null): RangeRequest[] {

@@ -6,7 +6,7 @@ import { readEdgeCache, writeEdgeCache } from './edge-cache'
 import { ApiError, jsonError } from './errors'
 import { optionsResponse, withCors } from './http'
 import { handleHealth } from './routes/health'
-import { handleDailyEnqueue, handleDailyPriceRead, handleDailyRequeue } from './routes/daily-prices'
+import { handleDailyBatchRead, handleDailyEnqueue, handleDailyPriceRead, handleDailyRequeue } from './routes/daily-prices'
 import { handleBatchHistorical, handleHistorical, handleRangeHistorical, handleSpot, notFoundErrorHeaders } from './routes/prices'
 import type { Env } from './types'
 
@@ -54,6 +54,10 @@ async function routePriceRequest(
 
     if (pathname === '/api/daily-prices/requeue' && request.method === 'POST') {
       return await handleDailyRequeue(request, pool, client.clientId)
+    }
+
+    if (pathname === '/api/daily-prices/batch' && request.method === 'GET') {
+      return await handleDailyBatchRead(request, pool)
     }
 
     const dailyEvidenceMatch = pathname.match(/^\/api\/daily-prices\/evidence\/([^/]+)\/([^/]+)$/)

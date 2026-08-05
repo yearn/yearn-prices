@@ -172,6 +172,72 @@ never performs repair and uses `no-store` caching so operators see current polic
 For strict daily routes, `source` constrains the already-computed canonical selection; it never filters candidates
 before disagreement validation. A requested source therefore cannot hide an independent conflicting candidate.
 
+## `GET /api/daily-prices/batch`
+
+Returns strict evidence outcomes for multiple exact EOD keys without enqueueing, retrying, or repairing any target.
+The authenticated read-only route accepts the same `coins` object convention as `batchHistorical`, but every timestamp
+must already equal `23:59:59 UTC` for a closed day. It never normalizes an intraday timestamp.
+
+Limits:
+
+- Maximum `50` token keys.
+- Maximum `31` timestamps per token key.
+- Maximum `500` distinct normalized token and timestamp targets.
+
+Token addresses and chain names are normalized, duplicate targets are removed, unsupported chains are rejected, and
+results are ordered by chain, normalized token address, then timestamp. Every requested target has one result with
+status `priced`, `unavailable`, or `quarantined`; missing targets are never omitted. A priced result includes `price`,
+`source`, `adapter`, `candidateId`, `classification`, `quality`, `observedTimestamp`, and `validationStatus`.
+Unavailable and quarantined results include the known `failureClass` (`not-found`, `unsupported`, `retryable`,
+`invalid`, or `disagreement`) and a sanitized reason. Quarantined evidence never carries a price.
+
+```bash
+curl \
+  -H "Authorization: Bearer $API_KEY" \
+  --get "http://localhost:8787/api/daily-prices/batch" \
+  --data-urlencode 'coins={"ethereum:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48":[1704153599],"base:0xd9aaec86b65d86f6a7b5b1b0c42ffa531710b6ca":[1704153599]}'
+```
+
+```json
+{
+  "results": [
+    {
+      "chain": "base",
+      "token": "0xD9AaEC86B65D86F6A7B5b1b0c42fFa531710b6CA",
+      "timestamp": 1704153599,
+      "status": "unavailable",
+      "failureClass": "retryable",
+      "failureReason": "Historical provider returned 503",
+      "disagreementBps": null
+    },
+    {
+      "chain": "ethereum",
+      "token": "0xA0b86991c6218b36c1d19d4a2e9Eb0cE3606eB48",
+      "timestamp": 1704153599,
+      "status": "priced",
+      "price": 1.0001,
+      "symbol": "USDC",
+      "confidence": 0.99,
+      "source": "defillama",
+      "adapter": "defillama-historical",
+      "candidateId": "defillama-historical",
+      "classification": "observed",
+      "quality": "near-eod",
+      "observedTimestamp": 1704153539,
+      "validationStatus": "validated",
+      "disagreementBps": null
+    }
+  ],
+  "summary": { "requested": 2, "priced": 1, "unavailable": 1, "quarantined": 0 }
+}
+```
+
+Responses use `Cache-Control: no-store` because unavailable and retryable outcomes may change. Consumers should retry
+only transport failures and results with `failureClass: retryable`, using exponential backoff with jitter and a bounded
+attempt count. Do not retry `unsupported`, `invalid`, or `disagreement` outcomes until an operator has reviewed and
+requeued them. A `source` query parameter may constrain an already accepted canonical selection, but it never filters
+candidate evidence before disagreement checks.
+
 ## `GET /api/daily-prices/progress`
 
 Returns authenticated live queue state: chain distribution, current leases, total/attempted/remaining counts, durable

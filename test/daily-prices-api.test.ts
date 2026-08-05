@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from 'vitest'
 import worker from '../src/index'
 import { ApiError } from '../src/errors'
 import {
+  handleDailyBatchRead,
   handleDailyEnqueue,
   handleDailyPriceRead,
   handleDailyRequeue,
@@ -10,6 +11,7 @@ import {
   parseDailyRequeuePayload,
 } from '../src/routes/daily-prices'
 import type { PriceEvidenceCandidate } from '../src/types'
+import { parseStrictEodBatchCoins } from '../src/validation'
 
 const TOKEN = '0x0000000000000000000000000000000000000001'
 const EOD = 1_704_153_599
@@ -317,5 +319,139 @@ describe('strict daily reads', () => {
     const [sql, params] = query.mock.calls[0]
     expect(sql).not.toContain('price.source =')
     expect(params).not.toContain('defillama')
+  })
+})
+
+describe('strict daily batch reads', () => {
+  const batchRequest = (coins: Record<string, Array<number | string>>, source?: string) => {
+    const url = new URL('https://prices.local/api/daily-prices/batch')
+    url.searchParams.set('coins', JSON.stringify(coins))
+    if (source) url.searchParams.set('source', source)
+    return new Request(url)
+  }
+
+  test('requires API authentication before opening storage', async () => {
+    const response = await worker.fetch(
+      batchRequest({ [`ethereum:${TOKEN}`]: [EOD] }),
+      { DATABASE_URL: 'postgres://unused', API_KEY_TVL: 'tvl-key' },
+      { waitUntil: vi.fn(), passThroughOnException: vi.fn() } as unknown as ExecutionContext,
+    )
+
+    expect(response.status).toBe(401)
+    await expect(response.json()).resolves.toMatchObject({ error: { code: 'UNAUTHORIZED' } })
+  })
+
+  test('normalizes, deduplicates, and deterministically orders exact EOD targets', () => {
+    const secondToken = '0x0000000000000000000000000000000000000002'
+    expect(parseStrictEodBatchCoins(JSON.stringify({
+      [`Ethereum:${secondToken}`]: [EOD, EOD],
+      [`ethereum:${TOKEN}`]: [String(EOD)],
+    }), EOD + 1)).toEqual([
+      { chain: 'ethereum', token: TOKEN, timestamp: EOD },
+      { chain: 'ethereum', token: secondToken, timestamp: EOD },
+    ])
+
+    expect(() => parseStrictEodBatchCoins(JSON.stringify({
+      [`ethereum:${TOKEN}`]: [EOD - 1],
+    }), EOD + 1)).toThrow('exactly 23:59:59 UTC')
+    expect(() => parseStrictEodBatchCoins(JSON.stringify({
+      [`unknown:${TOKEN}`]: [EOD],
+    }), EOD + 1)).toThrow('Unsupported chain')
+  })
+
+  test('returns explicit partial-batch outcomes with priced provenance and durable failure classes', async () => {
+    const retryableToken = '0x0000000000000000000000000000000000000002'
+    const quarantinedToken = '0x0000000000000000000000000000000000000003'
+    const missingToken = '0x0000000000000000000000000000000000000004'
+    const response = await handleDailyBatchRead(
+      batchRequest({
+        [`ethereum:${missingToken}`]: [EOD],
+        [`ethereum:${quarantinedToken}`]: [EOD],
+        [`ethereum:${TOKEN}`]: [EOD],
+        [`ethereum:${retryableToken}`]: [EOD],
+      }),
+      {} as Pool,
+      {
+        loadCandidates: vi.fn().mockResolvedValue([
+          candidate(),
+          { ...candidate(), token: quarantinedToken, validationStatus: 'quarantined', failureReason: 'invalid derivation' },
+        ]),
+        loadTargets: vi.fn().mockResolvedValue([
+          {
+            id: 2,
+            chain: 'ethereum',
+            token: retryableToken,
+            eodTimestamp: EOD,
+            status: 'retryable',
+            attemptCount: 2,
+            adapter: 'historical-market-price',
+            failureClass: 'retryable',
+            failureReason: 'HTTP 503 from https://rpc.example/key/secret',
+            metadata: {},
+          },
+          {
+            id: 3,
+            chain: 'ethereum',
+            token: quarantinedToken,
+            eodTimestamp: EOD,
+            status: 'quarantined',
+            attemptCount: 3,
+            adapter: 'erc4626',
+            failureClass: 'invalid',
+            failureReason: 'invalid derivation',
+            metadata: {},
+          },
+        ]),
+      },
+    )
+    const body = await response.json() as Record<string, any>
+
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(body.summary).toEqual({ requested: 4, priced: 1, unavailable: 2, quarantined: 1 })
+    expect(body.results).toEqual([
+      expect.objectContaining({ token: TOKEN, status: 'priced', price: 1, source: 'defillama', adapter: 'defillama-historical', candidateId: 'defillama-historical', classification: 'observed', quality: 'near-eod', observedTimestamp: EOD - 60, validationStatus: 'validated' }),
+      expect.objectContaining({ token: retryableToken, status: 'unavailable', failureClass: 'retryable' }),
+      expect.objectContaining({ token: quarantinedToken, status: 'quarantined', failureClass: 'invalid' }),
+      expect.objectContaining({ token: missingToken, status: 'unavailable', failureClass: 'not-found' }),
+    ])
+    expect(body.results[1].failureReason).toContain('<redacted-url>')
+    expect(body.results[2]).not.toHaveProperty('price')
+  })
+
+  test('returns every target on total failure', async () => {
+    const secondToken = '0x0000000000000000000000000000000000000002'
+    const response = await handleDailyBatchRead(
+      batchRequest({ [`ethereum:${secondToken}`]: [EOD], [`ethereum:${TOKEN}`]: [EOD] }),
+      {} as Pool,
+      {
+        loadCandidates: vi.fn().mockResolvedValue([]),
+        loadTargets: vi.fn().mockResolvedValue([]),
+      },
+    )
+    await expect(response.json()).resolves.toMatchObject({
+      summary: { requested: 2, priced: 0, unavailable: 2, quarantined: 0 },
+      results: [
+        { token: TOKEN, status: 'unavailable', failureClass: 'not-found' },
+        { token: secondToken, status: 'unavailable', failureClass: 'not-found' },
+      ],
+    })
+  })
+
+  test('does not let a source filter hide independent disagreement', async () => {
+    const response = await handleDailyBatchRead(
+      batchRequest({ [`ethereum:${TOKEN}`]: [EOD] }, 'defillama'),
+      {} as Pool,
+      {
+        loadCandidates: vi.fn().mockResolvedValue([
+          { ...candidate(), priceUsd: 100 },
+          { ...candidate(), priceUsd: 80, source: 'on-chain-oracle', candidateId: 'oracle', adapter: 'oracle' },
+        ]),
+        loadTargets: vi.fn().mockResolvedValue([]),
+      },
+    )
+
+    await expect(response.json()).resolves.toMatchObject({
+      results: [{ status: 'quarantined', failureClass: 'disagreement' }],
+    })
   })
 })

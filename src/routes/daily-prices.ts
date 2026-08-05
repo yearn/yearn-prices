@@ -15,7 +15,7 @@ import { jsonResponse } from '../http'
 import { getBatchHistoricalPriceEvidenceCandidates } from '../queries'
 import { latestClosedUtcDayEnd, normalizeToEndOfDay } from '../time'
 import type { PriceEvidenceCandidate } from '../types'
-import { parseExactEodTimestampSegment, parseOptionalSource } from '../validation'
+import { parseExactEodTimestampSegment, parseOptionalSource, parseStrictEodBatchCoins } from '../validation'
 
 const MAX_ENQUEUE_TARGETS = 500
 const MAX_ENQUEUE_BODY_BYTES = 128 * 1024
@@ -187,6 +187,10 @@ function targetKey(chain: string, token: string): string {
   return `${chain}:${token.toLowerCase()}`
 }
 
+function exactTargetKey(chain: string, token: string, eodTimestamp: number): string {
+  return `${targetKey(chain, token)}:${eodTimestamp}`
+}
+
 function groupCandidates(candidates: PriceEvidenceCandidate[]): Map<string, PriceEvidenceCandidate[]> {
   const grouped = new Map<string, PriceEvidenceCandidate[]>()
   for (const candidate of candidates) {
@@ -334,6 +338,111 @@ export async function handleDailyRequeue(
     message: 'daily-price-targets-requeued',
     ...result,
   }, { status: 202, headers: { 'cache-control': 'no-store' } })
+}
+
+export interface DailyBatchReadDependencies {
+  loadCandidates?: typeof getBatchHistoricalPriceEvidenceCandidates
+  loadTargets?: typeof getDailyPriceTargets
+}
+
+export async function handleDailyBatchRead(
+  request: Request,
+  pool: Pool,
+  dependencies: DailyBatchReadDependencies = {},
+): Promise<Response> {
+  const url = new URL(request.url)
+  const requests = parseStrictEodBatchCoins(url.searchParams.get('coins'))
+  const source = parseOptionalSource(url.searchParams.get('source'))
+  const loadCandidates = dependencies.loadCandidates ?? getBatchHistoricalPriceEvidenceCandidates
+  const loadTargets = dependencies.loadTargets ?? getDailyPriceTargets
+  const [candidates, targets] = await Promise.all([
+    loadCandidates(pool, requests),
+    loadTargets(pool, requests.map(({ chain, token, timestamp }) => ({
+      chain,
+      token,
+      eodTimestamp: timestamp,
+    }))),
+  ])
+
+  const candidatesByTarget = new Map<string, PriceEvidenceCandidate[]>()
+  for (const candidate of candidates) {
+    const key = exactTargetKey(candidate.chain, candidate.token, candidate.requestedTimestamp)
+    const grouped = candidatesByTarget.get(key) ?? []
+    grouped.push(candidate)
+    candidatesByTarget.set(key, grouped)
+  }
+  const targetsByKey = new Map(targets.map(target => [
+    exactTargetKey(target.chain, target.token, target.eodTimestamp),
+    target,
+  ]))
+
+  const results = requests.map(({ chain, token, timestamp }) => {
+    const key = exactTargetKey(chain, token, timestamp)
+    const canonicalSelection = selectEodPriceEvidence(timestamp, candidatesByTarget.get(key) ?? [])
+    const selected = source && canonicalSelection.selected?.source !== source
+      ? null
+      : canonicalSelection.selected
+
+    if (selected) {
+      return {
+        chain,
+        token,
+        timestamp,
+        status: 'priced' as const,
+        price: selected.priceUsd,
+        symbol: selected.symbol,
+        confidence: selected.confidence,
+        source: selected.source,
+        adapter: selected.adapter,
+        candidateId: selected.candidateId,
+        classification: selected.classification,
+        quality: selected.quality,
+        observedTimestamp: selected.observedTimestamp,
+        validationStatus: selected.validationStatus,
+        disagreementBps: canonicalSelection.validation.disagreementBps,
+      }
+    }
+
+    const durableTarget = targetsByKey.get(key)
+    const sourceMismatch = source && canonicalSelection.selected
+    const canonicalQuarantine = canonicalSelection.validation.status === 'quarantined'
+    const status = canonicalQuarantine || (!sourceMismatch && durableTarget?.status === 'quarantined')
+      ? 'quarantined' as const
+      : 'unavailable' as const
+    const durableFailure = !sourceMismatch && durableTarget
+      && ['unsupported', 'retryable', 'quarantined'].includes(durableTarget.status)
+      ? durableTarget
+      : null
+    const failureReason = sourceMismatch
+      ? `The accepted canonical source is ${canonicalSelection.selected!.source}, not ${source}`
+      : canonicalQuarantine
+        ? canonicalSelection.validation.failureReason
+        : sanitizeFailureReason(durableFailure?.failureReason) ?? canonicalSelection.validation.failureReason
+
+    return {
+      chain,
+      token,
+      timestamp,
+      status,
+      failureClass: sourceMismatch
+        ? 'not-found' as const
+        : canonicalQuarantine
+          ? canonicalSelection.validation.failureClass
+          : durableFailure?.failureClass ?? canonicalSelection.validation.failureClass,
+      failureReason,
+      disagreementBps: canonicalSelection.validation.disagreementBps,
+    }
+  })
+
+  return jsonResponse({
+    results,
+    summary: {
+      requested: results.length,
+      priced: results.filter(result => result.status === 'priced').length,
+      unavailable: results.filter(result => result.status === 'unavailable').length,
+      quarantined: results.filter(result => result.status === 'quarantined').length,
+    },
+  }, { headers: { 'cache-control': 'no-store' } })
 }
 
 export async function handleDailyPriceRead(
