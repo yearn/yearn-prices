@@ -24,6 +24,10 @@ interface ChainRow {
   in_progress: string | number
 }
 
+interface RoleRow extends Omit<ChainRow, 'chain'> {
+  role: string
+}
+
 interface FailureRow {
   chain: string
   token: string
@@ -43,6 +47,7 @@ const pool = createPool(databaseUrl, process.env.DATABASE_SCHEMA)
 try {
   const [
     chainResult,
+    roleResult,
     sourceResult,
     adapterResult,
     qualityResult,
@@ -63,6 +68,26 @@ try {
       FROM daily_price_targets
       GROUP BY chain
       ORDER BY chain
+    `),
+    pool.query<RoleRow>(`
+      SELECT
+        role,
+        COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE status = 'priced') AS priced,
+        COUNT(*) FILTER (WHERE status = 'unsupported') AS unsupported,
+        COUNT(*) FILTER (WHERE status = 'retryable') AS retryable,
+        COUNT(*) FILTER (WHERE status = 'quarantined') AS quarantined,
+        COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+        COUNT(*) FILTER (WHERE status = 'in_progress') AS in_progress
+      FROM daily_price_targets
+      CROSS JOIN LATERAL jsonb_array_elements_text(
+        CASE
+          WHEN jsonb_typeof(metadata->'roles') = 'array' THEN metadata->'roles'
+          ELSE '[]'::jsonb
+        END
+      ) AS role
+      GROUP BY role
+      ORDER BY role
     `),
     pool.query<CountRow>(`
       SELECT COALESCE(metadata->>'source', 'unknown') AS name, COUNT(*) AS count
@@ -157,6 +182,16 @@ try {
     chainsWithoutTargets: [...SUPPORTED_CHAIN_NAMES].filter(chain => !actualChains.has(chain)),
     byChain: chainResult.rows.map(row => ({
       chain: row.chain,
+      total: Number(row.total),
+      priced: Number(row.priced),
+      unsupported: Number(row.unsupported),
+      retryable: Number(row.retryable),
+      quarantined: Number(row.quarantined),
+      pending: Number(row.pending),
+      inProgress: Number(row.in_progress),
+    })),
+    byRole: roleResult.rows.map(row => ({
+      role: row.role,
       total: Number(row.total),
       priced: Number(row.priced),
       unsupported: Number(row.unsupported),

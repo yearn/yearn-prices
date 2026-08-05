@@ -1,7 +1,12 @@
 import { config as loadEnv } from 'dotenv'
-import { discoverYearnDailyTargets } from '../src/daily-target-discovery'
+import { discoverTvlDailyTargets } from '../src/daily-target-discovery'
 import { runDailyPriceWorker } from '../src/daily-price-worker'
-import { enqueueDailyPriceTargets, markDailyPriceTargetsPriced } from '../src/daily-prices'
+import {
+  enqueueDailyPriceTargets,
+  markDailyPriceTargetsPriced,
+  reconcileDailyPriceTargetMetadata,
+  recordUnsupportedDailyPriceTargets,
+} from '../src/daily-prices'
 import { createPool } from '../src/db'
 import { selectEodPriceEvidence } from '../src/evidence'
 import { createHistoricalMarketPriceResolver } from '../src/historical-market'
@@ -51,7 +56,11 @@ function optionalNonNegativeInteger(value: string | undefined, name: string, fal
 }
 
 const eodTimestamp = cycleEodTimestamp()
-const targets = await discoverYearnDailyTargets(eodTimestamp)
+const discovery = await discoverTvlDailyTargets(
+  eodTimestamp,
+  process.env.TVL_PRICE_TARGET_INVENTORY_URL ?? '',
+)
+const { targets } = discovery
 const pool = createPool(databaseUrl, process.env.DATABASE_SCHEMA)
 
 try {
@@ -91,6 +100,8 @@ try {
   })
 
   const inserted = await enqueueDailyPriceTargets(pool, targets)
+  const metadataUpdated = await reconcileDailyPriceTargetMetadata(pool, targets)
+  const unsupportedRecorded = await recordUnsupportedDailyPriceTargets(pool, discovery.unsupportedTargets)
   let markedPriced = 0
   const acceptedByAdapter = new Map<string, typeof accepted>()
   for (const item of accepted) {
@@ -129,12 +140,23 @@ try {
     message: 'daily-price-cycle-complete',
     eodTimestamp,
     discoveredTargets: targets.length,
+    inventory: discovery.summary,
+    producerProblems: discovery.producerProblems,
+    malformedEntries: discovery.malformedEntries,
     inserted,
+    metadataUpdated,
+    unsupportedRecorded,
     alreadyAccepted: accepted.length,
     markedPriced,
     worker,
   }))
   if (worker.progress.remaining !== 0) throw new Error(`Daily price cycle ended with ${worker.progress.remaining} remaining targets`)
+  const invalidProducerProblems = discovery.producerProblems.filter(problem => problem.type === 'invalid')
+  if (discovery.malformedEntries.length > 0 || invalidProducerProblems.length > 0) {
+    throw new Error(
+      `TVL price-target inventory has ${discovery.malformedEntries.length} malformed targets and ${invalidProducerProblems.length} invalid producer problems`,
+    )
+  }
 } finally {
   await pool.end()
 }

@@ -43,3 +43,4 @@ jobs:
         run: bun run daily:cycle
         env:
           DAILY_EOD_DAY: ${{ inputs.day }}
+          TVL_PRICE_TARGET_INVENTORY_URL: ${{ vars.TVL_PRICE_TARGET_INVENTORY_URL }}

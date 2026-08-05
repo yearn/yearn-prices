@@ -19,6 +19,10 @@ export interface DailyPriceTargetInput {
   metadata?: Record<string, unknown>
 }
 
+export interface UnsupportedDailyPriceTargetInput extends DailyPriceTargetInput {
+  failureReason: string
+}
+
 interface DbDailyPriceTargetRow {
   id: string | number | bigint
   chain: string
@@ -191,6 +195,125 @@ export async function enqueueDailyPriceTargets(
         INSERT INTO daily_price_targets (chain, token, eod_at, metadata)
         VALUES ${valuesSql.join(', ')}
         ON CONFLICT (chain, token, eod_at) DO NOTHING
+        RETURNING id
+      `,
+      params,
+    )
+    inserted += result.rows.length
+  }
+  return inserted
+}
+
+export async function reconcileDailyPriceTargetMetadata(
+  pool: Pool,
+  inputs: DailyPriceTargetInput[],
+): Promise<number> {
+  const unique = new Map<string, DailyPriceTargetInput>()
+  for (const input of inputs) {
+    const target = normalizeDailyPriceTarget(input)
+    unique.set(`${target.chain}:${target.token}:${target.eodTimestamp}`, target)
+  }
+
+  let updated = 0
+  for (const batch of chunk([...unique.values()], ENQUEUE_BATCH_SIZE)) {
+    if (batch.length === 0) continue
+    const valuesSql: string[] = []
+    const params: Array<string | number> = []
+    for (const target of batch) {
+      const offset = params.length
+      valuesSql.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}::timestamptz, $${offset + 4}::jsonb)`)
+      params.push(
+        target.chain,
+        target.token,
+        unixToIsoTimestamp(target.eodTimestamp),
+        JSON.stringify(target.metadata ?? {}),
+      )
+    }
+    const result = await pool.query<{ id: string | number }>(
+      `
+        WITH inventory(chain, token, eod_at, metadata) AS (
+          VALUES ${valuesSql.join(', ')}
+        )
+        UPDATE daily_price_targets target
+        SET
+          metadata = COALESCE(target.metadata, '{}'::jsonb) || inventory.metadata,
+          updated_at = NOW()
+        FROM inventory
+        WHERE target.chain = inventory.chain
+          AND target.token = inventory.token
+          AND target.eod_at = inventory.eod_at
+          AND target.metadata IS DISTINCT FROM COALESCE(target.metadata, '{}'::jsonb) || inventory.metadata
+        RETURNING target.id
+      `,
+      params,
+    )
+    updated += result.rows.length
+  }
+  return updated
+}
+
+export async function recordUnsupportedDailyPriceTargets(
+  pool: Pool,
+  inputs: UnsupportedDailyPriceTargetInput[],
+): Promise<number> {
+  const unique = new Map<string, UnsupportedDailyPriceTargetInput>()
+  for (const input of inputs) {
+    const chain = input.chain.trim().toLowerCase()
+    if (!/^\d+$/.test(chain)) throw new Error(`Unsupported inventory chain must be a numeric chain id: ${input.chain}`)
+    const token = normalizeTokenAddress(input.token)
+    const eodTimestamp = normalizeToEndOfDay(input.eodTimestamp)
+    if (eodTimestamp !== input.eodTimestamp || eodTimestamp > latestClosedUtcDayEnd(Math.floor(Date.now() / 1_000))) {
+      throw new Error('Unsupported inventory targets must use an exact closed UTC EOD timestamp')
+    }
+    const failureReason = input.failureReason.trim()
+    if (!failureReason) throw new Error('Unsupported inventory targets require a failure reason')
+    unique.set(`${chain}:${token}:${eodTimestamp}`, {
+      chain,
+      token,
+      eodTimestamp,
+      failureReason,
+      metadata: input.metadata && isRecord(input.metadata) ? input.metadata : {},
+    })
+  }
+
+  let inserted = 0
+  for (const batch of chunk([...unique.values()], ENQUEUE_BATCH_SIZE)) {
+    if (batch.length === 0) continue
+    const valuesSql: string[] = []
+    const params: Array<string | number> = []
+    for (const target of batch) {
+      const offset = params.length
+      valuesSql.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}::timestamptz, 'unsupported', 'unsupported', $${offset + 4}, NOW(), $${offset + 5}::jsonb)`)
+      params.push(
+        target.chain,
+        target.token,
+        unixToIsoTimestamp(target.eodTimestamp),
+        target.failureReason,
+        JSON.stringify(target.metadata ?? {}),
+      )
+    }
+    const result = await pool.query<{ id: string | number }>(
+      `
+        INSERT INTO daily_price_targets (
+          chain, token, eod_at, status, failure_class, failure_reason, completed_at, metadata
+        )
+        VALUES ${valuesSql.join(', ')}
+        ON CONFLICT (chain, token, eod_at) DO UPDATE SET
+          status = 'unsupported',
+          failure_class = 'unsupported',
+          failure_reason = EXCLUDED.failure_reason,
+          next_retry_at = NULL,
+          lease_expires_at = NULL,
+          completed_at = COALESCE(daily_price_targets.completed_at, NOW()),
+          metadata = COALESCE(daily_price_targets.metadata, '{}'::jsonb) || EXCLUDED.metadata,
+          updated_at = NOW()
+        WHERE daily_price_targets.status <> 'priced'
+          AND (
+            daily_price_targets.status <> 'unsupported'
+            OR daily_price_targets.failure_class IS DISTINCT FROM 'unsupported'
+            OR daily_price_targets.failure_reason IS DISTINCT FROM EXCLUDED.failure_reason
+            OR daily_price_targets.metadata IS DISTINCT FROM COALESCE(daily_price_targets.metadata, '{}'::jsonb) || EXCLUDED.metadata
+          )
         RETURNING id
       `,
       params,
