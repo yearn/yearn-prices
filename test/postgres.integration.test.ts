@@ -11,7 +11,9 @@ import {
   enqueueDailyPriceTargets,
   getDailyPriceTargets,
   markDailyPriceTargetsPriced,
+  reconcileDailyPriceTargetMetadata,
   requeueDailyPriceTargets,
+  recordUnsupportedDailyPriceTargets,
 } from '../src/daily-prices'
 import { processDailyPriceTarget } from '../src/daily-price-worker'
 import { selectEodPriceEvidence } from '../src/evidence'
@@ -25,9 +27,10 @@ const STALE_TOKEN = '0x00000000000000000000000000000000000000e1'
 const CANDIDATE_TOKEN = '0x00000000000000000000000000000000000000e2'
 const RETRY_TOKEN = '0x00000000000000000000000000000000000000e3'
 const VERSION_TOKEN = '0x00000000000000000000000000000000000000e4'
+const INVENTORY_TOKEN = '0x00000000000000000000000000000000000000e5'
 const EOD = 1_704_153_599
 const VERSION_EOD = 946_771_199
-const TEST_TOKENS = [TOKEN, STALE_TOKEN, CANDIDATE_TOKEN, RETRY_TOKEN, VERSION_TOKEN]
+const TEST_TOKENS = [TOKEN, STALE_TOKEN, CANDIDATE_TOKEN, RETRY_TOKEN, VERSION_TOKEN, INVENTORY_TOKEN]
 
 describe.skipIf(!enabled)('isolated Postgres integration', () => {
   let pool: Pool
@@ -86,6 +89,41 @@ describe.skipIf(!enabled)('isolated Postgres integration', () => {
     await expect(getDailyPriceTargets(pool, input)).resolves.toEqual([
       expect.objectContaining({ status: 'priced', adapter: 'postgres-canary' }),
     ])
+  })
+
+  it('reconciles inventory metadata and records unsupported chains idempotently', async () => {
+    const input = [{
+      chain: 'ethereum',
+      token: INVENTORY_TOKEN,
+      eodTimestamp: EOD,
+      metadata: { origin: 'kong-vault-inventory' },
+    }]
+    await expect(enqueueDailyPriceTargets(pool, input)).resolves.toBe(1)
+    await expect(reconcileDailyPriceTargetMetadata(pool, [{
+      ...input[0],
+      metadata: { origin: 'tvl-price-target-inventory', roles: ['curation'] },
+    }])).resolves.toBe(1)
+    await expect(getDailyPriceTargets(pool, input)).resolves.toEqual([
+      expect.objectContaining({
+        metadata: expect.objectContaining({ origin: 'tvl-price-target-inventory', roles: ['curation'] }),
+      }),
+    ])
+
+    const unsupported = [{
+      chain: '999',
+      token: INVENTORY_TOKEN,
+      eodTimestamp: EOD,
+      failureReason: 'yearn-prices has no HyperEVM support',
+      metadata: { roles: ['curation'] },
+    }]
+    await expect(recordUnsupportedDailyPriceTargets(pool, unsupported)).resolves.toBe(1)
+    await expect(recordUnsupportedDailyPriceTargets(pool, unsupported)).resolves.toBe(0)
+    await expect(pool.query(
+      'SELECT status, failure_class, metadata FROM daily_price_targets WHERE chain = $1 AND token = $2 AND eod_at = to_timestamp($3)',
+      ['999', normalizeTokenAddress(INVENTORY_TOKEN), EOD],
+    )).resolves.toMatchObject({
+      rows: [{ status: 'unsupported', failure_class: 'unsupported', metadata: { roles: ['curation'] } }],
+    })
   })
 
   it('preserves same-source adapter candidates independently', async () => {

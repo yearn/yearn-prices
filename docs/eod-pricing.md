@@ -13,7 +13,7 @@ arbitrary timestamp reconstruction.
 ## Daily lifecycle
 
 1. A UTC day closes.
-2. The scheduled production cycle discovers current Yearn vault-share and underlying assets from Kong; an
+2. The scheduled production cycle consumes the configured authoritative TVL price-target inventory export; an
    authenticated operator may also submit an explicit inventory.
 3. The service converts the day to its exact `23:59:59 UTC` key.
 4. Accepted exact-EOD rows are returned immediately.
@@ -122,16 +122,34 @@ bun run daily:report
 ```
 
 `daily:canaries` forces representative live contracts through each registered on-chain adapter at the latest closed
-EOD block, including separate Compound and Iron Bank exchange-rate cases. `daily:report` emits the final chain,
-source, adapter, quality, failure, alias, and incident-proxy breakdown without exposing provider URLs.
+EOD block, including separate Compound and Iron Bank exchange-rate cases. `daily:report` emits the final chain, asset
+role, source, adapter, classification, quality, terminal outcome, failure, alias, and incident-proxy breakdown without
+exposing provider URLs.
 
 The authenticated progress API is `GET /api/daily-prices/progress`. Queue mutation requests require the separate
 operator key.
 
-Production orchestration lives in `.github/workflows/daily-eod.yml`, scheduled for 00:30 UTC. Its inventory contract is
-the supported-chain vault list returned by Kong's `list/vaults?origin=yearn` route; both vault-share and underlying
-addresses are deduplicated and recorded with discovery provenance. A manual workflow dispatch may select a reviewed
-closed `YYYY-MM-DD` day. The cycle fails if discovery is empty or if any queue work remains non-terminal.
+Production orchestration lives in `.github/workflows/daily-eod.yml`, scheduled for 00:30 UTC. Configure the repository
+Actions variable `TVL_PRICE_TARGET_INVENTORY_URL` to an HTTP(S) export of the yearn-tvl-service
+`tvl-price-target-inventory` schema. Schema major `1` is accepted; unknown majors fail closed. The service downloads at
+most 10 MiB and never vendors a static snapshot.
+
+Valid rows are normalized and deduplicated by chain id and address. Roles, current/historical requirements, producer
+support, source state, and every vault/product origin remain in target metadata. Duplicate roles and origins are merged
+in schema order, making repeated discovery for the same inventory/day deterministic and queue insertion idempotent.
+Malformed target rows and producer `invalid` problems are logged explicitly; valid targets still run to terminal
+outcomes before the cycle fails to alert operators.
+
+Consumer capability is authoritative for scheduling. Gnosis chain `100` is supported by yearn-prices: it is present in
+the chain registry, the production workflow loads `RPC_URL_100`, and generic historical market/on-chain resolution is
+available. The two Gnosis inventory targets are therefore scheduled even while the producer artifact labels them
+unsupported. HyperEVM chain `999` has no yearn-prices chain mapping, RPC configuration, or adapter support. Its two
+inventory targets are retained under numeric chain key `999` and inserted directly as durable `unsupported` outcomes;
+they never enter the worker and are never converted to zero. If support is later added, the producer artifact and this
+policy must be updated together.
+
+A manual workflow dispatch may select a reviewed closed `YYYY-MM-DD` day. The cycle fails if discovery is empty, if any
+queue work remains pending/in-progress/retryable, or if the inventory reports malformed/invalid producer coverage.
 
 ## Supported chains
 

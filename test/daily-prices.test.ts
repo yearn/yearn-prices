@@ -7,9 +7,11 @@ import {
   getDailyPriceProgress,
   getNextDailyPriceRetryTimestamp,
   normalizeDailyPriceTarget,
+  reconcileDailyPriceTargetMetadata,
   requeueDailyPriceTargets,
   recordDailyPriceOutcome,
   recordDailyPriceOutcomes,
+  recordUnsupportedDailyPriceTargets,
 } from '../src/daily-prices'
 
 const TOKEN = '0x0000000000000000000000000000000000000001'
@@ -44,6 +46,50 @@ describe('daily price queue', () => {
       chain: 'ethereum',
       eodTimestamp: 1_700_006_399,
     })
+  })
+
+  test('records configured unsupported-chain targets terminally and idempotently', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [{ id: 9 }] })
+    const target = {
+      chain: '999',
+      token: TOKEN,
+      eodTimestamp: EOD,
+      failureReason: 'yearn-prices does not support HyperEVM',
+      metadata: { roles: ['curation'] },
+    }
+
+    const inserted = await recordUnsupportedDailyPriceTargets(
+      { query } as unknown as Pool,
+      [target, target],
+    )
+
+    expect(inserted).toBe(1)
+    expect(query).toHaveBeenCalledOnce()
+    const [sql, params] = query.mock.calls[0]
+    expect(sql).toContain("'unsupported', 'unsupported'")
+    expect(sql).toContain('ON CONFLICT (chain, token, eod_at) DO UPDATE SET')
+    expect(sql).toContain("daily_price_targets.status <> 'priced'")
+    expect(params).toEqual([
+      '999',
+      TOKEN,
+      '2024-01-01T23:59:59.000Z',
+      'yearn-prices does not support HyperEVM',
+      JSON.stringify({ roles: ['curation'] }),
+    ])
+  })
+
+  test('reconciles inventory metadata without erasing existing evidence metadata', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [{ id: 1 }] })
+    const updated = await reconcileDailyPriceTargetMetadata(
+      { query } as unknown as Pool,
+      [{ chain: 'ethereum', token: TOKEN, eodTimestamp: EOD, metadata: { roles: ['curation'] } }],
+    )
+
+    expect(updated).toBe(1)
+    const [sql, params] = query.mock.calls[0]
+    expect(sql).toContain("COALESCE(target.metadata, '{}'::jsonb) || inventory.metadata")
+    expect(sql).toContain('IS DISTINCT FROM')
+    expect(params).toEqual(['ethereum', TOKEN, '2024-01-01T23:59:59.000Z', JSON.stringify({ roles: ['curation'] })])
   })
 
   test('rejects a target before its UTC day has closed', () => {

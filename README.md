@@ -23,7 +23,8 @@ cp .env.example .env        # scripts (warmup, backfill, migrate) read from .env
 ```
 
 Fill in `.dev.vars` and `.env` with real values: a `DATABASE_URL`, one read-only `API_KEY_*` per consumer,
-`ENSO_API_KEY`, and an `RPC_URL_<chainId>` per supported chain. Both files are gitignored — never commit them.
+`ENSO_API_KEY`, an `RPC_URL_<chainId>` per supported chain, and the configured
+`TVL_PRICE_TARGET_INVENTORY_URL` export used by `daily:cycle`. Both files are gitignored — never commit them.
 
 For isolated validation and previews, `DATABASE_SCHEMA` may select a safe Postgres schema without duplicating or
 printing the database URL.
@@ -102,7 +103,7 @@ This only updates the deployed Worker; remember to also update 1Password and `de
 
 ## Deployment
 
-Pushing to `main` runs `.github/workflows/deploy.yml`: install deps, load secrets from 1Password, upload them to the Worker, run migrations, warm the price cache, then `wrangler deploy`. `.github/workflows/warmup.yml` runs the legacy spot-price warmup hourly. `.github/workflows/daily-eod.yml` owns daily EOD orchestration at 00:30 UTC: it migrates the database, discovers current Yearn vault-share and underlying assets from Kong, enqueues the latest closed day, and runs the durable worker through terminal outcomes. `.github/workflows/pr.yml` runs typecheck and tests on every PR.
+Pushing to `main` runs `.github/workflows/deploy.yml`: install deps, load secrets from 1Password, upload them to the Worker, run migrations, warm the price cache, then `wrangler deploy`. `.github/workflows/warmup.yml` runs the legacy spot-price warmup hourly. `.github/workflows/daily-eod.yml` owns daily EOD orchestration at 00:30 UTC: it loads the configured authoritative TVL price-target inventory, enqueues the latest closed day, records explicitly unsupported chains, and runs the durable worker through terminal outcomes. `.github/workflows/pr.yml` runs typecheck and tests on every PR.
 
 ## Testing
 

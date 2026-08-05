@@ -1,42 +1,155 @@
 import { describe, expect, test, vi } from 'vitest'
-import { discoverYearnDailyTargets } from '../src/daily-target-discovery'
+import { discoverTvlDailyTargets, parseTvlPriceTargetInventory } from '../src/daily-target-discovery'
 
 const EOD = 1_704_153_599
+const TOKEN = '0x0000000000000000000000000000000000000001'
+const SECOND_TOKEN = '0x0000000000000000000000000000000000000002'
+const INVENTORY_URL = 'https://inventory.example/tvl-price-targets.json'
 
-describe('daily target discovery', () => {
-  test('deduplicates supported vault shares and underlying assets with roles', async () => {
-    const request = vi.fn().mockResolvedValue(new Response(JSON.stringify([
-      {
-        chainId: 1,
-        address: '0x0000000000000000000000000000000000000001',
-        symbol: 'yvTEST',
-        apiVersion: '3.0.0',
-        decimals: 18,
-        asset: { address: '0x0000000000000000000000000000000000000002' },
-      },
-      {
-        chainId: 1,
-        address: '0x0000000000000000000000000000000000000002',
-        symbol: 'nested',
-        apiVersion: '3.0.0',
-        decimals: 18,
-        asset: { address: '0x0000000000000000000000000000000000000003' },
-      },
-      { chainId: 999999, address: '0x0000000000000000000000000000000000000004' },
-    ]), { status: 200 }))
+function target(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    key: `1:${TOKEN}`,
+    chainId: 1,
+    address: TOKEN,
+    roles: ['historical-underlying'],
+    requirements: ['historical'],
+    origins: [{ type: 'vault', id: `1:${TOKEN}`, roles: ['historical-underlying'] }],
+    support: { status: 'supported', adapter: 'ethereum' },
+    ...overrides,
+  }
+}
 
-    const targets = await discoverYearnDailyTargets(EOD, { request })
+function inventory(targets: unknown[], problems: unknown[] = []): Record<string, unknown> {
+  return {
+    schemaVersion: '1.0.0',
+    sourceState: { databaseUpdatedAt: '2026-08-04T22:12:48.410Z', vaultRows: 1001 },
+    targets,
+    problems,
+  }
+}
 
-    expect(targets).toHaveLength(3)
-    expect(targets.find(target => target.token.endsWith('0002'))?.metadata).toMatchObject({
-      origin: 'kong-vault-inventory',
-      roles: ['underlying', 'vault-share'],
+describe('TVL daily target discovery', () => {
+  test('deduplicates normalized targets while retaining curation and recursive-leaf provenance', () => {
+    const discovery = parseTvlPriceTargetInventory(inventory([
+      target({
+        roles: ['historical-underlying', 'curation'],
+        origins: [{ type: 'vault', id: '1:curation-vault', roles: ['historical-underlying', 'curation'] }],
+      }),
+      target({
+        roles: ['current-underlying', 'historical-underlying', 'v1-recursive-leaf'],
+        requirements: ['current', 'historical'],
+        origins: [{ type: 'legacy-curve', id: '1:legacy-pool', roles: ['v1-recursive-leaf'] }],
+      }),
+    ]), EOD, INVENTORY_URL)
+
+    expect(discovery.summary).toEqual({
+      inventoryTargets: 2,
+      normalizedTargets: 1,
+      supportedTargets: 1,
+      unsupportedTargets: 0,
+      malformedEntries: 0,
     })
-    expect(targets.every(target => target.eodTimestamp === EOD)).toBe(true)
+    expect(discovery.targets[0]).toMatchObject({
+      chain: 'ethereum',
+      token: TOKEN,
+      eodTimestamp: EOD,
+      metadata: {
+        origin: 'tvl-price-target-inventory',
+        inventoryKey: `1:${TOKEN}`,
+        roles: ['current-underlying', 'historical-underlying', 'v1-recursive-leaf', 'curation'],
+        requirements: ['current', 'historical'],
+        origins: [
+          { type: 'legacy-curve', id: '1:legacy-pool', roles: ['v1-recursive-leaf'] },
+          { type: 'vault', id: '1:curation-vault', roles: ['historical-underlying', 'curation'] },
+        ],
+      },
+    })
   })
 
-  test('fails closed when discovery yields no supported assets', async () => {
-    const request = vi.fn().mockResolvedValue(new Response('[]', { status: 200 }))
-    await expect(discoverYearnDailyTargets(EOD, { request })).rejects.toThrow('did not yield any')
+  test('promotes Gnosis using consumer support and keeps HyperEVM terminally unsupported', () => {
+    const discovery = parseTvlPriceTargetInventory(inventory([
+      target({
+        key: `100:${TOKEN}`,
+        chainId: 100,
+        support: { status: 'unsupported', reason: 'unsupported-chain', chainName: 'Gnosis' },
+      }),
+      target({
+        key: `999:${SECOND_TOKEN}`,
+        chainId: 999,
+        address: SECOND_TOKEN,
+        roles: ['historical-underlying', 'curation'],
+        origins: [{ type: 'vault', id: '999:curation-vault', roles: ['historical-underlying', 'curation'] }],
+        support: { status: 'unsupported', reason: 'unsupported-chain', chainName: null },
+      }),
+    ]), EOD, INVENTORY_URL)
+
+    expect(discovery.targets).toEqual([
+      expect.objectContaining({ chain: 'gnosis', token: TOKEN }),
+    ])
+    expect(discovery.targets[0].metadata).toMatchObject({
+      chainId: 100,
+      consumerSupport: 'supported',
+      producerSupport: { status: 'unsupported' },
+    })
+    expect(discovery.unsupportedTargets).toEqual([
+      expect.objectContaining({
+        chain: '999',
+        token: SECOND_TOKEN,
+        failureReason: expect.stringContaining('no configured chain, RPC, or adapter support'),
+        metadata: expect.objectContaining({ consumerSupport: 'unsupported' }),
+      }),
+    ])
+  })
+
+  test('reports malformed targets and preserves producer problems without dropping valid targets', () => {
+    const producerProblem = { type: 'invalid', source: 'vault', id: 'bad', reason: 'invalid-address' }
+    const discovery = parseTvlPriceTargetInventory(inventory([
+      target(),
+      target({ key: '1:not-an-address', address: 'not-an-address' }),
+    ], [producerProblem]), EOD, INVENTORY_URL)
+
+    expect(discovery.targets).toHaveLength(1)
+    expect(discovery.malformedEntries).toEqual([
+      expect.objectContaining({ index: 1, key: '1:not-an-address', reason: expect.stringContaining('Unsupported token address') }),
+    ])
+    expect(discovery.producerProblems).toEqual([producerProblem])
+  })
+
+  test('rejects unknown schema majors and requires a configured absolute URL', async () => {
+    expect(() => parseTvlPriceTargetInventory({ ...inventory([target()]), schemaVersion: '2.0.0' }, EOD, INVENTORY_URL))
+      .toThrow('Unsupported TVL price-target inventory schema version')
+    await expect(discoverTvlDailyTargets(EOD, '')).rejects.toThrow('TVL_PRICE_TARGET_INVENTORY_URL is required')
+    await expect(discoverTvlDailyTargets(EOD, '/relative.json')).rejects.toThrow('absolute URL')
+  })
+
+  test('loads the configured export and returns deterministic results', async () => {
+    const body = JSON.stringify(inventory([
+      target({ key: `1:${SECOND_TOKEN}`, address: SECOND_TOKEN }),
+      target(),
+    ]))
+    const request = vi.fn().mockImplementation(async () => new Response(body, { status: 200 }))
+
+    const first = await discoverTvlDailyTargets(EOD, INVENTORY_URL, { request })
+    const second = await discoverTvlDailyTargets(EOD, INVENTORY_URL, { request })
+
+    expect(first).toEqual(second)
+    expect(first.targets.map(item => item.token)).toEqual([TOKEN, SECOND_TOKEN])
+    expect(request).toHaveBeenCalledWith(new URL(INVENTORY_URL))
+  })
+
+  test('never persists configured URL credentials or query parameters', async () => {
+    const body = JSON.stringify(inventory([target()]))
+    const request = vi.fn().mockImplementation(async () => new Response(body, { status: 200 }))
+    const discovery = await discoverTvlDailyTargets(
+      EOD,
+      'https://inventory-user:inventory-pass@inventory.example/tvl-price-targets.json?signature=secret#fragment',
+      { request },
+    )
+
+    expect(discovery.targets[0].metadata?.discoverySource)
+      .toBe('https://inventory.example/tvl-price-targets.json')
+    expect(request).toHaveBeenCalledWith(new URL(
+      'https://inventory-user:inventory-pass@inventory.example/tvl-price-targets.json?signature=secret#fragment',
+    ))
   })
 })
