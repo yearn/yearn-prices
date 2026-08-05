@@ -21,7 +21,7 @@ function target(overrides: Record<string, unknown> = {}): Record<string, unknown
 
 function inventory(targets: unknown[], problems: unknown[] = []): Record<string, unknown> {
   return {
-    schemaVersion: '1.0.0',
+    schemaVersion: '1.1.0',
     sourceState: { databaseUpdatedAt: '2026-08-04T22:12:48.410Z', vaultRows: 1001 },
     targets,
     problems,
@@ -63,6 +63,31 @@ describe('TVL daily target discovery', () => {
           { type: 'vault', id: '1:curation-vault', roles: ['historical-underlying', 'curation'] },
         ],
       },
+    })
+  })
+
+  test('accepts schema 1.1 recursive constituent provenance', () => {
+    const discovery = parseTvlPriceTargetInventory(inventory([
+      target({
+        roles: ['current-underlying', 'historical-underlying', 'recursive-constituent'],
+        requirements: ['current', 'historical'],
+        origins: [{
+          type: 'vault',
+          id: '1:parent-vault',
+          roles: ['current-underlying', 'historical-underlying', 'recursive-constituent'],
+        }],
+      }),
+    ]), EOD, INVENTORY_URL)
+
+    expect(discovery.schemaVersion).toBe('1.1.0')
+    expect(discovery.targets[0].metadata).toMatchObject({
+      inventorySchemaVersion: '1.1.0',
+      roles: ['current-underlying', 'historical-underlying', 'recursive-constituent'],
+      origins: [{
+        type: 'vault',
+        id: '1:parent-vault',
+        roles: ['current-underlying', 'historical-underlying', 'recursive-constituent'],
+      }],
     })
   })
 

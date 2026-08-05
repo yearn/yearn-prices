@@ -1,7 +1,7 @@
 import { chainIdToName, normalizeTokenAddress } from './chains'
 import type { DailyPriceTargetInput, UnsupportedDailyPriceTargetInput } from './daily-prices'
 
-export const TVL_PRICE_TARGET_INVENTORY_SCHEMA_VERSION = '1.0.0'
+export const TVL_PRICE_TARGET_INVENTORY_SCHEMA_VERSION = '1.1.0'
 export const MAX_TVL_PRICE_TARGET_INVENTORY_BYTES = 10 * 1024 * 1024
 
 const ROLES = [
@@ -9,6 +9,7 @@ const ROLES = [
   'historical-underlying',
   'v1-direct',
   'v1-recursive-leaf',
+  'recursive-constituent',
   'curation',
   'extra-product',
 ] as const
