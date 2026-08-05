@@ -9,14 +9,15 @@ This report classifies every recursive constituent promoted by the DAT-5 schema 
 - CoinGecko's full platform registry was matched by both chain and contract address. A provider mapping alone was not accepted: production-equivalent DefiLlama probes also had to return a positive observation at or before EOD within the configured six-hour window.
 - Automatic stablecoin pegs, future/nearest observations, circular parent inference, incomplete pool NAV, and numeric zero placeholders remain forbidden.
 
-Primary references: [ERC-4626 previewRedeem](https://eips.ethereum.org/EIPS/eip-4626), [Abracadabra omnichain MIM](https://dev.abracadabra.money/token-related/omnichain-mim), [Superchain token list](https://github.com/ethereum-optimism/ethereum-optimism.github.io/blob/master/optimism.tokenlist.json), and [CoinGecko Optimism MIM contract mapping](https://api.coingecko.com/api/v3/coins/optimistic-ethereum/contract/0xb153fb3d196a8eb25522705560ac152eeec57901).
+Primary references: [ERC-4626 previewRedeem](https://eips.ethereum.org/EIPS/eip-4626), [YIP-88](https://docs.yearn.fi/contributing/governance/yips/yip-88), [Yearn stYFI deployment](https://github.com/yearn/stYFI/blob/master/deployment.json), [LiquidLockerRedemption source](https://github.com/yearn/stYFI/blob/master/contracts/LiquidLockerRedemption.vy), [Abracadabra omnichain MIM](https://dev.abracadabra.money/token-related/omnichain-mim), [Superchain token list](https://github.com/ethereum-optimism/ethereum-optimism.github.io/blob/master/optimism.tokenlist.json), and [CoinGecko Optimism MIM contract mapping](https://api.coingecko.com/api/v3/coins/optimistic-ethereum/contract/0xb153fb3d196a8eb25522705560ac152eeec57901).
 
 ## Prioritized implementation
 
 1. Use standard ERC-4626 `previewRedeem(oneShare)` only when `convertToAssets(oneShare)` is unavailable. This recovers waDAI and stataEthDAI without assuming parity.
 2. Re-run existing dependency-complete Balancer NAV topologically. The two wrapper recoveries can unlock three promoted BPTs; no BPT is priced from a partial constituent set.
 3. Add the reviewed Optimism MIM provider alias. It remains `estimated` / `fallback`, and provider timestamp validation remains latest-at-or-before-EOD.
-4. Retain explicit unsupported outcomes for all other targets until a historical market observation or deterministic on-chain conversion is documented.
+4. Price upYFI and coveYFI from their executable YIP-88 net redemption value. Read the exact-block fee, scale, enabled flag, remaining capacity, YFI liquidity, and the upYFI-to-supYFI ERC-4626 conversion; never substitute gross nominal parity.
+5. Retain explicit unsupported outcomes for all other targets until a historical market observation or deterministic on-chain conversion is documented.
 
 ## Asset-level classification
 
@@ -49,7 +50,7 @@ Primary references: [ERC-4626 previewRedeem](https://eips.ethereum.org/EIPS/eip-
 | `1:0x78da5799cf427fee11e9996982f4150ece7a99a7` | rgUSD | current + historical | market or lock token | `1:0x20bb4a325924917e3336753ba5350a84f70f392e`<br>`1:0x627c22bd39c69e65f749f6307430da881709941c`<br>`1:0x6fc7ea6ca8cd2759803eb78159c931a8ff5e0557`<br>`1:0xde73e407efc75edbafc5bcd62ebb1e7a9b38ebcd`<br>`1:0xdf9015472ea23e3bea6fbd6092915f9ed6980a99`<br>`1:0xf5a7906b41b858b66d3a7cbe167df1fb43ffe977` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `1:0x836a808d4828586a69364065a1e064609f5078c7` | pETH | historical | market or lock token | `1:0x9848482da3ee3076165ce6497eda906e66bb85c5` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `1:0x8c0d76c9b18779665475f3e212d9ca1ed6a1a0e6` | zunUSD | historical | market or lock token | `1:0x8c24b3213fd851db80245fccc42c40b94ac9a745` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
-| `1:0x95710bde45c8d384a976cc58cc7a7e489576b098` | upYFI | current + historical | locked wrapper | `1:0x13120b7599ddf33782c748a847cc1d3c96387ecd` | Unsupported: exposes YFI via token(), but no readable historical conversion/redemption rate. |
+| `1:0x95710bde45c8d384a976cc58cc7a7e489576b098` | upYFI | current + historical | 69,420:1 liquid locker, wrapped 1:1 into supYFI for redemption | `1:0x13120b7599ddf33782c748a847cc1d3c96387ecd` | Derived: exact-block YIP-88 net redemption into YFI after the decaying fee, with enabled status, wrapper availability, remaining capacity, and facility liquidity all required. |
 | `1:0x96e61422b6a9ba0e068b6c5add4ffabc6a4aae27` | ibEUR | current + historical | market or lock token | `1:0x19b080fe1ffa0553469d20ca36219f17fcf03859`<br>`1:0x8682fbf0cbf312c891532ba9f1a91e44f81ad7df` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `1:0x97983236be88107cc8998733ef73d8d969c52e37` | sdYFI | current + historical | market or lock token | `1:0x79e281bc69a03dabccd66858c65ef6724e50aebe`<br>`1:0x852b90239c5034b5bb7a5e54ef1bef3ce3359cc8` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `1:0x97effb790f2fbb701d88f89db4521348a2b77be8` | CVG | historical | market or lock token | `1:0x004c167d27ada24305b76d80762997fa6eb8d9b2` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
@@ -69,7 +70,7 @@ Primary references: [ERC-4626 previewRedeem](https://eips.ethereum.org/EIPS/eip-
 | `1:0xfa24a90a3f2bbe5feea92b95cd0d14ce709649f9` | bb-a-DAI | historical | Balancer BPT | `1:0xc443c15033fcb6cf72cc24f1bda0db070ddd9786` | Derived: existing complete Balancer Vault NAV after every wrapper/underlying dependency resolves. |
 | `1:0xfafdf0c4c1cb09d430bf88c75d88bb46dae09967` | ibAUD | current + historical | market or lock token | `1:0x3f1b0278a9ee595635b61817630cc19de792f506`<br>`1:0x54c8ecf46a81496eeb0608bd3353388b5d7a2a33` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `1:0xfc0b1eef20e4c68b3dcf36c4537cfa7ce46ca70b` | USDC+ | current + historical | market or lock token | `1:0xfed2b54453f75634bcdaea5e5b11a3f99b9c28fa` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
-| `1:0xff71841eefca78a64421db28060855036765c248` | coveYFI | current + historical | locked wrapper | `1:0xa3f152837492340daaf201f4dfec6cd73a8a9760` | Unsupported: exposes YFI via asset(), but neither standard conversion method is readable at EOD. |
+| `1:0xff71841eefca78a64421db28060855036765c248` | coveYFI | current + historical | 1:1-denominated liquid locker | `1:0xa3f152837492340daaf201f4dfec6cd73a8a9760` | Derived: exact-block YIP-88 net redemption into YFI after the decaying fee, with enabled status, remaining capacity, and facility liquidity all required. |
 | `10:0x00a35fd824c717879bf370e70ac6868b95870dfb` | IB | current + historical | market or lock token | `10:0xb545592e38b603f4a904a5260a6ffc538bfcb424` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `10:0x00e1724885473b63bce08a9f0a52f35b0979e35a` | OATH | current + historical | market or lock token | `10:0xc3439bc1a747e545887192d6b7f8be47f608473f` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
 | `10:0x1db2466d9f5e10d7090e7152b68d62703a2245f0` | SONNE | current + historical | market or lock token | `10:0x4e60495550071693bc8bdffc40033d278157eac7` | Unsupported: direct contract market miss and no reviewed at-or-before-EOD alias or deterministic conversion path. |
@@ -110,6 +111,25 @@ The preserved DAT-2 baseline in `codex_dat2_validation_20260805` was compared wi
 Six promoted constituents became priced: waDAI, stataEthDAI, three Balancer BPTs, and Optimism MIM. Five immediate parent targets became recoverable: the two promoted intermediate BPTs plus Ethereum pools `0xc2b021...` and `0xfebb0b...`, and Optimism pool `0xb27914...`. In total, nine previously non-priced asset targets became priced. The remaining 68 promoted constituents are explicitly unsupported.
 
 Two unrelated Arbitrum targets that were priced in the baseline were quarantined in the fresh run after the archive RPC returned transient state errors. This explains why the net priced increase is seven rather than nine; it is environmental variance, not a DAT-13 pricing-method regression. The idempotency rerun inserted 0 targets, updated 0 metadata rows, processed 0 work items, and retained the same terminal counts.
+
+### YIP-88 follow-up
+
+User-supplied locker mechanics led to a reviewed YIP-88 redemption adapter and a second fresh isolated schema, `codex_dat13_yip88_validation_20260805`. At Ethereum block 25,684,999, both locker slots were enabled and the fee was exactly `88461538461538461` (8.8461538461538461%). The adapter valued one upYFI through its 1:1 ERC-4626 conversion into supYFI, then applied the 69,420 scale and net fee; it valued one coveYFI with scale 1 and the same net fee. Both paths had sufficient remaining capacity and YFI liquidity.
+
+| Outcome | Initial DAT-13 | With YIP-88 | Increment |
+| --- | ---: | ---: | ---: |
+| Priced | 480 | 484 | +4 |
+| Unsupported | 180 | 176 | -4 |
+| Quarantined | 43 | 43 | 0 |
+
+The exact new recoveries at `2026-08-04T23:59:59Z` were:
+
+- upYFI `0x95710b...`: `$0.027713727244972088`, derived from net redemption into YFI;
+- coveYFI `0xff7184...`: `$1,923.8869453461598`, derived from net redemption into YFI;
+- upYFI/YFI Curve parent `0x13120b...`: `$0.02873320386268165`, derived only after both reserves were priceable;
+- coveYFI/YFI Curve parent `0xa3f152...`: `$2,032.6074725455665`, derived only after both reserves were priceable.
+
+Relative to the preserved DAT-2 baseline, the final outcome is 484 priced, 176 unsupported, and 43 quarantined: a net change of +11 priced, -12 unsupported, and +1 quarantined. Eight of the 74 promoted constituents are now priced and 66 remain unsupported. The YIP-88 idempotency rerun inserted 0 targets, updated 0 metadata rows, and processed 0 work items.
 
 ## External dependency boundary
 

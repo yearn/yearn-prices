@@ -84,6 +84,7 @@ The worker first queries the requested chain/token identifier from DefiLlama at 
 If direct evidence is unavailable, the recursive engine tries historical on-chain adapters at the block at or before EOD:
 
 - ERC-4626 `convertToAssets`, with the standard `previewRedeem` fallback when conversion is unavailable;
+- allow-listed YIP-88 liquid-locker net redemption, gated by exact-block fee, enabled status, capacity, wrapper conversion, and YFI liquidity;
 - Yearn vault share rates;
 - Compound and Iron Bank exchange rates;
 - Aave underlying parity;

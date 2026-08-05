@@ -11,6 +11,11 @@ const SY = '0x0000000000000000000000000000000000000005'
 const PT = '0x0000000000000000000000000000000000000006'
 const YT = '0x0000000000000000000000000000000000000007'
 const FBEETS = '0xfcef8a994209d6916eb2c86cdd2afd60aa6f54b1'
+const YFI = '0x0bc529c00c6401aeF6D220BE8C6Ea1667F6Ad93e'
+const UPYFI = '0x95710BDE45C8D384A976Cc58Cc7a7e489576b098'
+const SUPYFI = '0xCb7DCe63aBE175cA354Dcca9cc10554D255777Ee'
+const COVEYFI = '0xff71841eefca78a64421db28060855036765c248'
+const YIP88_REDEMPTION = '0xba18d0df75a3ff58ef40a8fc0d3e4db74a0e681d'
 const REQUESTED_TIMESTAMP = 1_700_006_399
 const BLOCK_NUMBER = 19_000_000
 
@@ -78,6 +83,118 @@ function poolEngine(
 }
 
 describe('wrapper and lending price adapters', () => {
+  test.each([
+    { token: UPYFI, index: 1n, facilityToken: SUPYFI, scale: 69_420n },
+    { token: COVEYFI, index: 2n, facilityToken: COVEYFI, scale: 1n },
+  ])('prices $token from its exact YIP-88 net redemption value', async ({ token, index, facilityToken, scale }) => {
+    const feeRaw = 88_461_538_461_538_461n
+    const oneTokenRaw = 10n ** 18n
+    const grossYfiRaw = oneTokenRaw / scale
+    const netYfiRaw = grossYfiRaw * (10n ** 18n - feeRaw) / 10n ** 18n
+    const client = {
+      async readContract(request: { address: string; functionName: string; args?: readonly unknown[]; blockNumber: bigint }) {
+        expect(request.blockNumber).toBe(BigInt(BLOCK_NUMBER))
+        const address = request.address.toLowerCase()
+        if (address === YIP88_REDEMPTION) {
+          if (request.functionName === 'yfi') return YFI
+          if (request.functionName === 'fee') return feeRaw
+          expect(request.args?.[0]).toBe(index)
+          if (request.functionName === 'tokens') return facilityToken
+          if (request.functionName === 'scales') return scale
+          if (request.functionName === 'capacities') return 100n * oneTokenRaw
+          if (request.functionName === 'enabled') return true
+          if (request.functionName === 'used') return 0n
+        }
+        if (address === SUPYFI.toLowerCase()) {
+          if (request.functionName === 'asset') return UPYFI
+          if (request.functionName === 'maxDeposit') return 2n ** 256n - 1n
+          if (request.functionName === 'convertToShares') return oneTokenRaw
+        }
+        if (request.functionName === 'decimals') return 18
+        if (address === YFI.toLowerCase() && request.functionName === 'balanceOf') return 50n * oneTokenRaw
+        throw new Error(`method unavailable: ${request.functionName}`)
+      },
+    } as unknown as PublicClient
+    const engine = new RecursivePriceEngine(
+      async priceTarget => priceTarget.token.toLowerCase() === YFI.toLowerCase()
+        ? marketPath(priceTarget.token, 2_000)
+        : null,
+      createOnchainPriceAdapters({
+        clientForChain: () => client,
+        blockForTarget: async () => BigInt(BLOCK_NUMBER),
+      }),
+    )
+
+    const result = await engine.resolve({
+      chain: 'ethereum',
+      token,
+      requestedTimestamp: REQUESTED_TIMESTAMP,
+      blockNumber: null,
+    })
+
+    expect(result.failure).toBeNull()
+    expect(result.path?.adapter).toBe('yip88-liquid-locker-redemption')
+    expect(result.path?.priceUsd).toBeCloseTo(Number(netYfiRaw) / 1e18 * 2_000, 12)
+    expect(result.path).toMatchObject({
+      metadata: {
+        method: 'yip88-net-redemption',
+        valuationRule: 'enabled-capacity-and-liquidity-checked-net-redemption',
+        index: index.toString(),
+        scaleRaw: scale.toString(),
+        feeRaw: feeRaw.toString(),
+        grossYfiRaw: grossYfiRaw.toString(),
+        netYfiRaw: netYfiRaw.toString(),
+      },
+      inputs: [{
+        conversion: { method: 'yip88-net-redemption' },
+      }],
+    })
+    expect(result.path?.inputs[0].token.toLowerCase()).toBe(YFI.toLowerCase())
+    if (token === UPYFI) {
+      expect(result.path?.metadata.wrapper).toMatchObject({
+        address: SUPYFI,
+        asset: UPYFI,
+        convertedSharesRaw: oneTokenRaw.toString(),
+      })
+    }
+  })
+
+  test('does not use nominal locker parity when the YIP-88 facility is disabled', async () => {
+    const client = {
+      async readContract(request: { address: string; functionName: string }) {
+        if (request.address.toLowerCase() === YIP88_REDEMPTION) {
+          if (request.functionName === 'yfi') return YFI
+          if (request.functionName === 'fee') return 88_461_538_461_538_461n
+          if (request.functionName === 'tokens') return COVEYFI
+          if (request.functionName === 'scales') return 1n
+          if (request.functionName === 'capacities') return 100n * 10n ** 18n
+          if (request.functionName === 'enabled') return false
+          if (request.functionName === 'used') return 0n
+        }
+        if (request.functionName === 'decimals') return 18
+        throw new Error('method unavailable')
+      },
+    } as unknown as PublicClient
+    const engine = new RecursivePriceEngine(
+      async priceTarget => priceTarget.token.toLowerCase() === YFI.toLowerCase()
+        ? marketPath(priceTarget.token, 2_000)
+        : null,
+      createOnchainPriceAdapters({
+        clientForChain: () => client,
+        blockForTarget: async () => BigInt(BLOCK_NUMBER),
+      }),
+    )
+
+    const result = await engine.resolve({
+      chain: 'ethereum',
+      token: COVEYFI,
+      requestedTimestamp: REQUESTED_TIMESTAMP,
+      blockNumber: null,
+    })
+
+    expect(result).toMatchObject({ path: null, failure: { reason: 'unsupported' } })
+  })
+
   test('prices allow-listed Fantom fBEETS from its historical pro-rata BPT balance', async () => {
     const client = {
       async readContract(request: { address: string; functionName: string; blockNumber: bigint }) {

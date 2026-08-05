@@ -20,6 +20,11 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 const CURVE_ADDRESS_PROVIDER = '0x0000000022D53366457F9d5E68Ec105046FC4383' as Address
 const CURVE_NATIVE_TOKEN = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
 const PENDLE_ORACLE = '0x9a9Fa8338dd5E5B2188006f1Cd2Ef26d921650C2' as Address
+const YIP88_LIQUID_LOCKER_REDEMPTION = '0xba18d0df75a3ff58ef40a8fc0d3e4db74a0e681d' as Address
+const YIP88_LIQUID_LOCKERS = new Map<string, bigint>([
+  ['0x95710bde45c8d384a976cc58cc7a7e489576b098', 1n],
+  ['0xff71841eefca78a64421db28060855036765c248', 2n],
+])
 
 const WRAPPED_NATIVE: Record<number, string> = {
   1: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
@@ -54,7 +59,18 @@ const beetsBarAbi = parseAbi(['function vestingToken() view returns (address)'])
 const erc4626Abi = parseAbi([
   'function asset() view returns (address)',
   'function convertToAssets(uint256 shares) view returns (uint256)',
+  'function convertToShares(uint256 assets) view returns (uint256)',
+  'function maxDeposit(address receiver) view returns (uint256)',
   'function previewRedeem(uint256 shares) view returns (uint256)',
+])
+const liquidLockerRedemptionAbi = parseAbi([
+  'function yfi() view returns (address)',
+  'function fee() view returns (uint256)',
+  'function tokens(uint256 index) view returns (address)',
+  'function scales(uint256 index) view returns (uint256)',
+  'function capacities(uint256 index) view returns (uint256)',
+  'function enabled(uint256 index) view returns (bool)',
+  'function used(uint256 index) view returns (uint256)',
 ])
 const yearnUnderlyingAbis = [
   parseAbi(['function token() view returns (address)']),
@@ -237,6 +253,117 @@ async function tokenDecimals(client: PublicClient, address: string, blockNumber:
 
 function recursiveInput(path: ResolvedPricePath, conversion: Record<string, unknown>): RecursivePriceInput {
   return { path, conversion }
+}
+
+function yip88LiquidLockerAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
+  return {
+    name: 'yip88-liquid-locker-redemption',
+    async resolve(target, context) {
+      if (target.chain !== 'ethereum') return null
+      const index = YIP88_LIQUID_LOCKERS.get(target.token.toLowerCase())
+      if (index == null) return null
+
+      const state = await contractContext(target, options)
+      const [
+        yfiRaw,
+        feeRaw,
+        facilityTokenRaw,
+        scaleRaw,
+        capacityRaw,
+        enabled,
+        usedRaw,
+        targetDecimalsRaw,
+      ] = await Promise.all([
+        state.client.readContract({ address: YIP88_LIQUID_LOCKER_REDEMPTION, abi: liquidLockerRedemptionAbi, functionName: 'yfi', blockNumber: state.blockNumber }),
+        state.client.readContract({ address: YIP88_LIQUID_LOCKER_REDEMPTION, abi: liquidLockerRedemptionAbi, functionName: 'fee', blockNumber: state.blockNumber }),
+        state.client.readContract({ address: YIP88_LIQUID_LOCKER_REDEMPTION, abi: liquidLockerRedemptionAbi, functionName: 'tokens', args: [index], blockNumber: state.blockNumber }),
+        state.client.readContract({ address: YIP88_LIQUID_LOCKER_REDEMPTION, abi: liquidLockerRedemptionAbi, functionName: 'scales', args: [index], blockNumber: state.blockNumber }),
+        state.client.readContract({ address: YIP88_LIQUID_LOCKER_REDEMPTION, abi: liquidLockerRedemptionAbi, functionName: 'capacities', args: [index], blockNumber: state.blockNumber }),
+        state.client.readContract({ address: YIP88_LIQUID_LOCKER_REDEMPTION, abi: liquidLockerRedemptionAbi, functionName: 'enabled', args: [index], blockNumber: state.blockNumber }),
+        state.client.readContract({ address: YIP88_LIQUID_LOCKER_REDEMPTION, abi: liquidLockerRedemptionAbi, functionName: 'used', args: [index], blockNumber: state.blockNumber }),
+        state.client.readContract({ address: state.address, abi: erc20Abi, functionName: 'decimals', blockNumber: state.blockNumber }),
+      ])
+      const yfi = normalizedAddress(yfiRaw)
+      const facilityToken = normalizedAddress(facilityTokenRaw)
+      if (!yfi || !facilityToken || !enabled || feeRaw >= 10n ** 18n || scaleRaw === 0n || usedRaw > capacityRaw) return null
+
+      const targetDecimals = Number(targetDecimalsRaw)
+      const oneTargetRaw = 10n ** BigInt(targetDecimals)
+      let facilityTokenAmountRaw = oneTargetRaw
+      let wrapper: Record<string, unknown> | null = null
+      if (facilityToken.toLowerCase() !== target.token.toLowerCase()) {
+        const [assetRaw, maxDepositRaw, convertedSharesRaw] = await Promise.all([
+          state.client.readContract({ address: facilityToken, abi: erc4626Abi, functionName: 'asset', blockNumber: state.blockNumber }),
+          state.client.readContract({ address: facilityToken, abi: erc4626Abi, functionName: 'maxDeposit', args: [YIP88_LIQUID_LOCKER_REDEMPTION], blockNumber: state.blockNumber }),
+          state.client.readContract({ address: facilityToken, abi: erc4626Abi, functionName: 'convertToShares', args: [oneTargetRaw], blockNumber: state.blockNumber }),
+        ])
+        const asset = normalizedAddress(assetRaw)
+        if (!asset || asset.toLowerCase() !== target.token.toLowerCase() || maxDepositRaw < oneTargetRaw || convertedSharesRaw === 0n) return null
+        facilityTokenAmountRaw = convertedSharesRaw
+        wrapper = {
+          address: facilityToken,
+          asset,
+          maxDepositRaw: rawState(maxDepositRaw),
+          convertedSharesRaw: rawState(convertedSharesRaw),
+        }
+      }
+
+      const grossYfiRaw = facilityTokenAmountRaw / scaleRaw
+      const remainingCapacityRaw = capacityRaw - usedRaw
+      const netYfiRaw = grossYfiRaw * (10n ** 18n - feeRaw) / 10n ** 18n
+      if (grossYfiRaw === 0n || grossYfiRaw > remainingCapacityRaw || netYfiRaw === 0n) return null
+
+      const [yfiDecimals, yfiLiquidityRaw] = await Promise.all([
+        tokenDecimals(state.client, yfi, state.blockNumber),
+        state.client.readContract({
+          address: yfi,
+          abi: erc20Abi,
+          functionName: 'balanceOf',
+          args: [YIP88_LIQUID_LOCKER_REDEMPTION],
+          blockNumber: state.blockNumber,
+        }),
+      ])
+      if (yfiLiquidityRaw < netYfiRaw) return null
+
+      const conversion = {
+        ...historicalBlockEvidence(state, target),
+        method: 'yip88-net-redemption',
+        valuationRule: 'enabled-capacity-and-liquidity-checked-net-redemption',
+        facility: YIP88_LIQUID_LOCKER_REDEMPTION,
+        index: index.toString(),
+        facilityToken,
+        wrapper,
+        yfi,
+        targetDecimals,
+        yfiDecimals,
+        oneTargetRaw: rawState(oneTargetRaw),
+        facilityTokenAmountRaw: rawState(facilityTokenAmountRaw),
+        scaleRaw: rawState(scaleRaw),
+        feeRaw: rawState(feeRaw),
+        grossYfiRaw: rawState(grossYfiRaw),
+        netYfiRaw: rawState(netYfiRaw),
+        capacityRaw: rawState(capacityRaw),
+        usedRaw: rawState(usedRaw),
+        remainingCapacityRaw: rawState(remainingCapacityRaw),
+        yfiLiquidityRaw: rawState(yfiLiquidityRaw),
+        references: [
+          'https://docs.yearn.fi/contributing/governance/yips/yip-88',
+          'https://github.com/yearn/stYFI/blob/master/contracts/LiquidLockerRedemption.vy',
+          'https://github.com/yearn/stYFI/blob/master/deployment.json',
+        ],
+      }
+      const input = await context.require(
+        childTarget(target, yfi, state.numericBlockNumber),
+        'YIP-88 redemption YFI',
+      )
+      return {
+        priceUsd: calculateWrapperPrice(netYfiRaw, yfiDecimals, oneTargetRaw, targetDecimals, input.priceUsd),
+        blockNumber: state.numericBlockNumber,
+        inputs: [recursiveInput(input, conversion)],
+        metadata: conversion,
+      }
+    },
+  }
 }
 
 function erc4626Adapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
@@ -999,6 +1126,7 @@ export function createOnchainPriceAdapters(options: OnchainAdapterOptions): Recu
     throw new Error('Pendle TWAP seconds must fit uint32 and be positive')
   }
   return [
+    yip88LiquidLockerAdapter(options),
     beetsBarAdapter(options),
     erc4626Adapter(options),
     yearnShareAdapter(options),
