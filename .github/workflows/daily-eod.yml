@@ -21,9 +21,9 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
       - run: bun install --frozen-lockfile
-      - uses: 1Password/install-cli-action@v1
+      - uses: 1Password/install-cli-action@143a85f84a90555d121cde2ff5872e393a47ab9f # v1
       - name: Load secrets from 1Password
-        uses: 1Password/load-secrets-action@v2
+        uses: 1Password/load-secrets-action@581a835fb51b8e7ec56b71cf2ffddd7e68bb25e0 # v2
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           DATABASE_URL: op://webops-prod/yearn-price/DATABASE_URL

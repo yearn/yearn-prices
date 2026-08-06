@@ -98,7 +98,9 @@ If direct evidence is unavailable, the recursive engine tries historical on-chai
 
 Every derived result retains its inputs and inherits the weakest input quality. Recursion has cycle detection and an explicit depth bound.
 
-Pool NAV requires every constituent used by the formula. The service does not use Curve `virtual_price × coin0`, single-sided reserve ratios, or assumed stablecoin pegs.
+Pool NAV requires every constituent used by the formula. Curve pricing also requires an authoritative pool coin count
+from the pool or a historical Curve registry; an ambiguous coin read fails closed instead of valuing a discovered
+prefix. The service does not use Curve `virtual_price × coin0`, single-sided reserve ratios, or assumed stablecoin pegs.
 
 ## Operations
 
@@ -141,9 +143,10 @@ The authenticated progress API is `GET /api/daily-prices/progress`. Queue mutati
 operator key.
 
 Production orchestration lives in `.github/workflows/daily-eod.yml`, scheduled for 00:30 UTC. Configure the repository
-Actions variable `TVL_PRICE_TARGET_INVENTORY_URL` to an HTTP(S) export of the yearn-tvl-service
-`tvl-price-target-inventory` schema. Schema major `1` is accepted; unknown majors fail closed. The service downloads at
-most 10 MiB and never vendors a static snapshot.
+Actions variable `TVL_PRICE_TARGET_INVENTORY_URL` to an HTTPS export of the yearn-tvl-service
+`tvl-price-target-inventory` schema. Plain HTTP is accepted only on loopback for disposable local validation. Schema
+major `1` is accepted; unknown majors fail closed. The service aborts stalled downloads after 30 seconds and streams
+at most 10 MiB before parsing; it never vendors a static snapshot.
 
 Valid rows are normalized and deduplicated by chain id and address. Roles, current/historical requirements, producer
 support, source state, and every vault/product origin remain in target metadata. Duplicate roles and origins are merged

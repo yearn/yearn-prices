@@ -3,6 +3,7 @@ import type { DailyPriceTargetInput, UnsupportedDailyPriceTargetInput } from './
 
 export const TVL_PRICE_TARGET_INVENTORY_SCHEMA_VERSION = '1.1.0'
 export const MAX_TVL_PRICE_TARGET_INVENTORY_BYTES = 10 * 1024 * 1024
+export const TVL_PRICE_TARGET_INVENTORY_TIMEOUT_MS = 30_000
 
 const ROLES = [
   'current-underlying',
@@ -67,10 +68,49 @@ export interface TvlDailyTargetDiscovery {
 
 export interface DailyTargetDiscoveryDependencies {
   request?: typeof fetch
+  timeoutMs?: number
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === 'localhost'
+    || hostname === '127.0.0.1'
+    || hostname === '[::1]'
+    || hostname === '::1'
+}
+
+async function readBoundedResponseText(response: Response): Promise<string> {
+  const contentLength = response.headers.get('content-length')
+  if (contentLength != null) {
+    const declaredBytes = Number(contentLength)
+    if (Number.isFinite(declaredBytes) && declaredBytes > MAX_TVL_PRICE_TARGET_INVENTORY_BYTES) {
+      throw new Error(`TVL price-target inventory exceeds ${MAX_TVL_PRICE_TARGET_INVENTORY_BYTES} bytes`)
+    }
+  }
+
+  if (!response.body) return ''
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let receivedBytes = 0
+  let raw = ''
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      receivedBytes += value.byteLength
+      if (receivedBytes > MAX_TVL_PRICE_TARGET_INVENTORY_BYTES) {
+        await reader.cancel()
+        throw new Error(`TVL price-target inventory exceeds ${MAX_TVL_PRICE_TARGET_INVENTORY_BYTES} bytes`)
+      }
+      raw += decoder.decode(value, { stream: true })
+    }
+    return raw + decoder.decode()
+  } finally {
+    reader.releaseLock()
+  }
 }
 
 function parseStringSet<T extends string>(
@@ -255,14 +295,25 @@ export async function discoverTvlDailyTargets(
   } catch {
     throw new Error('TVL_PRICE_TARGET_INVENTORY_URL must be an absolute URL')
   }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    throw new Error('TVL_PRICE_TARGET_INVENTORY_URL must use http or https')
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && isLoopbackHost(url.hostname))) {
+    throw new Error('TVL_PRICE_TARGET_INVENTORY_URL must use https or loopback http')
   }
-  const response = await (dependencies.request ?? fetch)(url)
-  if (!response.ok) throw new Error(`TVL price-target inventory request failed with HTTP ${response.status}`)
-  const raw = await response.text()
-  if (new TextEncoder().encode(raw).byteLength > MAX_TVL_PRICE_TARGET_INVENTORY_BYTES) {
-    throw new Error(`TVL price-target inventory exceeds ${MAX_TVL_PRICE_TARGET_INVENTORY_BYTES} bytes`)
+  const timeoutMs = dependencies.timeoutMs ?? TVL_PRICE_TARGET_INVENTORY_TIMEOUT_MS
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new Error('TVL price-target inventory timeout must be a positive integer')
+  }
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  let raw: string
+  try {
+    const response = await (dependencies.request ?? fetch)(url, { signal: controller.signal })
+    if (!response.ok) throw new Error(`TVL price-target inventory request failed with HTTP ${response.status}`)
+    raw = await readBoundedResponseText(response)
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error(`TVL price-target inventory request timed out after ${timeoutMs} ms`)
+    throw error
+  } finally {
+    clearTimeout(timeout)
   }
   let value: unknown
   try {
