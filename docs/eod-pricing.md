@@ -122,12 +122,20 @@ bun run daily:cycle
 bun run daily:status
 bun run daily:canaries
 bun run daily:report
+bun run daily:export -- --eod 1785887999 --expected-targets 703 --output /tmp/evidence.json
 ```
 
 `daily:canaries` forces representative live contracts through each registered on-chain adapter at the latest closed
-EOD block, including separate Compound and Iron Bank exchange-rate cases. `daily:report` emits the final chain, asset
+EOD block, including separate Compound and Iron Bank exchange-rate cases. It also proves the HyperEVM archive RPC
+brackets the requested EOD and that both authoritative chain-999 assets have observed, at-or-before-EOD market paths.
+`daily:report` emits the final chain, asset
 role, source, adapter, classification, quality, terminal outcome, failure, alias, and incident-proxy breakdown without
 exposing provider URLs.
+
+`daily:export` fails unless the exact requested day has the expected target count, every target is terminal, and
+every priced target references validated evidence. Its deterministic, secret-free JSON contains one ordered record
+per target, selected and alternate candidate evidence, recursive inputs, terminal failure information, and allowlisted
+inventory provenance. Existing output files are never overwritten.
 
 The authenticated progress API is `GET /api/daily-prices/progress`. Queue mutation requests require the separate
 operator key.
@@ -143,13 +151,13 @@ in schema order, making repeated discovery for the same inventory/day determinis
 Malformed target rows and producer `invalid` problems are logged explicitly; valid targets still run to terminal
 outcomes before the cycle fails to alert operators.
 
-Consumer capability is authoritative for scheduling. Gnosis chain `100` is supported by yearn-prices: it is present in
-the chain registry, the production workflow loads `RPC_URL_100`, and generic historical market/on-chain resolution is
-available. The two Gnosis inventory targets are therefore scheduled even while the producer artifact labels them
-unsupported. HyperEVM chain `999` has no yearn-prices chain mapping, RPC configuration, or adapter support. Its two
-inventory targets are retained under numeric chain key `999` and inserted directly as durable `unsupported` outcomes;
-they never enter the worker and are never converted to zero. If support is later added, the producer artifact and this
-policy must be updated together.
+Consumer capability is authoritative for scheduling. Gnosis chain `100` and HyperEVM chain `999` are supported by
+yearn-prices: both are present in the chain registry and production secret routing, and valid targets enter generic
+historical market/on-chain resolution even while the producer artifact labels them unsupported. HyperEVM's two
+authoritative targets are USDC and USDt0 direct markets; neither is treated as a wrapper or assigned an automatic peg.
+The chain-999 canary requires an exact historical block bracket with contract state plus observed market evidence at or
+before EOD. Unknown chains remain durable `unsupported` outcomes. DAT-5 must align its chain-999 producer capability
+metadata after this consumer support is integrated.
 
 A manual workflow dispatch may select a reviewed closed `YYYY-MM-DD` day. The cycle fails if discovery is empty, if any
 queue work remains pending/in-progress/retryable, or if the inventory reports malformed/invalid producer coverage.
@@ -164,6 +172,7 @@ The shared chain registry remains authoritative:
 - Polygon
 - Sonic
 - Fantom
+- HyperEVM
 - Base
 - Arbitrum
 - Berachain

@@ -27,7 +27,8 @@ Fill in `.dev.vars` and `.env` with real values: a `DATABASE_URL`, one read-only
 `TVL_PRICE_TARGET_INVENTORY_URL` export used by `daily:cycle`. Both files are gitignored — never commit them.
 
 For isolated validation and previews, `DATABASE_SCHEMA` may select a safe Postgres schema without duplicating or
-printing the database URL.
+printing the database URL. Large historical runs should use the disposable setup in
+[`docs/local-postgres-validation.md`](docs/local-postgres-validation.md) instead of shared Neon storage.
 
 ```bash
 bun run dev
@@ -53,6 +54,7 @@ bun run dev
 | `bun run daily:status` | Print durable EOD queue progress |
 | `bun run daily:canaries` | Run representative historical live canaries for every on-chain adapter |
 | `bun run daily:report` | Print the complete EOD coverage and evidence breakdown |
+| `bun run daily:export -- --eod <unix> --expected-targets <n> --output <path>` | Export deterministic target-level closed-day evidence |
 
 ## API
 
