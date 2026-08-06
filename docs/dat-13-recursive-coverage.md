@@ -168,4 +168,7 @@ Relative to the preserved DAT-2 baseline, the final outcome is 493 priced, 166 u
 
 ## External dependency boundary
 
-This 74-target cohort is limited to Ethereum, Optimism, and Base and uses their configured archive-capable RPCs. It does not itself require HyperEVM. The separate chain-999 inventory targets remain unsupported by yearn-prices because chain 999 is absent from the consumer chain registry and adapter topology; a configured URL alone is not consumer support. Supporting them would require an explicit HyperEVM chain mapping, validated historical RPC behavior, adapter/canary coverage, and an aligned DAT-5 producer capability update.
+This 74-target cohort is limited to Ethereum, Optimism, and Base and does not itself require HyperEVM. The subsequent
+readiness slice adds chain-999 registry and secret routing, schedules its two authoritative targets, and proves exact
+historical RPC bracketing plus at-or-before-EOD direct market evidence. No wrapper adapter or peg assumption is used.
+DAT-5 still needs to align the producer capability metadata after the consumer change is integrated.

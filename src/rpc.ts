@@ -7,6 +7,10 @@ const SHARE_PRICE_ABI_V3 = parseAbi(['function convertToAssets(uint256) view ret
 const blockCache = new Map<string, bigint>()
 const clientCache = new Map<number, PublicClient>()
 
+const NATIVE_CURRENCIES: Partial<Record<number, { name: string; symbol: string; decimals: number }>> = {
+  999: { name: 'Hyperliquid', symbol: 'HYPE', decimals: 18 },
+}
+
 export type RpcConfigurationFailure = 'missing' | 'mismatch' | 'transport'
 
 export class RpcConfigurationError extends Error {
@@ -117,7 +121,7 @@ function createChainClient(chainId: number, rpcUrl: string): PublicClient {
   const chain = defineChain({
     id: chainId,
     name: chainName,
-    nativeCurrency: {
+    nativeCurrency: NATIVE_CURRENCIES[chainId] ?? {
       name: chainName,
       symbol: chainName.slice(0, 4).toUpperCase(),
       decimals: 18,

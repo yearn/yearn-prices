@@ -56,12 +56,13 @@ describe('RPC chain ID validation', () => {
     const request = vi.fn()
       .mockResolvedValueOnce(rpcResponse('0x1'))
       .mockResolvedValueOnce(rpcResponse('0xfa'))
-
+      .mockResolvedValueOnce(rpcResponse('0x3e7'))
     await validateConfiguredRpcChainIds({
       RPC_URL_1: 'https://ethereum.invalid',
       RPC_URL_250: 'https://fantom.invalid',
+      RPC_URL_999: 'https://hyperevm.invalid',
     }, { request })
 
-    expect(request).toHaveBeenCalledTimes(2)
+    expect(request).toHaveBeenCalledTimes(3)
   })
 })

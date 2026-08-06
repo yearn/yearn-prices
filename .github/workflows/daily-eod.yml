@@ -33,6 +33,7 @@ jobs:
           RPC_URL_137: op://webops-prod/yearn-price/RPC_URL_137
           RPC_URL_146: op://webops-prod/yearn-price/RPC_URL_146
           RPC_URL_250: op://webops-prod/yearn-price/RPC_URL_250
+          RPC_URL_999: op://webops-prod/yearn-price/RPC_URL_999
           RPC_URL_8453: op://webops-prod/yearn-price/RPC_URL_8453
           RPC_URL_42161: op://webops-prod/yearn-price/RPC_URL_42161
           RPC_URL_80094: op://webops-prod/yearn-price/RPC_URL_80094

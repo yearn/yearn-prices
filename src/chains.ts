@@ -8,6 +8,7 @@ export const CHAIN_ID_TO_NAME = {
   137: 'polygon',
   146: 'sonic',
   250: 'fantom',
+  999: 'hyperevm',
   8453: 'base',
   42161: 'arbitrum',
   80094: 'berachain',

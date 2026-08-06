@@ -110,17 +110,17 @@ describe.skipIf(!enabled)('isolated Postgres integration', () => {
     ])
 
     const unsupported = [{
-      chain: '999',
+      chain: '1234',
       token: INVENTORY_TOKEN,
       eodTimestamp: EOD,
-      failureReason: 'yearn-prices has no HyperEVM support',
+      failureReason: 'yearn-prices has no chain 1234 support',
       metadata: { roles: ['curation'] },
     }]
     await expect(recordUnsupportedDailyPriceTargets(pool, unsupported)).resolves.toBe(1)
     await expect(recordUnsupportedDailyPriceTargets(pool, unsupported)).resolves.toBe(0)
     await expect(pool.query(
       'SELECT status, failure_class, metadata FROM daily_price_targets WHERE chain = $1 AND token = $2 AND eod_at = to_timestamp($3)',
-      ['999', normalizeTokenAddress(INVENTORY_TOKEN), EOD],
+      ['1234', normalizeTokenAddress(INVENTORY_TOKEN), EOD],
     )).resolves.toMatchObject({
       rows: [{ status: 'unsupported', failure_class: 'unsupported', metadata: { roles: ['curation'] } }],
     })

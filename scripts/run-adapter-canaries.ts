@@ -1,10 +1,10 @@
 import { config as loadEnv } from 'dotenv'
-import { normalizeTokenAddress } from '../src/chains'
+import { chainNameToId, normalizeTokenAddress } from '../src/chains'
 import { createPool } from '../src/db'
 import { createHistoricalMarketPriceResolver } from '../src/historical-market'
 import { createOnchainPriceAdapters } from '../src/onchain-price-adapters'
 import { RecursivePriceEngine, type HistoricalMarketPriceResolver } from '../src/recursive-pricing'
-import { getChainClient, validateConfiguredRpcChainIds } from '../src/rpc'
+import { estimateBlockByTimestamp, getChainClient, validateConfiguredRpcChainIds } from '../src/rpc'
 import { latestClosedUtcDayEnd } from '../src/time'
 
 loadEnv()
@@ -18,6 +18,19 @@ interface AdapterCanary {
   chain: string
   token: string
 }
+
+interface HistoricalMarketCanary {
+  name: string
+  chain: string
+  token: string
+}
+
+interface ArchiveRpcCanary extends HistoricalMarketCanary {
+  chainId: number
+}
+
+const HYPEREVM_USDC = '0xb88339cb7199b77e23db6e890353e22632ba630f'
+const HYPEREVM_USDT0 = '0xb8ce59fc3717ada4c02eadf9682a9e934f625ebb'
 
 const CANARIES: AdapterCanary[] = [
   {
@@ -88,6 +101,28 @@ const CANARIES: AdapterCanary[] = [
   },
 ]
 
+const HISTORICAL_MARKET_CANARIES: HistoricalMarketCanary[] = [
+  {
+    name: 'HyperEVM USDC direct market',
+    chain: 'hyperevm',
+    token: HYPEREVM_USDC,
+  },
+  {
+    name: 'HyperEVM USDt0 direct market',
+    chain: 'hyperevm',
+    token: HYPEREVM_USDT0,
+  },
+]
+
+const ARCHIVE_RPC_CANARIES: ArchiveRpcCanary[] = [
+  {
+    name: 'HyperEVM exact historical block',
+    chain: 'hyperevm',
+    chainId: 999,
+    token: HYPEREVM_USDC,
+  },
+]
+
 function exactEodFromArgs(): number {
   const flagIndex = process.argv.indexOf('--eod')
   if (flagIndex < 0) return latestClosedUtcDayEnd()
@@ -107,6 +142,90 @@ try {
   })
   const adapters = createOnchainPriceAdapters({ clientForChain: getChainClient })
   const results: Array<Record<string, unknown>> = []
+
+  for (const canary of ARCHIVE_RPC_CANARIES) {
+    const token = normalizeTokenAddress(canary.token)
+    const chainId = chainNameToId(canary.chain)
+    const client = chainId == null ? null : getChainClient(chainId)
+    if (chainId !== canary.chainId || !client) {
+      results.push({
+        name: canary.name,
+        adapter: 'rpc-archive-block',
+        chain: canary.chain,
+        token,
+        status: 'failed',
+        failure: `RPC_URL_${canary.chainId} is not configured for a supported chain`,
+      })
+      continue
+    }
+
+    try {
+      const blockNumber = await estimateBlockByTimestamp(client, chainId, requestedTimestamp)
+      const [block, nextBlock, code] = await Promise.all([
+        client.getBlock({ blockNumber }),
+        client.getBlock({ blockNumber: blockNumber + 1n }),
+        client.getCode({ address: token, blockNumber }),
+      ])
+      const blockTimestamp = Number(block.timestamp)
+      const nextBlockTimestamp = Number(nextBlock.timestamp)
+      const archiveBracketValid = blockTimestamp <= requestedTimestamp
+        && nextBlockTimestamp > requestedTimestamp
+        && Boolean(code && code !== '0x')
+      results.push({
+        name: canary.name,
+        adapter: 'rpc-archive-block',
+        chain: canary.chain,
+        token,
+        status: archiveBracketValid ? 'passed' : 'failed',
+        eodTimestamp: requestedTimestamp,
+        blockNumber: Number(blockNumber),
+        historicalBlock: {
+          number: Number(blockNumber),
+          timestamp: blockTimestamp,
+          requestedTimestamp,
+          distanceSeconds: requestedTimestamp - blockTimestamp,
+          nextTimestamp: nextBlockTimestamp,
+        },
+        archiveBracketValid,
+        failure: archiveBracketValid ? null : 'Historical RPC did not bracket EOD with contract state',
+      })
+    } catch {
+      results.push({
+        name: canary.name,
+        adapter: 'rpc-archive-block',
+        chain: canary.chain,
+        token,
+        status: 'failed',
+        failure: 'Historical RPC block or contract-state read failed',
+      })
+    }
+  }
+
+  for (const canary of HISTORICAL_MARKET_CANARIES) {
+    const token = normalizeTokenAddress(canary.token)
+    const result = await new RecursivePriceEngine(baseMarket, [], 6).resolve({
+      chain: canary.chain,
+      token,
+      requestedTimestamp,
+    })
+    const path = result.path
+    const passed = path?.adapter === 'defillama-historical'
+      && path.classification === 'observed'
+      && path.observedTimestamp <= requestedTimestamp
+    results.push({
+      name: canary.name,
+      adapter: 'defillama-historical',
+      chain: canary.chain,
+      token,
+      status: passed ? 'passed' : 'failed',
+      eodTimestamp: requestedTimestamp,
+      priceUsd: path?.priceUsd ?? null,
+      observedTimestamp: path?.observedTimestamp ?? null,
+      classification: path?.classification ?? null,
+      quality: path?.quality ?? null,
+      failure: passed ? null : result.failure,
+    })
+  }
 
   for (const canary of CANARIES) {
     const token = normalizeTokenAddress(canary.token)

@@ -91,7 +91,7 @@ describe('TVL daily target discovery', () => {
     })
   })
 
-  test('promotes Gnosis using consumer support and keeps HyperEVM terminally unsupported', () => {
+  test('promotes Gnosis and HyperEVM using consumer support while unknown chains stay unsupported', () => {
     const discovery = parseTvlPriceTargetInventory(inventory([
       target({
         key: `100:${TOKEN}`,
@@ -106,20 +106,33 @@ describe('TVL daily target discovery', () => {
         origins: [{ type: 'vault', id: '999:curation-vault', roles: ['historical-underlying', 'curation'] }],
         support: { status: 'unsupported', reason: 'unsupported-chain', chainName: null },
       }),
+      target({
+        key: `1234:${TOKEN}`,
+        chainId: 1234,
+        roles: ['historical-underlying'],
+        origins: [{ type: 'vault', id: '1234:unknown-vault', roles: ['historical-underlying'] }],
+        support: { status: 'unsupported', reason: 'unsupported-chain', chainName: null },
+      }),
     ]), EOD, INVENTORY_URL)
 
     expect(discovery.targets).toEqual([
       expect.objectContaining({ chain: 'gnosis', token: TOKEN }),
+      expect.objectContaining({ chain: 'hyperevm', token: SECOND_TOKEN }),
     ])
     expect(discovery.targets[0].metadata).toMatchObject({
       chainId: 100,
       consumerSupport: 'supported',
       producerSupport: { status: 'unsupported' },
     })
+    expect(discovery.targets[1].metadata).toMatchObject({
+      chainId: 999,
+      consumerSupport: 'supported',
+      producerSupport: { status: 'unsupported' },
+    })
     expect(discovery.unsupportedTargets).toEqual([
       expect.objectContaining({
-        chain: '999',
-        token: SECOND_TOKEN,
+        chain: '1234',
+        token: TOKEN,
         failureReason: expect.stringContaining('no configured chain, RPC, or adapter support'),
         metadata: expect.objectContaining({ consumerSupport: 'unsupported' }),
       }),
