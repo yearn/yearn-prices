@@ -20,6 +20,21 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 const CURVE_ADDRESS_PROVIDER = '0x0000000022D53366457F9d5E68Ec105046FC4383' as Address
 const CURVE_NATIVE_TOKEN = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
 const PENDLE_ORACLE = '0x9a9Fa8338dd5E5B2188006f1Cd2Ef26d921650C2' as Address
+const YIP88_LIQUID_LOCKER_REDEMPTION = '0xba18d0df75a3ff58ef40a8fc0d3e4db74a0e681d' as Address
+const YIP88_LIQUID_LOCKERS = new Map<string, bigint>([
+  ['0x95710bde45c8d384a976cc58cc7a7e489576b098', 1n],
+  ['0xff71841eefca78a64421db28060855036765c248', 2n],
+])
+const NATIVE_SHARE_WRAPPERS: Record<number, ReadonlySet<string>> = {
+  1: new Set(['0x09db87a538bd693e9d08544577d5ccfaa6373a48']),
+}
+const RESERVE_RTOKENS: Record<number, ReadonlySet<string>> = {
+  1: new Set([
+    '0x78da5799cf427fee11e9996982f4150ece7a99a7',
+    '0xacdf0dba4b9839b96221a8487e9ca660a48212be',
+    '0xfc0b1eef20e4c68b3dcf36c4537cfa7ce46ca70b',
+  ]),
+}
 
 const WRAPPED_NATIVE: Record<number, string> = {
   1: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
@@ -54,6 +69,31 @@ const beetsBarAbi = parseAbi(['function vestingToken() view returns (address)'])
 const erc4626Abi = parseAbi([
   'function asset() view returns (address)',
   'function convertToAssets(uint256 shares) view returns (uint256)',
+  'function convertToShares(uint256 assets) view returns (uint256)',
+  'function maxDeposit(address receiver) view returns (uint256)',
+  'function previewRedeem(uint256 shares) view returns (uint256)',
+])
+const liquidLockerRedemptionAbi = parseAbi([
+  'function yfi() view returns (address)',
+  'function fee() view returns (uint256)',
+  'function tokens(uint256 index) view returns (address)',
+  'function scales(uint256 index) view returns (uint256)',
+  'function capacities(uint256 index) view returns (uint256)',
+  'function enabled(uint256 index) view returns (bool)',
+  'function used(uint256 index) view returns (uint256)',
+])
+const reserveRTokenAbi = parseAbi([
+  'function main() view returns (address)',
+  'function basketsNeeded() view returns (uint192)',
+  'function redemptionAvailable() view returns (uint256)',
+])
+const reserveMainAbi = parseAbi([
+  'function basketHandler() view returns (address)',
+  'function frozen() view returns (bool)',
+])
+const reserveBasketHandlerAbi = parseAbi([
+  'function fullyCollateralized() view returns (bool)',
+  'function quote(uint192 amount, uint8 rounding) view returns (address[] erc20s, uint256[] quantities)',
 ])
 const yearnUnderlyingAbis = [
   parseAbi(['function token() view returns (address)']),
@@ -81,7 +121,12 @@ const pairAbi = parseAbi([
 ])
 const curveMinterAbi = parseAbi(['function minter() view returns (address)'])
 const curveProviderAbi = parseAbi(['function get_address(uint256) view returns (address)'])
-const curveRegistryAbi = parseAbi(['function get_pool_from_lp_token(address) view returns (address)'])
+const curveRegistryAbi = parseAbi([
+  'function get_pool_from_lp_token(address) view returns (address)',
+  'function get_n_coins(address) view returns (uint256[2])',
+])
+const curveMetaRegistryAbi = parseAbi(['function get_n_coins(address) view returns (uint256)'])
+const curvePoolCoinCountAbi = parseAbi(['function N_COINS() view returns (uint256)'])
 const curveCoinUintAbi = parseAbi([
   'function coins(uint256) view returns (address)',
   'function balances(uint256) view returns (uint256)',
@@ -238,6 +283,291 @@ function recursiveInput(path: ResolvedPricePath, conversion: Record<string, unkn
   return { path, conversion }
 }
 
+function yip88LiquidLockerAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
+  return {
+    name: 'yip88-liquid-locker-redemption',
+    async resolve(target, context) {
+      if (target.chain !== 'ethereum') return null
+      const index = YIP88_LIQUID_LOCKERS.get(target.token.toLowerCase())
+      if (index == null) return null
+
+      const state = await contractContext(target, options)
+      const [
+        yfiRaw,
+        feeRaw,
+        facilityTokenRaw,
+        scaleRaw,
+        capacityRaw,
+        enabled,
+        usedRaw,
+        targetDecimalsRaw,
+      ] = await Promise.all([
+        state.client.readContract({ address: YIP88_LIQUID_LOCKER_REDEMPTION, abi: liquidLockerRedemptionAbi, functionName: 'yfi', blockNumber: state.blockNumber }),
+        state.client.readContract({ address: YIP88_LIQUID_LOCKER_REDEMPTION, abi: liquidLockerRedemptionAbi, functionName: 'fee', blockNumber: state.blockNumber }),
+        state.client.readContract({ address: YIP88_LIQUID_LOCKER_REDEMPTION, abi: liquidLockerRedemptionAbi, functionName: 'tokens', args: [index], blockNumber: state.blockNumber }),
+        state.client.readContract({ address: YIP88_LIQUID_LOCKER_REDEMPTION, abi: liquidLockerRedemptionAbi, functionName: 'scales', args: [index], blockNumber: state.blockNumber }),
+        state.client.readContract({ address: YIP88_LIQUID_LOCKER_REDEMPTION, abi: liquidLockerRedemptionAbi, functionName: 'capacities', args: [index], blockNumber: state.blockNumber }),
+        state.client.readContract({ address: YIP88_LIQUID_LOCKER_REDEMPTION, abi: liquidLockerRedemptionAbi, functionName: 'enabled', args: [index], blockNumber: state.blockNumber }),
+        state.client.readContract({ address: YIP88_LIQUID_LOCKER_REDEMPTION, abi: liquidLockerRedemptionAbi, functionName: 'used', args: [index], blockNumber: state.blockNumber }),
+        state.client.readContract({ address: state.address, abi: erc20Abi, functionName: 'decimals', blockNumber: state.blockNumber }),
+      ])
+      const yfi = normalizedAddress(yfiRaw)
+      const facilityToken = normalizedAddress(facilityTokenRaw)
+      if (!yfi || !facilityToken || !enabled || feeRaw >= 10n ** 18n || scaleRaw === 0n || usedRaw > capacityRaw) return null
+
+      const targetDecimals = Number(targetDecimalsRaw)
+      const oneTargetRaw = 10n ** BigInt(targetDecimals)
+      let facilityTokenAmountRaw = oneTargetRaw
+      let wrapper: Record<string, unknown> | null = null
+      if (facilityToken.toLowerCase() !== target.token.toLowerCase()) {
+        const [assetRaw, maxDepositRaw, convertedSharesRaw] = await Promise.all([
+          state.client.readContract({ address: facilityToken, abi: erc4626Abi, functionName: 'asset', blockNumber: state.blockNumber }),
+          state.client.readContract({ address: facilityToken, abi: erc4626Abi, functionName: 'maxDeposit', args: [YIP88_LIQUID_LOCKER_REDEMPTION], blockNumber: state.blockNumber }),
+          state.client.readContract({ address: facilityToken, abi: erc4626Abi, functionName: 'convertToShares', args: [oneTargetRaw], blockNumber: state.blockNumber }),
+        ])
+        const asset = normalizedAddress(assetRaw)
+        if (!asset || asset.toLowerCase() !== target.token.toLowerCase() || maxDepositRaw < oneTargetRaw || convertedSharesRaw === 0n) return null
+        facilityTokenAmountRaw = convertedSharesRaw
+        wrapper = {
+          address: facilityToken,
+          asset,
+          maxDepositRaw: rawState(maxDepositRaw),
+          convertedSharesRaw: rawState(convertedSharesRaw),
+        }
+      }
+
+      const grossYfiRaw = facilityTokenAmountRaw / scaleRaw
+      const remainingCapacityRaw = capacityRaw - usedRaw
+      const netYfiRaw = grossYfiRaw * (10n ** 18n - feeRaw) / 10n ** 18n
+      if (grossYfiRaw === 0n || grossYfiRaw > remainingCapacityRaw || netYfiRaw === 0n) return null
+
+      const [yfiDecimals, yfiLiquidityRaw] = await Promise.all([
+        tokenDecimals(state.client, yfi, state.blockNumber),
+        state.client.readContract({
+          address: yfi,
+          abi: erc20Abi,
+          functionName: 'balanceOf',
+          args: [YIP88_LIQUID_LOCKER_REDEMPTION],
+          blockNumber: state.blockNumber,
+        }),
+      ])
+      if (yfiLiquidityRaw < netYfiRaw) return null
+
+      const conversion = {
+        ...historicalBlockEvidence(state, target),
+        method: 'yip88-net-redemption',
+        valuationRule: 'enabled-capacity-and-liquidity-checked-net-redemption',
+        facility: YIP88_LIQUID_LOCKER_REDEMPTION,
+        index: index.toString(),
+        facilityToken,
+        wrapper,
+        yfi,
+        targetDecimals,
+        yfiDecimals,
+        oneTargetRaw: rawState(oneTargetRaw),
+        facilityTokenAmountRaw: rawState(facilityTokenAmountRaw),
+        scaleRaw: rawState(scaleRaw),
+        feeRaw: rawState(feeRaw),
+        grossYfiRaw: rawState(grossYfiRaw),
+        netYfiRaw: rawState(netYfiRaw),
+        capacityRaw: rawState(capacityRaw),
+        usedRaw: rawState(usedRaw),
+        remainingCapacityRaw: rawState(remainingCapacityRaw),
+        yfiLiquidityRaw: rawState(yfiLiquidityRaw),
+        references: [
+          'https://docs.yearn.fi/contributing/governance/yips/yip-88',
+          'https://github.com/yearn/stYFI/blob/master/contracts/LiquidLockerRedemption.vy',
+          'https://github.com/yearn/stYFI/blob/master/deployment.json',
+        ],
+      }
+      const input = await context.require(
+        childTarget(target, yfi, state.numericBlockNumber),
+        'YIP-88 redemption YFI',
+      )
+      return {
+        priceUsd: calculateWrapperPrice(netYfiRaw, yfiDecimals, oneTargetRaw, targetDecimals, input.priceUsd),
+        blockNumber: state.numericBlockNumber,
+        inputs: [recursiveInput(input, conversion)],
+        metadata: conversion,
+      }
+    },
+  }
+}
+
+function nativeShareAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
+  return {
+    name: 'native-share-convert-to-assets',
+    async resolve(target, context) {
+      const chainId = chainNameToId(target.chain)
+      if (chainId == null || !NATIVE_SHARE_WRAPPERS[chainId]?.has(target.token.toLowerCase())) return null
+      const nativeAsset = WRAPPED_NATIVE[chainId]
+      if (!nativeAsset) return null
+
+      const state = await contractContext(target, options)
+      const shareDecimals = await tokenDecimals(state.client, target.token, state.blockNumber)
+      const oneShareRaw = 10n ** BigInt(shareDecimals)
+      let method = 'convertToAssets'
+      let convertedAssetsRaw = await maybe(() => state.client.readContract({
+        address: state.address,
+        abi: erc4626Abi,
+        functionName: 'convertToAssets',
+        args: [oneShareRaw],
+        blockNumber: state.blockNumber,
+      }))
+      if (convertedAssetsRaw == null) {
+        method = 'previewRedeem'
+        convertedAssetsRaw = await maybe(() => state.client.readContract({
+          address: state.address,
+          abi: erc4626Abi,
+          functionName: 'previewRedeem',
+          args: [oneShareRaw],
+          blockNumber: state.blockNumber,
+        }))
+      }
+      if (convertedAssetsRaw == null || convertedAssetsRaw === 0n) return null
+
+      const conversion = {
+        ...historicalBlockEvidence(state, target),
+        method,
+        underlying: nativeAsset,
+        shareDecimals,
+        underlyingDecimals: 18,
+        oneShareRaw: rawState(oneShareRaw),
+        convertedAssetsRaw: rawState(convertedAssetsRaw),
+        valuationRule: 'allowlisted-native-share-conversion',
+      }
+      const input = await context.require(
+        childTarget(target, nativeAsset, state.numericBlockNumber),
+        'native share underlying',
+      )
+      return {
+        priceUsd: calculateWrapperPrice(
+          convertedAssetsRaw,
+          18,
+          oneShareRaw,
+          shareDecimals,
+          input.priceUsd,
+        ),
+        blockNumber: state.numericBlockNumber,
+        inputs: [recursiveInput(input, conversion)],
+        metadata: conversion,
+      }
+    },
+  }
+}
+
+function reserveRTokenAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
+  return {
+    name: 'reserve-rtoken-redemption',
+    async resolve(target, context) {
+      const chainId = chainNameToId(target.chain)
+      if (chainId == null || !RESERVE_RTOKENS[chainId]?.has(target.token.toLowerCase())) return null
+
+      const state = await contractContext(target, options)
+      const [mainRaw, tokenDecimalsRaw, totalSupplyRaw, basketsNeededRaw, redemptionAvailableRaw] = await Promise.all([
+        state.client.readContract({ address: state.address, abi: reserveRTokenAbi, functionName: 'main', blockNumber: state.blockNumber }),
+        state.client.readContract({ address: state.address, abi: erc20Abi, functionName: 'decimals', blockNumber: state.blockNumber }),
+        state.client.readContract({ address: state.address, abi: erc20Abi, functionName: 'totalSupply', blockNumber: state.blockNumber }),
+        state.client.readContract({ address: state.address, abi: reserveRTokenAbi, functionName: 'basketsNeeded', blockNumber: state.blockNumber }),
+        state.client.readContract({ address: state.address, abi: reserveRTokenAbi, functionName: 'redemptionAvailable', blockNumber: state.blockNumber }),
+      ])
+      const main = normalizedAddress(mainRaw)
+      if (!main || totalSupplyRaw === 0n || basketsNeededRaw === 0n) return null
+
+      const rTokenDecimals = Number(tokenDecimalsRaw)
+      const oneTokenRaw = 10n ** BigInt(rTokenDecimals)
+      if (redemptionAvailableRaw < oneTokenRaw) return null
+      const basketUnitsRaw = basketsNeededRaw * oneTokenRaw / totalSupplyRaw
+      if (basketUnitsRaw === 0n) return null
+
+      const [basketHandlerRaw, frozen] = await Promise.all([
+        state.client.readContract({ address: main, abi: reserveMainAbi, functionName: 'basketHandler', blockNumber: state.blockNumber }),
+        state.client.readContract({ address: main, abi: reserveMainAbi, functionName: 'frozen', blockNumber: state.blockNumber }),
+      ])
+      const basketHandler = normalizedAddress(basketHandlerRaw)
+      if (!basketHandler || frozen) return null
+
+      const fullyCollateralized = await state.client.readContract({
+        address: basketHandler,
+        abi: reserveBasketHandlerAbi,
+        functionName: 'fullyCollateralized',
+        blockNumber: state.blockNumber,
+      })
+      if (!fullyCollateralized) return null
+      const quote = await state.client.readContract({
+        address: basketHandler,
+        abi: reserveBasketHandlerAbi,
+        functionName: 'quote',
+        args: [basketUnitsRaw, 0],
+        blockNumber: state.blockNumber,
+      })
+      if (quote[0].length === 0 || quote[0].length !== quote[1].length) return null
+
+      const constituents: Array<{ address: string; amountRaw: bigint }> = []
+      for (const [index, address] of quote[0].entries()) {
+        const amountRaw = quote[1][index]
+        if (amountRaw === 0n) continue
+        const normalized = normalizedAddress(address)
+        if (!normalized) return null
+        constituents.push({ address: normalized, amountRaw })
+      }
+      if (constituents.length === 0) return null
+
+      const [decimals, inputs] = await Promise.all([
+        Promise.all(constituents.map(asset => tokenDecimals(state.client, asset.address, state.blockNumber))),
+        requireChildren(
+          context,
+          target,
+          constituents.map(asset => asset.address),
+          state.numericBlockNumber,
+          'Reserve RToken redemption constituent',
+        ),
+      ])
+      const metadata = {
+        ...historicalBlockEvidence(state, target),
+        method: 'reserve-rtoken-basket-redemption',
+        valuationRule: 'fully-collateralized-complete-redemption-basket',
+        main,
+        basketHandler,
+        tokenDecimals: rTokenDecimals,
+        oneTokenRaw: rawState(oneTokenRaw),
+        totalSupplyRaw: rawState(totalSupplyRaw),
+        basketsNeededRaw: rawState(basketsNeededRaw),
+        basketUnitsRaw: rawState(basketUnitsRaw),
+        redemptionAvailableRaw: rawState(redemptionAvailableRaw),
+        constituents: constituents.map((asset, index) => ({
+          address: asset.address,
+          decimals: decimals[index],
+          amountRaw: rawState(asset.amountRaw),
+        })),
+        references: [
+          'https://github.com/reserve-protocol/protocol/blob/master/contracts/p1/RToken.sol',
+          'https://github.com/reserve-protocol/protocol/blob/master/contracts/p1/BasketHandler.sol',
+        ],
+      }
+      return {
+        priceUsd: calculatePoolNavPrice(
+          constituents.map((asset, index) => ({
+            address: asset.address,
+            balanceRaw: asset.amountRaw,
+            decimals: decimals[index],
+            priceUsd: inputs[index].priceUsd,
+          })),
+          oneTokenRaw,
+          rTokenDecimals,
+        ),
+        blockNumber: state.numericBlockNumber,
+        inputs: inputs.map((path, index) => recursiveInput(path, {
+          method: 'reserve-rtoken-basket-redemption',
+          amountRaw: rawState(constituents[index].amountRaw),
+          decimals: decimals[index],
+        })),
+        metadata,
+      }
+    },
+  }
+}
+
 function erc4626Adapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
   return {
     name: 'erc4626-convert-to-assets',
@@ -263,20 +593,29 @@ function erc4626Adapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
 
       const shareDecimals = Number(shareDecimalsRaw)
       const oneShareRaw = 10n ** BigInt(shareDecimals)
-      const [convertedAssetsRaw, underlyingDecimals] = await Promise.all([
-        maybe(() => state.client.readContract({
+      let method = 'convertToAssets'
+      let convertedAssetsRaw = await maybe(() => state.client.readContract({
+        address: state.address,
+        abi: erc4626Abi,
+        functionName: 'convertToAssets',
+        args: [oneShareRaw],
+        blockNumber: state.blockNumber,
+      }))
+      if (convertedAssetsRaw == null) {
+        method = 'previewRedeem'
+        convertedAssetsRaw = await maybe(() => state.client.readContract({
           address: state.address,
           abi: erc4626Abi,
-          functionName: 'convertToAssets',
+          functionName: 'previewRedeem',
           args: [oneShareRaw],
           blockNumber: state.blockNumber,
-        })),
-        tokenDecimals(state.client, underlying, state.blockNumber),
-      ])
+        }))
+      }
       if (convertedAssetsRaw == null) return null
+      const underlyingDecimals = await tokenDecimals(state.client, underlying, state.blockNumber)
       const conversion = {
         ...historicalBlockEvidence(state, target),
-        method: 'convertToAssets',
+        method,
         underlying,
         shareDecimals,
         underlyingDecimals,
@@ -625,7 +964,17 @@ function pairAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
         throw new InvalidPricingError(`AMM constituent is not safely substitutable: ${JSON.stringify(blockingFailure)}`)
       }
       if (!paths[0] || !paths[1]) {
-        throw new InvalidPricingError('AMM reserve NAV requires every constituent price')
+        const unavailableConstituents = [
+          { address: token0, resolution: resolutions[0] },
+          { address: token1, resolution: resolutions[1] },
+        ].flatMap(({ address, resolution }) => (
+          resolution.path
+            ? []
+            : [{ address, failureClass: resolution.failure?.reason ?? 'unavailable' }]
+        ))
+        throw new InvalidPricingError(
+          `AMM reserve NAV requires every constituent price: ${JSON.stringify(unavailableConstituents)}`,
+        )
       }
 
       const decimals = [token0Decimals, token1Decimals]
@@ -722,6 +1071,65 @@ async function readCurveCoinAddress(
   return address ? { address, indexType: 'int128' } : null
 }
 
+interface CurveCoinCount {
+  count: number
+  source: 'pool-N_COINS' | 'curve-registry' | 'curve-metaregistry'
+}
+
+function validCurveCoinCount(value: bigint): number | null {
+  const count = Number(value)
+  return Number.isSafeInteger(count) && count > 0 && count <= 8 ? count : null
+}
+
+async function readCurveCoinCount(
+  client: PublicClient,
+  poolAddress: Address,
+  blockNumber: bigint,
+): Promise<CurveCoinCount | null> {
+  const direct = await maybe(() => client.readContract({
+    address: poolAddress,
+    abi: curvePoolCoinCountAbi,
+    functionName: 'N_COINS',
+    blockNumber,
+  }))
+  const directCount = direct == null ? null : validCurveCoinCount(direct)
+  if (directCount != null) return { count: directCount, source: 'pool-N_COINS' }
+
+  for (let registryId = 0; registryId <= 12; registryId += 1) {
+    const registryRaw = await maybe(() => client.readContract({
+      address: CURVE_ADDRESS_PROVIDER,
+      abi: curveProviderAbi,
+      functionName: 'get_address',
+      args: [BigInt(registryId)],
+      blockNumber,
+    }))
+    if (!registryRaw) continue
+    const registry = normalizedAddress(registryRaw)
+    if (!registry) continue
+
+    const registryCounts = await maybe(() => client.readContract({
+      address: registry,
+      abi: curveRegistryAbi,
+      functionName: 'get_n_coins',
+      args: [poolAddress],
+      blockNumber,
+    }))
+    const registryCount = registryCounts == null ? null : validCurveCoinCount(registryCounts[0])
+    if (registryCount != null) return { count: registryCount, source: 'curve-registry' }
+
+    const metaRegistryCountRaw = await maybe(() => client.readContract({
+      address: registry,
+      abi: curveMetaRegistryAbi,
+      functionName: 'get_n_coins',
+      args: [poolAddress],
+      blockNumber,
+    }))
+    const metaRegistryCount = metaRegistryCountRaw == null ? null : validCurveCoinCount(metaRegistryCountRaw)
+    if (metaRegistryCount != null) return { count: metaRegistryCount, source: 'curve-metaregistry' }
+  }
+  return null
+}
+
 async function resolveCurvePool(
   target: RecursivePriceTarget,
   state: HistoricalContractContext,
@@ -747,15 +1155,19 @@ function curveAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
       const state = await contractContext(target, options)
       const poolAddress = await resolveCurvePool(target, state)
       if (!poolAddress) return null
+      const coinCount = await readCurveCoinCount(state.client, poolAddress as Address, state.blockNumber)
+      if (!coinCount) return null
       const coins: CurveCoin[] = []
-      for (let index = 0; index < 8; index += 1) {
+      for (let index = 0; index < coinCount.count; index += 1) {
         const coin = await readCurveCoinAddress(
           state.client,
           poolAddress as Address,
           index,
           state.blockNumber,
         )
-        if (!coin) break
+        if (!coin) {
+          throw new InvalidPricingError(`Curve coin ${index} is unavailable despite authoritative count ${coinCount.count}`)
+        }
         const pricingAddress = coin.address.toLowerCase() === CURVE_NATIVE_TOKEN
           ? WRAPPED_NATIVE[state.chainId]
           : coin.address
@@ -795,6 +1207,8 @@ function curveAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
       const metadata = {
         ...historicalBlockEvidence(state, target),
         poolAddress,
+        coinCount: coinCount.count,
+        coinCountSource: coinCount.source,
         valuationRule: 'all-constituents-required',
         totalSupplyRaw: rawState(totalSupplyRaw),
         poolDecimals,
@@ -979,6 +1393,9 @@ export function createOnchainPriceAdapters(options: OnchainAdapterOptions): Recu
     throw new Error('Pendle TWAP seconds must fit uint32 and be positive')
   }
   return [
+    yip88LiquidLockerAdapter(options),
+    nativeShareAdapter(options),
+    reserveRTokenAdapter(options),
     beetsBarAdapter(options),
     erc4626Adapter(options),
     yearnShareAdapter(options),

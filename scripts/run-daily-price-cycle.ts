@@ -121,7 +121,10 @@ try {
     batchConcurrency: optionalInteger(process.env.PRICE_MARKET_BATCH_CONCURRENCY, 'PRICE_MARKET_BATCH_CONCURRENCY', 1),
     batchDelayMs: optionalNonNegativeInteger(process.env.PRICE_MARKET_BATCH_DELAY_MS, 'PRICE_MARKET_BATCH_DELAY_MS', 250),
   })
-  const adapters = createOnchainPriceAdapters({ clientForChain: getChainClient })
+  const adapters = createOnchainPriceAdapters({
+    clientForChain: getChainClient,
+    pendleTwapSeconds: optionalNumber(process.env.PRICE_PENDLE_TWAP_SECONDS),
+  })
   const resolver = new RecursivePriceEngine(
     marketPrice,
     adapters,

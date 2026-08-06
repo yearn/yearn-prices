@@ -23,6 +23,8 @@ export interface DefiLlamaCoinGeckoAlias {
 const MULTICHAIN_INCIDENT_REFERENCE = 'https://blog.fantom.foundation/fantom-foundation-awarded-default-judgement-against-multichain/'
 const MULTICHAIN_FANTOM_BRIDGE_REFERENCE = 'https://etherscan.io/address/0xc564ee9f21ed8a2d8e7e76c085740d5e4c5fafbe'
 const OPTIMISM_TOKEN_LIST_REFERENCE = 'https://github.com/ethereum-optimism/ethereum-optimism.github.io/blob/master/optimism.tokenlist.json'
+const ABRACADABRA_OMNICHAIN_MIM_REFERENCE = 'https://dev.abracadabra.money/token-related/omnichain-mim'
+const COINGECKO_OPTIMISM_MIM_REFERENCE = 'https://api.coingecko.com/api/v3/coins/optimistic-ethereum/contract/0xb153fb3d196a8eb25522705560ac152eeec57901'
 
 function optimismAlias(
   input: Pick<DefiLlamaCoinGeckoAlias, 'token' | 'identifier' | 'rationale'>,
@@ -77,6 +79,20 @@ const ALIASES: readonly DefiLlamaCoinGeckoAlias[] = [
     identifier: 'coingecko:usd-coin',
     rationale: 'The requested Optimism contract is native USDC; use the USDC CoinGecko market only after a direct contract lookup misses.',
   }),
+  {
+    chain: 'optimism',
+    token: normalizeTokenAddress('0xb153fb3d196a8eb25522705560ac152eeec57901'),
+    identifier: 'coingecko:magic-internet-money-optimism',
+    kind: 'coingecko-alias',
+    bridgeIssuer: 'Abracadabra omnichain MIM',
+    assumption: 'provider-identifier-alias-after-direct-market-miss',
+    rationale: 'Abracadabra identifies the requested Optimism contract as omnichain MIM, and CoinGecko maps that exact chain and contract to its Optimism MIM market.',
+    references: [
+      OPTIMISM_TOKEN_LIST_REFERENCE,
+      ABRACADABRA_OMNICHAIN_MIM_REFERENCE,
+      COINGECKO_OPTIMISM_MIM_REFERENCE,
+    ],
+  },
   fantomProxy({
     token: normalizeTokenAddress('0x04068da6c83afcfa0e13ba15a6696662335d5b75'),
     identifier: 'coingecko:usd-coin',

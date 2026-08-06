@@ -48,13 +48,13 @@ describe('daily price queue', () => {
     })
   })
 
-  test('records configured unsupported-chain targets terminally and idempotently', async () => {
+  test('records unknown-chain targets terminally and idempotently', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [{ id: 9 }] })
     const target = {
-      chain: '999',
+      chain: '1234',
       token: TOKEN,
       eodTimestamp: EOD,
-      failureReason: 'yearn-prices does not support HyperEVM',
+      failureReason: 'yearn-prices does not support chain 1234',
       metadata: { roles: ['curation'] },
     }
 
@@ -70,10 +70,10 @@ describe('daily price queue', () => {
     expect(sql).toContain('ON CONFLICT (chain, token, eod_at) DO UPDATE SET')
     expect(sql).toContain("daily_price_targets.status <> 'priced'")
     expect(params).toEqual([
-      '999',
+      '1234',
       TOKEN,
       '2024-01-01T23:59:59.000Z',
-      'yearn-prices does not support HyperEVM',
+      'yearn-prices does not support chain 1234',
       JSON.stringify({ roles: ['curation'] }),
     ])
   })

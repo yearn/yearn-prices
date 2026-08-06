@@ -23,6 +23,7 @@
     "daily:cycle": "bun run scripts/run-daily-price-cycle.ts",
     "daily:status": "bun run scripts/daily-price-status.ts",
     "daily:report": "bun run scripts/daily-coverage-report.ts",
+    "daily:export": "bun run scripts/export-daily-price-evidence.ts",
     "daily:canaries": "bun run scripts/run-adapter-canaries.ts"
   },
   "dependencies": {

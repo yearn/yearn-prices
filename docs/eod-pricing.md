@@ -83,7 +83,10 @@ The worker first queries the requested chain/token identifier from DefiLlama at 
 
 If direct evidence is unavailable, the recursive engine tries historical on-chain adapters at the block at or before EOD:
 
-- ERC-4626 `convertToAssets`;
+- ERC-4626 `convertToAssets`, with the standard `previewRedeem` fallback when conversion is unavailable;
+- allow-listed YIP-88 liquid-locker net redemption, gated by exact-block fee, enabled status, capacity, wrapper conversion, and YFI liquidity;
+- allow-listed native-asset shares using their exact `convertToAssets` or `previewRedeem` rate and the wrapped-native dependency;
+- allow-listed Reserve RTokens using the exact complete redemption basket, only while unfrozen, fully collateralized, and redeemable for at least one token;
 - Yearn vault share rates;
 - Compound and Iron Bank exchange rates;
 - Aave underlying parity;
@@ -95,7 +98,9 @@ If direct evidence is unavailable, the recursive engine tries historical on-chai
 
 Every derived result retains its inputs and inherits the weakest input quality. Recursion has cycle detection and an explicit depth bound.
 
-Pool NAV requires every constituent used by the formula. The service does not use Curve `virtual_price × coin0`, single-sided reserve ratios, or assumed stablecoin pegs.
+Pool NAV requires every constituent used by the formula. Curve pricing also requires an authoritative pool coin count
+from the pool or a historical Curve registry; an ambiguous coin read fails closed instead of valuing a discovered
+prefix. The service does not use Curve `virtual_price × coin0`, single-sided reserve ratios, or assumed stablecoin pegs.
 
 ## Operations
 
@@ -119,20 +124,29 @@ bun run daily:cycle
 bun run daily:status
 bun run daily:canaries
 bun run daily:report
+bun run daily:export -- --eod 1785887999 --expected-targets 703 --output /tmp/evidence.json
 ```
 
 `daily:canaries` forces representative live contracts through each registered on-chain adapter at the latest closed
-EOD block, including separate Compound and Iron Bank exchange-rate cases. `daily:report` emits the final chain, asset
+EOD block, including separate Compound and Iron Bank exchange-rate cases. It also proves the HyperEVM archive RPC
+brackets the requested EOD and that both authoritative chain-999 assets have observed, at-or-before-EOD market paths.
+`daily:report` emits the final chain, asset
 role, source, adapter, classification, quality, terminal outcome, failure, alias, and incident-proxy breakdown without
 exposing provider URLs.
+
+`daily:export` fails unless the exact requested day has the expected target count, every target is terminal, and
+every priced target references validated evidence. Its deterministic, secret-free JSON contains one ordered record
+per target, selected and alternate candidate evidence, recursive inputs, terminal failure information, and allowlisted
+inventory provenance. Existing output files are never overwritten.
 
 The authenticated progress API is `GET /api/daily-prices/progress`. Queue mutation requests require the separate
 operator key.
 
 Production orchestration lives in `.github/workflows/daily-eod.yml`, scheduled for 00:30 UTC. Configure the repository
-Actions variable `TVL_PRICE_TARGET_INVENTORY_URL` to an HTTP(S) export of the yearn-tvl-service
-`tvl-price-target-inventory` schema. Schema major `1` is accepted; unknown majors fail closed. The service downloads at
-most 10 MiB and never vendors a static snapshot.
+Actions variable `TVL_PRICE_TARGET_INVENTORY_URL` to an HTTPS export of the yearn-tvl-service
+`tvl-price-target-inventory` schema. Plain HTTP is accepted only on loopback for disposable local validation. Schema
+major `1` is accepted; unknown majors fail closed. The service aborts stalled downloads after 30 seconds and streams
+at most 10 MiB before parsing; it never vendors a static snapshot.
 
 Valid rows are normalized and deduplicated by chain id and address. Roles, current/historical requirements, producer
 support, source state, and every vault/product origin remain in target metadata. Duplicate roles and origins are merged
@@ -140,13 +154,13 @@ in schema order, making repeated discovery for the same inventory/day determinis
 Malformed target rows and producer `invalid` problems are logged explicitly; valid targets still run to terminal
 outcomes before the cycle fails to alert operators.
 
-Consumer capability is authoritative for scheduling. Gnosis chain `100` is supported by yearn-prices: it is present in
-the chain registry, the production workflow loads `RPC_URL_100`, and generic historical market/on-chain resolution is
-available. The two Gnosis inventory targets are therefore scheduled even while the producer artifact labels them
-unsupported. HyperEVM chain `999` has no yearn-prices chain mapping, RPC configuration, or adapter support. Its two
-inventory targets are retained under numeric chain key `999` and inserted directly as durable `unsupported` outcomes;
-they never enter the worker and are never converted to zero. If support is later added, the producer artifact and this
-policy must be updated together.
+Consumer capability is authoritative for scheduling. Gnosis chain `100` and HyperEVM chain `999` are supported by
+yearn-prices: both are present in the chain registry and production secret routing, and valid targets enter generic
+historical market/on-chain resolution even while the producer artifact labels them unsupported. HyperEVM's two
+authoritative targets are USDC and USDt0 direct markets; neither is treated as a wrapper or assigned an automatic peg.
+The chain-999 canary requires an exact historical block bracket with contract state plus observed market evidence at or
+before EOD. Unknown chains remain durable `unsupported` outcomes. DAT-5 must align its chain-999 producer capability
+metadata after this consumer support is integrated.
 
 A manual workflow dispatch may select a reviewed closed `YYYY-MM-DD` day. The cycle fails if discovery is empty, if any
 queue work remains pending/in-progress/retryable, or if the inventory reports malformed/invalid producer coverage.
@@ -161,6 +175,7 @@ The shared chain registry remains authoritative:
 - Polygon
 - Sonic
 - Fantom
+- HyperEVM
 - Base
 - Arbitrum
 - Berachain

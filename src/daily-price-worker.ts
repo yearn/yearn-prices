@@ -16,6 +16,7 @@ import {
   type DailyPriceProgressSnapshot,
   type DailyPriceTarget,
 } from './daily-prices'
+import { sanitizeFailureReason } from './daily-price-progress'
 import { insertTokenPrices } from './queries'
 import {
   isRetryablePricingError,
@@ -154,7 +155,7 @@ function failureReason(result: Extract<RecursivePriceResult, { path: null }>): s
       : `Recursive resolution failed: ${result.failure.reason}`
   }
   return result.failure.attempts
-    .map(attempt => `${attempt.adapter} (${attempt.reason}): ${attempt.error}`)
+    .map(attempt => `${attempt.adapter} (${attempt.reason}): ${sanitizeFailureReason(attempt.error) ?? 'Unknown pricing error'}`)
     .join('; ')
 }
 
@@ -190,6 +191,7 @@ function failureOutcome(
     resolutionFailure: result.failure.reason,
     resolutionAttempts: result.failure.attempts.map(attempt => ({
       ...attempt,
+      error: sanitizeFailureReason(attempt.error) ?? 'Unknown pricing error',
       adapterVersion: failureAdapterVersion(attempt.adapter),
     })),
     adapterVersion,
