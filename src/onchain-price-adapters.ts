@@ -121,7 +121,12 @@ const pairAbi = parseAbi([
 ])
 const curveMinterAbi = parseAbi(['function minter() view returns (address)'])
 const curveProviderAbi = parseAbi(['function get_address(uint256) view returns (address)'])
-const curveRegistryAbi = parseAbi(['function get_pool_from_lp_token(address) view returns (address)'])
+const curveRegistryAbi = parseAbi([
+  'function get_pool_from_lp_token(address) view returns (address)',
+  'function get_n_coins(address) view returns (uint256[2])',
+])
+const curveMetaRegistryAbi = parseAbi(['function get_n_coins(address) view returns (uint256)'])
+const curvePoolCoinCountAbi = parseAbi(['function N_COINS() view returns (uint256)'])
 const curveCoinUintAbi = parseAbi([
   'function coins(uint256) view returns (address)',
   'function balances(uint256) view returns (uint256)',
@@ -1066,6 +1071,65 @@ async function readCurveCoinAddress(
   return address ? { address, indexType: 'int128' } : null
 }
 
+interface CurveCoinCount {
+  count: number
+  source: 'pool-N_COINS' | 'curve-registry' | 'curve-metaregistry'
+}
+
+function validCurveCoinCount(value: bigint): number | null {
+  const count = Number(value)
+  return Number.isSafeInteger(count) && count > 0 && count <= 8 ? count : null
+}
+
+async function readCurveCoinCount(
+  client: PublicClient,
+  poolAddress: Address,
+  blockNumber: bigint,
+): Promise<CurveCoinCount | null> {
+  const direct = await maybe(() => client.readContract({
+    address: poolAddress,
+    abi: curvePoolCoinCountAbi,
+    functionName: 'N_COINS',
+    blockNumber,
+  }))
+  const directCount = direct == null ? null : validCurveCoinCount(direct)
+  if (directCount != null) return { count: directCount, source: 'pool-N_COINS' }
+
+  for (let registryId = 0; registryId <= 12; registryId += 1) {
+    const registryRaw = await maybe(() => client.readContract({
+      address: CURVE_ADDRESS_PROVIDER,
+      abi: curveProviderAbi,
+      functionName: 'get_address',
+      args: [BigInt(registryId)],
+      blockNumber,
+    }))
+    if (!registryRaw) continue
+    const registry = normalizedAddress(registryRaw)
+    if (!registry) continue
+
+    const registryCounts = await maybe(() => client.readContract({
+      address: registry,
+      abi: curveRegistryAbi,
+      functionName: 'get_n_coins',
+      args: [poolAddress],
+      blockNumber,
+    }))
+    const registryCount = registryCounts == null ? null : validCurveCoinCount(registryCounts[0])
+    if (registryCount != null) return { count: registryCount, source: 'curve-registry' }
+
+    const metaRegistryCountRaw = await maybe(() => client.readContract({
+      address: registry,
+      abi: curveMetaRegistryAbi,
+      functionName: 'get_n_coins',
+      args: [poolAddress],
+      blockNumber,
+    }))
+    const metaRegistryCount = metaRegistryCountRaw == null ? null : validCurveCoinCount(metaRegistryCountRaw)
+    if (metaRegistryCount != null) return { count: metaRegistryCount, source: 'curve-metaregistry' }
+  }
+  return null
+}
+
 async function resolveCurvePool(
   target: RecursivePriceTarget,
   state: HistoricalContractContext,
@@ -1091,15 +1155,19 @@ function curveAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
       const state = await contractContext(target, options)
       const poolAddress = await resolveCurvePool(target, state)
       if (!poolAddress) return null
+      const coinCount = await readCurveCoinCount(state.client, poolAddress as Address, state.blockNumber)
+      if (!coinCount) return null
       const coins: CurveCoin[] = []
-      for (let index = 0; index < 8; index += 1) {
+      for (let index = 0; index < coinCount.count; index += 1) {
         const coin = await readCurveCoinAddress(
           state.client,
           poolAddress as Address,
           index,
           state.blockNumber,
         )
-        if (!coin) break
+        if (!coin) {
+          throw new InvalidPricingError(`Curve coin ${index} is unavailable despite authoritative count ${coinCount.count}`)
+        }
         const pricingAddress = coin.address.toLowerCase() === CURVE_NATIVE_TOKEN
           ? WRAPPED_NATIVE[state.chainId]
           : coin.address
@@ -1139,6 +1207,8 @@ function curveAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
       const metadata = {
         ...historicalBlockEvidence(state, target),
         poolAddress,
+        coinCount: coinCount.count,
+        coinCountSource: coinCount.source,
         valuationRule: 'all-constituents-required',
         totalSupplyRaw: rawState(totalSupplyRaw),
         poolDecimals,

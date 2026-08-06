@@ -5,6 +5,7 @@ import {
   priceCandidateId,
 } from './candidate-identity'
 import { selectEodPriceEvidence, type PriceEvidenceSelectionOptions } from './evidence'
+import { sanitizeFailureReason } from './daily-price-progress'
 import { normalizeToEndOfDay } from './time'
 import type {
   PriceEvidenceCandidate,
@@ -175,7 +176,7 @@ function normalizeTarget(target: RecursivePriceTarget): RecursivePriceTarget {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return sanitizeFailureReason(error instanceof Error ? error.message : String(error)) ?? 'Unknown pricing error'
 }
 
 export function isRetryablePricingError(error: unknown): boolean {

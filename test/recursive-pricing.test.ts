@@ -320,6 +320,22 @@ describe('recursive historical pricing', () => {
     expect(isRetryablePricingError(new Error('Contract reverted and returned no data'))).toBe(false)
   })
 
+  test('redacts credential-bearing provider errors before retaining resolution attempts', async () => {
+    const secretUrl = 'https://rpc-user:rpc-pass@rpc.example/v1/project-secret?apiKey=query-secret'
+    const engine = new RecursivePriceEngine(async () => {
+      throw new RetryablePricingError(`HTTP request failed. URL: ${secretUrl}`)
+    }, [])
+
+    const result = await engine.resolve(target())
+    const retainedError = result.failure?.attempts[0]?.error ?? ''
+
+    expect(result).toMatchObject({ path: null, failure: { reason: 'retryable' } })
+    expect(retainedError).toContain('<redacted-url>')
+    for (const secret of ['rpc-user', 'rpc-pass', 'project-secret', 'query-secret']) {
+      expect(retainedError).not.toContain(secret)
+    }
+  })
+
   test('reuses successful paths without reusing state across timestamps', async () => {
     let calls = 0
     const engine = new RecursivePriceEngine(async priceTarget => {

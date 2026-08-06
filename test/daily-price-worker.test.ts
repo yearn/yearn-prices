@@ -160,6 +160,33 @@ describe('daily price target processor', () => {
     })
   })
 
+  test('redacts credential-bearing resolution attempts before persistence', async () => {
+    const recordOutcome = vi.fn().mockResolvedValue(undefined)
+    const resolver: DailyPriceResolver = {
+      resolve: vi.fn().mockResolvedValue({
+        path: null,
+        failure: {
+          reason: 'retryable',
+          token: TOKEN,
+          attempts: [{
+            adapter: 'historical-market-price',
+            reason: 'retryable',
+            error: 'HTTP request failed for https://rpc-user:rpc-pass@rpc.example/project-secret?token=query-secret',
+          }],
+        },
+      }),
+    }
+
+    const outcome = await processDailyPriceTarget(pool, resolver, target(), {}, { recordOutcome })
+    const serialized = JSON.stringify(outcome)
+
+    expect(serialized).toContain('<redacted-url>')
+    for (const secret of ['rpc-user', 'rpc-pass', 'project-secret', 'query-secret']) {
+      expect(serialized).not.toContain(secret)
+    }
+    expect(recordOutcome).toHaveBeenCalledWith(pool, 1, 1, outcome)
+  })
+
   test('persists distinct competing candidates before recording canonical selection', async () => {
     const insertPrices = vi.fn().mockResolvedValue(undefined)
     const recordOutcome = vi.fn().mockResolvedValue(undefined)

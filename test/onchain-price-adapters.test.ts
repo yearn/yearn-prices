@@ -779,6 +779,7 @@ describe('pool and LP price adapters', () => {
     const client = {
       async readContract(request: { address: string; functionName: string; args?: readonly bigint[] }) {
         if (request.address.toLowerCase() === WRAPPER.toLowerCase() && request.functionName === 'minter') return POOL
+        if (request.address.toLowerCase() === POOL.toLowerCase() && request.functionName === 'N_COINS') return 2n
         if (request.address.toLowerCase() === POOL.toLowerCase() && request.functionName === 'coins') {
           if (request.args?.[0] === 0n) return UNDERLYING
           if (request.args?.[0] === 1n) return SECOND_UNDERLYING
@@ -815,6 +816,37 @@ describe('pool and LP price adapters', () => {
       [UNDERLYING.toLowerCase()]: 1,
     }).resolve(target())
     expect(incomplete).toMatchObject({ path: null, failure: { reason: 'unsupported' } })
+  })
+
+  test('fails closed when a Curve coin read contradicts the authoritative count', async () => {
+    const client = {
+      async readContract(request: { address: string; functionName: string; args?: readonly bigint[] }) {
+        if (request.address.toLowerCase() === WRAPPER.toLowerCase() && request.functionName === 'minter') return POOL
+        if (request.address.toLowerCase() === POOL.toLowerCase() && request.functionName === 'N_COINS') return 2n
+        if (request.address.toLowerCase() === POOL.toLowerCase() && request.functionName === 'coins') {
+          if (request.args?.[0] === 0n) return UNDERLYING
+          throw new Error('unexpected historical coin read failure')
+        }
+        if (request.address.toLowerCase() === POOL.toLowerCase() && request.functionName === 'balances') {
+          return 100n * 10n ** 6n
+        }
+        if (request.functionName === 'decimals') return 6
+        throw new Error('method unavailable')
+      },
+    } as unknown as PublicClient
+
+    const result = await poolEngine(client, { [UNDERLYING.toLowerCase()]: 1 }).resolve(target())
+
+    expect(result).toMatchObject({
+      path: null,
+      failure: {
+        reason: 'invalid',
+        attempts: [{
+          adapter: 'curve-reserve-nav',
+          error: 'Curve coin 1 is unavailable despite authoritative count 2',
+        }],
+      },
+    })
   })
 
   test('validates the explicit Pendle TWAP window', () => {

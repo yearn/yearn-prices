@@ -9,7 +9,13 @@ describe('daily evidence export', () => {
       {
         chain: 'hyperevm', token: '0xB8', eod_at: new Date(EOD * 1000), status: 'priced',
         adapter: 'defillama-historical', failure_class: null, failure_reason: null,
-        metadata: { chainId: 999, candidateId: 'market', roles: ['vault-asset'], producerSupport: 'unsupported-chain' },
+        metadata: {
+          chainId: 999,
+          candidateId: 'market',
+          roles: ['vault-asset'],
+          consumerSupport: 'supported',
+          producerSupport: { status: 'unsupported', reason: 'unsupported-chain', chainName: null },
+        },
       },
       {
         chain: 'ethereum', token: '0xA1', eod_at: new Date(EOD * 1000), status: 'unsupported',
@@ -38,7 +44,10 @@ describe('daily evidence export', () => {
       classification: 'observed',
       quality: 'near-eod',
       validationState: 'validated',
-      inventory: { producerSupport: 'unsupported-chain' },
+      inventory: {
+        consumerSupport: 'supported',
+        producerSupport: { status: 'unsupported', reason: 'unsupported-chain', chainName: null },
+      },
     })
     expect(JSON.stringify(result)).toBe(JSON.stringify(buildDailyEvidenceExport(EOD, targets, candidates)))
   })

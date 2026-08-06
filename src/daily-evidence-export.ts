@@ -42,6 +42,22 @@ function safeArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : []
 }
 
+function producerSupportEvidence(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value) || (value.status !== 'supported' && value.status !== 'unsupported')) return null
+  const optionalString = (field: unknown): string | null | undefined => (
+    field === null ? null : typeof field === 'string' ? field.slice(0, 200) : undefined
+  )
+  return {
+    status: value.status,
+    ...(optionalString(value.reason) !== undefined ? { reason: optionalString(value.reason) } : {}),
+    ...(optionalString(value.chainName) !== undefined ? { chainName: optionalString(value.chainName) } : {}),
+    ...(optionalString(value.defillamaPrefix) !== undefined
+      ? { defillamaPrefix: optionalString(value.defillamaPrefix) }
+      : {}),
+    ...(optionalString(value.adapter) !== undefined ? { adapter: optionalString(value.adapter) } : {}),
+  }
+}
+
 function nullableNumber(value: string | number | bigint | null): number | null {
   if (value == null) return null
   const parsed = Number(value)
@@ -122,7 +138,7 @@ export function buildDailyEvidenceExport(
         roles: safeArray(metadata.roles),
         requirements: safeArray(metadata.requirements),
         origins: safeArray(metadata.origins),
-        producerSupport: typeof metadata.producerSupport === 'string' ? metadata.producerSupport : null,
+        producerSupport: producerSupportEvidence(metadata.producerSupport),
         consumerSupport: typeof metadata.consumerSupport === 'string' ? metadata.consumerSupport : null,
       },
       candidates: rows.map(candidateEvidence),
