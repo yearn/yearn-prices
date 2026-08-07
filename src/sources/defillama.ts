@@ -23,7 +23,10 @@ export function createDefiLlamaHistoricalSource(
         !priceData ||
         typeof priceData.price !== 'number' ||
         !Number.isFinite(priceData.price) ||
-        priceData.price <= 0
+        priceData.price <= 0 ||
+        typeof priceData.timestamp !== 'number' ||
+        !Number.isFinite(priceData.timestamp) ||
+        priceData.timestamp <= 0
       ) {
         return null
       }
@@ -33,7 +36,6 @@ export function createDefiLlamaHistoricalSource(
         timestamp: priceData.timestamp,
         symbol: priceData.symbol ?? null,
         confidence: priceData.confidence ?? null,
-        source: 'defillama',
       }
     },
   }

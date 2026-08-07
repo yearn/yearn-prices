@@ -5,7 +5,7 @@ import type { HistoricalPrice, HistoricalPriceSource } from '../sources/types'
 
 import type { Env } from '../types'
 
-export function createHistoricalSources(env?: Env | object): HistoricalPriceSource[] {
+export function createHistoricalSources(_env?: Env): HistoricalPriceSource[] {
   return [createDefiLlamaHistoricalSource(new DefiLlamaClient())]
 }
 
@@ -69,9 +69,9 @@ export class HistoricalSourceRegistry {
 
 let historicalRegistryInstance: HistoricalSourceRegistry | null = null
 
-export function getHistoricalSourceRegistry(env?: object): HistoricalSourceRegistry {
+export function getHistoricalSourceRegistry(env?: Env): HistoricalSourceRegistry {
   if (!historicalRegistryInstance) {
-    historicalRegistryInstance = new HistoricalSourceRegistry(createHistoricalSources(env ?? {}))
+    historicalRegistryInstance = new HistoricalSourceRegistry(createHistoricalSources(env))
   }
   return historicalRegistryInstance
 }
