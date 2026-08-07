@@ -1,7 +1,15 @@
 import type { Pool } from '@neondatabase/serverless'
-import { SOURCE_PRIORITY, type DbPriceRow, type ExactPriceRecord, type HistoricalRequestTuple, type PriceSource, type RangeRequest, type TokenPriceWrite } from './types'
-import { optionalResponseNumber, toResponseNumber } from './format'
-import { pgTimestampToUnix, unixToIsoTimestamp, isTodayNormalized } from './time'
+import type {
+  DbPriceRow,
+  ExactPriceRecord,
+  HistoricalRequestTuple,
+  PriceSource,
+  RangeRequest,
+  TokenPriceWrite,
+} from '../types'
+import { SOURCE_PRIORITY } from '../types'
+import { optionalResponseNumber, toResponseNumber } from '../utils/format'
+import { isTodayNormalized, pgTimestampToUnix, unixToIsoTimestamp } from '../utils/time'
 
 function buildSourceCaseExpression(column = 'tp.source'): string {
   return `CASE ${column} ${SOURCE_PRIORITY.map((source, index) => `WHEN '${source}' THEN ${index + 1}`).join(' ')} ELSE 999 END`
@@ -137,7 +145,7 @@ export async function getExistingExactTimestamps(
   }
 
   const rows = await getBatchHistoricalPrices(pool, requests, source)
-  return new Set(rows.map(row => `${row.chain}:${row.token}:${row.timestamp}`))
+  return new Set(rows.map((row) => `${row.chain}:${row.token}:${row.timestamp}`))
 }
 
 export async function insertTokenPrices(pool: Pool, rows: TokenPriceWrite[]): Promise<void> {
@@ -146,8 +154,8 @@ export async function insertTokenPrices(pool: Pool, rows: TokenPriceWrite[]): Pr
   }
 
   const dedupedRows = dedupeTokenPriceWrites(rows)
-  const immutableRows = dedupedRows.filter(row => !isTodayNormalized(row.timestamp))
-  const mutableRows = dedupedRows.filter(row => isTodayNormalized(row.timestamp))
+  const immutableRows = dedupedRows.filter((row) => !isTodayNormalized(row.timestamp))
+  const mutableRows = dedupedRows.filter((row) => isTodayNormalized(row.timestamp))
 
   await insertRows(pool, immutableRows, false)
   await insertRows(pool, mutableRows, true)

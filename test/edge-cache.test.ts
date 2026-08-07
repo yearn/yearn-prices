@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canonicalCacheKey } from '../src/edge-cache'
+import { canonicalCacheKey } from '../src/cache'
 
 const BASE = 'https://svc/api/prices/spot'
 

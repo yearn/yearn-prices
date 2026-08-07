@@ -1,4 +1,4 @@
-import type { ErrorBody } from './types'
+import type { ErrorBody } from '../types'
 
 export type ErrorCode =
   | 'INVALID_INPUT'

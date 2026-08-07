@@ -1,7 +1,7 @@
-import { ApiError } from './errors'
+import { ApiError } from '../http/errors'
 
 function sleep(milliseconds: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, milliseconds))
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
 export class SlidingWindowRateLimiter {
@@ -31,12 +31,10 @@ export class SlidingWindowRateLimiter {
 }
 
 export interface FetchJsonConfig {
-  // Used in error messages and retry logs.
   service: string
-  rateLimiter: SlidingWindowRateLimiter
+  rateLimiter?: SlidingWindowRateLimiter
   headers?: Record<string, string>
   onRetry?: (attempt: number, delayMs: number, url: string, status: number) => void
-  // When true, a 404 becomes a typed NOT_FOUND ApiError instead of a retryable/internal error.
   notFoundAsError?: boolean
 }
 
@@ -44,10 +42,12 @@ const RETRY_DELAYS = [1000, 2000, 4000]
 
 export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig): Promise<T> {
   for (let attempt = 0; attempt < RETRY_DELAYS.length; attempt += 1) {
-    await config.rateLimiter.waitTurn()
+    if (config.rateLimiter) {
+      await config.rateLimiter.waitTurn()
+    }
     const response = await fetch(url, config.headers ? { headers: config.headers } : undefined)
     if (response.ok) {
-      return await response.json() as T
+      return (await response.json()) as T
     }
 
     if (config.notFoundAsError && response.status === 404) {

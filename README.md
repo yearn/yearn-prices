@@ -41,6 +41,57 @@ bun run dev
 
 Full route reference, request/response shapes, error codes, and caching behavior are documented in [`docs/routes.md`](docs/routes.md).
 
+## Price sources
+
+Prices are fetched through a pluggable source layer that tries providers in priority order until one returns a result. Currently:
+
+- **Spot prices**: Enso (live prices for any token on supported chains)
+- **Historical prices**: DefiLlama (single-token lookups on DB miss; fallback to upstream only when DB has no record)
+
+Batch and range historical endpoints remain DB-only (a registry fallback inside a large batch would generate many upstream requests).
+
+### Adding a new price source
+
+To add a new price source plugin (e.g. CoinGecko, Pyth, custom adapter):
+
+1. **Create the source adapter** in `src/sources/<name>.ts`:
+   Implement `SpotPriceSource` and/or `HistoricalPriceSource` interface from `src/sources/types.ts`:
+   ```ts
+   import type { SpotPriceSource } from './types'
+
+   export function createMySpotSource(): SpotPriceSource {
+     return {
+       name: 'my-source',
+       priority: 20, // lower number = higher priority (tried first)
+       supports: (chainId: number) => chainId === 1,
+       async getSpotPrice(chainId: number, token: string) {
+         // return { price, timestamp, symbol, confidence } or null if not found
+       },
+     }
+   }
+   ```
+
+2. **Export the source** in [`src/sources/index.ts`](src/sources/index.ts):
+   ```ts
+   export { createMySpotSource } from './my-source'
+   ```
+
+3. **Register the source in the registry**:
+   - For spot sources, add it to `createSpotSources` in [`src/registries/spot.ts`](src/registries/spot.ts):
+     ```ts
+     export function createSpotSources(env: Env): SpotPriceSource[] {
+       return [
+         createEnsoSpotSource(env.ENSO_API_KEY!),
+         createMySpotSource(),
+       ]
+     }
+     ```
+   - For historical sources, add it to `createHistoricalSources` in [`src/registries/historical.ts`](src/registries/historical.ts).
+
+4. **Add unit tests** in `test/sources/<name>.test.ts` covering valid mapping, missing price (`null`), and error handling.
+
+For full architectural details, see [`src/sources/README.md`](src/sources/README.md).
+
 ## Authentication
 
 All `/api/prices/*` routes require an API key, sent as either:
@@ -48,7 +99,7 @@ All `/api/prices/*` routes require an API key, sent as either:
 - `Authorization: Bearer <api-key>`
 - `x-api-key: <api-key>`
 
-The worker has no token database — it checks the presented key against every worker environment variable/secret named `API_KEY_*` (see `src/auth.ts`). The matched variable's suffix, lowercased, becomes the `client_id` used in request logs (e.g. `API_KEY_FRONTEND` → `frontend`).
+The worker has no token database — it checks the presented key against every worker environment variable/secret named `API_KEY_*` (see [`src/http/auth.ts`](src/http/auth.ts)). The matched variable's suffix, lowercased, becomes the `client_id` used in request logs (e.g. `API_KEY_FRONTEND` → `frontend`).
 
 Production secrets, including every `API_KEY_*`, live in the 1Password vault `webops-prod`, item `yearn-price`. `.github/workflows/deploy.yml` pulls them via `1Password/load-secrets-action` and uploads them to the Cloudflare Worker with `wrangler secret bulk` on every push to `main`.
 

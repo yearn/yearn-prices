@@ -1,5 +1,5 @@
+import type { Env } from '../types'
 import { ApiError } from './errors'
-import type { Env } from './types'
 
 export interface AuthenticatedClient {
   clientId: string

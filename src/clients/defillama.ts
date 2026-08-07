@@ -1,5 +1,5 @@
+import type { DefiLlamaBatchResponse, DefiLlamaHistoricalResponse } from '../types'
 import { fetchJsonWithRetry, SlidingWindowRateLimiter } from './http-client'
-import type { DefiLlamaBatchResponse, DefiLlamaHistoricalResponse } from './types'
 
 const BASE_URL = 'https://coins.llama.fi'
 
