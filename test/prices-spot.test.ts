@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getAddress } from 'viem'
-import { errorEnvelope } from '../src/errors'
-import { handleSpot } from '../src/routes/prices'
-import { toUnixSeconds } from '../src/time'
+import { errorEnvelope } from '../src/http'
+import { handleSpot } from '../src/routes/spot'
 import type { Env } from '../src/types'
+import { toUnixSeconds } from '../src/utils'
 
 const SPOT_NOT_FOUND = errorEnvelope('NOT_FOUND', 'No price available for this token')
 const SPOT_UNAVAILABLE = errorEnvelope(
@@ -39,10 +39,13 @@ function spotRequest(coins: unknown) {
   return new Request(`https://svc/api/prices/spot?coins=${encodeURIComponent(JSON.stringify(coins))}`)
 }
 
+import { resetSpotSourceRegistry } from '../src/registries'
+
 describe('handleSpot', () => {
   let fetchMock: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
+    resetSpotSourceRegistry()
     fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
   })

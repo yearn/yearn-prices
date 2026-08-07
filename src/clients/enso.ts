@@ -1,5 +1,5 @@
+import type { EnsoPriceResponse } from '../types'
 import { fetchJsonWithRetry, SlidingWindowRateLimiter } from './http-client'
-import type { EnsoPriceResponse } from './types'
 
 const BASE_URL = 'https://api.enso.build'
 
