@@ -14,7 +14,6 @@ export interface SpotPriceResult {
   timestamp: number
   symbol: string | null
   confidence: number | null
-  source?: string
 }
 
 export interface SpotPriceSource {
@@ -46,7 +45,6 @@ export interface HistoricalPriceResult {
   timestamp: number
   symbol: string | null
   confidence: number | null
-  source?: string
 }
 
 export interface HistoricalPriceSource {

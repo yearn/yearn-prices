@@ -33,7 +33,6 @@ export function createEnsoSpotSource(apiKey: string): SpotPriceSource {
         timestamp,
         symbol: priceData.symbol ?? null,
         confidence: priceData.confidence ?? null,
-        source: 'enso',
       }
     },
   }

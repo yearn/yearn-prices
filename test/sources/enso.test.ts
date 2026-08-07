@@ -43,7 +43,6 @@ describe('createEnsoSpotSource', () => {
       timestamp: 1695197412,
       symbol: 'WBTC',
       confidence: 0.99,
-      source: 'enso',
     })
   })
 

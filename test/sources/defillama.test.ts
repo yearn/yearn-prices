@@ -29,7 +29,6 @@ describe('createDefiLlamaHistoricalSource', () => {
       timestamp: 1695197412,
       symbol: 'WBTC',
       confidence: 0.99,
-      source: 'defillama',
     })
     expect(getHistorical).toHaveBeenCalledWith(1695197412, [`ethereum:${ADDRESS}`])
   })
@@ -47,6 +46,21 @@ describe('createDefiLlamaHistoricalSource', () => {
         client({
           coins: {
             [`ethereum:${ADDRESS}`]: { price, timestamp: 100 },
+          },
+        }),
+      )
+
+      await expect(source.getHistoricalPrice(1, ADDRESS, 100)).resolves.toBeNull()
+    },
+  )
+
+  it.each([undefined, Number.NaN, Number.POSITIVE_INFINITY, 0])(
+    'returns null for an invalid timestamp (%s)',
+    async (timestamp) => {
+      const source = createDefiLlamaHistoricalSource(
+        client({
+          coins: {
+            [`ethereum:${ADDRESS}`]: { price: 27052, timestamp },
           },
         }),
       )
