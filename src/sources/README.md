@@ -7,13 +7,18 @@ A price source is a plugin that fetches spot or historical token prices. Sources
 Every source implements one or both of these methods:
 
 ```ts
-interface PriceSource {
+interface SpotPriceSource {
   name: string                                  // stable id; must be unique
   priority: number                              // lower = tried first; ties keep registration order
   supports(chainId: number): boolean
-  
-  getSpotPrice?(chainId: number, token: string): Promise<SpotPrice | null>
-  getHistoricalPrice?(chainId: number, token: string, timestamp: number): Promise<HistoricalPrice | null>
+  getSpotPrice(chainId: number, token: string): Promise<SpotPriceResult | null>
+}
+
+interface HistoricalPriceSource {
+  name: string
+  priority: number
+  supports(chainId: number): boolean
+  getHistoricalPrice(chainId: number, token: string, timestamp: number): Promise<HistoricalPriceResult | null>
 }
 ```
 
@@ -22,7 +27,7 @@ interface PriceSource {
 - **Return `null`** → "no price for this token here" → resolver tries the next source.
 - **Throw `ApiError('NOT_FOUND', …)`** → same as `null`.
 - **Throw any other error** → "transient failure". Remembered and rethrown **only if no later source produces a price**, so one flaky source never masks a working fallback.
-- **Registry stamps `source`** on every returned price. Your source must not.
+- **Registry stamps `source`** on every returned price. Your source must not — `SpotPriceResult` and `HistoricalPriceResult` have no `source` field, so setting one fails typecheck.
 
 ## Priority and registration order
 
@@ -72,12 +77,18 @@ Export your source factory in `src/sources/index.ts`, and register it by adding 
 ```ts
 // src/registries/spot.ts
 export function createSpotSources(env: Env): SpotPriceSource[] {
+  if (!env.ENSO_API_KEY) {
+    throw new ApiError('INTERNAL_ERROR', 'ENSO_API_KEY is not configured')
+  }
+
   return [
-    createEnsoSpotSource(env.ENSO_API_KEY!),
+    createEnsoSpotSource(env.ENSO_API_KEY),
     create<YourName>SpotSource(),  // <-- add here
   ]
 }
 ```
+
+If callers must be able to filter on your source with `?source=<name>`, or its rows must rank against other sources in the database, also add the name to `SOURCE_PRIORITY` in `src/types.ts`. Without that, `?source=<name>` returns `INVALID_INPUT` even though the registry will serve the source.
 
 ### 3. Add tests
 

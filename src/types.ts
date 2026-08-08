@@ -68,7 +68,7 @@ export interface HistoricalResponseCoin {
   symbol: string | null
   timestamp: number
   confidence: number | null
-  source: PriceSource
+  source: string
 }
 
 export interface BatchHistoricalResponseCoin {

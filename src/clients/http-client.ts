@@ -32,7 +32,7 @@ export class SlidingWindowRateLimiter {
 
 export interface FetchJsonConfig {
   service: string
-  rateLimiter?: SlidingWindowRateLimiter
+  rateLimiter: SlidingWindowRateLimiter
   headers?: Record<string, string>
   onRetry?: (attempt: number, delayMs: number, url: string, status: number) => void
   notFoundAsError?: boolean
@@ -42,9 +42,7 @@ const RETRY_DELAYS = [1000, 2000, 4000]
 
 export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig): Promise<T> {
   for (let attempt = 0; attempt < RETRY_DELAYS.length; attempt += 1) {
-    if (config.rateLimiter) {
-      await config.rateLimiter.waitTurn()
-    }
+    await config.rateLimiter.waitTurn()
     const response = await fetch(url, config.headers ? { headers: config.headers } : undefined)
     if (response.ok) {
       return (await response.json()) as T

@@ -66,15 +66,3 @@ export interface HistoricalPriceSource {
     timestamp: number,
   ): Promise<HistoricalPriceResult | null>
 }
-
-export interface PriceSourcePlugin {
-  name: string
-  priority: number
-  supports(chainId: number): boolean
-  getSpotPrice?(chainId: number, token: string): Promise<SpotPriceResult | null>
-  getHistoricalPrice?(
-    chainId: number,
-    token: string,
-    timestamp: number,
-  ): Promise<HistoricalPriceResult | null>
-}
