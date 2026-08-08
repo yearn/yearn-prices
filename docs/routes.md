@@ -129,7 +129,11 @@ Response:
 }
 ```
 
-If no exact row exists for the normalized timestamp, the route returns:
+If no stored row exists for the normalized timestamp and no `source` filter was given, the route falls back to a live DefiLlama lookup for that day and returns the result with `"source": "defillama"`. The response is not persisted. A `source` filter disables the fallback: the route answers from stored rows only.
+
+If the fallback upstream is degraded, the request fails with `INTERNAL_ERROR` (`500`, `no-store`) rather than `NOT_FOUND` — a not-found response is cached for an hour, so a transient blip must not be recorded as "no price exists".
+
+If neither the stored rows nor the fallback have a price, the route returns:
 
 ```json
 {
@@ -194,7 +198,21 @@ Response:
 }
 ```
 
-Each token's single `prices` entry carries the spot price's own Unix-seconds timestamp. Tokens Enso has no price for are omitted from the response, like `batchHistorical`.
+Each token's single `prices` entry carries the spot price's own Unix-seconds timestamp.
+
+Unlike `batchHistorical`, a token without a price is not omitted — it carries a per-token error envelope with the same shape as a route-level error, so one bad token never fails the whole request:
+
+```json
+{
+  "coins": {
+    "ethereum:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": {
+      "error": { "code": "NOT_FOUND", "message": "No price available for this token" }
+    }
+  }
+}
+```
+
+`NOT_FOUND` means no price exists (permanent). `UNAVAILABLE` means an upstream source failed and the request is worth retrying.
 
 ## `GET /api/prices/batchHistorical`
 

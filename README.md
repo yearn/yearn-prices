@@ -80,8 +80,12 @@ To add a new price source plugin (e.g. CoinGecko, Pyth, custom adapter):
    - For spot sources, add it to `createSpotSources` in [`src/registries/spot.ts`](src/registries/spot.ts):
      ```ts
      export function createSpotSources(env: Env): SpotPriceSource[] {
+       if (!env.ENSO_API_KEY) {
+         throw new ApiError('INTERNAL_ERROR', 'ENSO_API_KEY is not configured')
+       }
+
        return [
-         createEnsoSpotSource(env.ENSO_API_KEY!),
+         createEnsoSpotSource(env.ENSO_API_KEY),
          createMySpotSource(),
        ]
      }

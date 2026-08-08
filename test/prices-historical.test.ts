@@ -116,4 +116,21 @@ describe('handleHistorical', () => {
       handleHistorical(request(), ENV, pool([]), String(TIMESTAMP), TOKEN_KEY),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' })
   })
+
+  // A degraded upstream must not be folded into NOT_FOUND: that response is served
+  // with CACHE_CONTROL_NOT_FOUND (public, max-age=3600), so a blip would cache a
+  // false 404 for an hour. It propagates as a retryable INTERNAL_ERROR instead.
+  it('propagates a DefiLlama 5xx as INTERNAL_ERROR rather than NOT_FOUND', async () => {
+    fetchMock.mockResolvedValue(defillamaResponse(503))
+    vi.useFakeTimers()
+
+    const assertion = expect(
+      handleHistorical(request(), ENV, pool([]), String(TIMESTAMP), TOKEN_KEY),
+    ).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
+    await vi.runAllTimersAsync()
+    await assertion
+
+    vi.useRealTimers()
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
 })

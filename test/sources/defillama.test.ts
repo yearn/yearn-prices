@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createDefiLlamaHistoricalSource } from '../../src/sources/defillama'
 import type { DefiLlamaClient } from '../../src/clients/defillama'
+import { ApiError } from '../../src/http/errors'
 
 const ADDRESS = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
 
@@ -68,6 +69,18 @@ describe('createDefiLlamaHistoricalSource', () => {
       await expect(source.getHistoricalPrice(1, ADDRESS, 100)).resolves.toBeNull()
     },
   )
+
+  it('surfaces a transient client failure as a non-NOT_FOUND error', async () => {
+    const source = createDefiLlamaHistoricalSource({
+      getHistorical: vi.fn(async () => {
+        throw new ApiError('INTERNAL_ERROR', 'DefiLlama request failed with status 503')
+      }),
+    } as unknown as DefiLlamaClient)
+
+    await expect(source.getHistoricalPrice(1, ADDRESS, 100)).rejects.toMatchObject({
+      code: 'INTERNAL_ERROR',
+    })
+  })
 
   it('supports known chain ids and rejects unsupported boundaries', () => {
     const source = createDefiLlamaHistoricalSource(client({ coins: {} }))

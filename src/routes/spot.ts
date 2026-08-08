@@ -11,9 +11,8 @@ import { chainNameToId, parseSpotCoins } from '../utils'
 export async function handleSpot(
   request: Request,
   env: Env,
-  registry?: SpotSourceRegistry,
+  registry: SpotSourceRegistry = getSpotSourceRegistry(env),
 ): Promise<Response> {
-  const reg = registry ?? getSpotSourceRegistry(env)
   const requests = parseSpotCoins(new URL(request.url).searchParams.get('coins'))
 
   const settled = await Promise.allSettled(
@@ -21,7 +20,7 @@ export async function handleSpot(
       const chainId = chainNameToId(req.chain)
       ensure(chainId !== undefined, 'INVALID_INPUT', `Unsupported chain: ${req.chain}`)
 
-      const spot = await reg.resolve(chainId, req.token.toLowerCase())
+      const spot = await registry.resolve(chainId, req.token.toLowerCase())
 
       return {
         req,

@@ -73,4 +73,27 @@ describe('createEnsoSpotSource', () => {
       code: 'NOT_FOUND',
     })
   })
+
+  it('surfaces a transient upstream failure as a non-NOT_FOUND error', async () => {
+    fetchMock.mockResolvedValue(response(503))
+    vi.useFakeTimers()
+
+    const assertion = expect(
+      createEnsoSpotSource('enso-key').getSpotPrice(1, ADDRESS),
+    ).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
+    await vi.runAllTimersAsync()
+    await assertion
+
+    vi.useRealTimers()
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('supports known chain ids and rejects unsupported boundaries', () => {
+    const source = createEnsoSpotSource('enso-key')
+
+    expect(source.supports(1)).toBe(true)
+    expect(source.supports(80094)).toBe(true)
+    expect(source.supports(0)).toBe(false)
+    expect(source.supports(80095)).toBe(false)
+  })
 })
