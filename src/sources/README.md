@@ -107,4 +107,4 @@ Use vitest + fetch-mock (see `test/sources/enso.test.ts` for the pattern).
 - **Do not include `source` in your return object.** The registry stamps it.
 - Return `null` or throw `ApiError('NOT_FOUND', …)` for "I have no price for this token" — not a 404 from a downstream service.
 
-That's it. Three files, no edits elsewhere.
+Three files — plus one line in `SOURCE_PRIORITY` if callers need to filter on your source by name.

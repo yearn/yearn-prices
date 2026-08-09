@@ -52,49 +52,7 @@ Batch and range historical endpoints remain DB-only (a registry fallback inside 
 
 ### Adding a new price source
 
-To add a new price source plugin (e.g. CoinGecko, Pyth, custom adapter):
-
-1. **Create the source adapter** in `src/sources/<name>.ts`:
-   Implement `SpotPriceSource` and/or `HistoricalPriceSource` interface from `src/sources/types.ts`:
-   ```ts
-   import type { SpotPriceSource } from './types'
-
-   export function createMySpotSource(): SpotPriceSource {
-     return {
-       name: 'my-source',
-       priority: 20, // lower number = higher priority (tried first)
-       supports: (chainId: number) => chainId === 1,
-       async getSpotPrice(chainId: number, token: string) {
-         // return { price, timestamp, symbol, confidence } or null if not found
-       },
-     }
-   }
-   ```
-
-2. **Export the source** in [`src/sources/index.ts`](src/sources/index.ts):
-   ```ts
-   export { createMySpotSource } from './my-source'
-   ```
-
-3. **Register the source in the registry**:
-   - For spot sources, add it to `createSpotSources` in [`src/registries/spot.ts`](src/registries/spot.ts):
-     ```ts
-     export function createSpotSources(env: Env): SpotPriceSource[] {
-       if (!env.ENSO_API_KEY) {
-         throw new ApiError('INTERNAL_ERROR', 'ENSO_API_KEY is not configured')
-       }
-
-       return [
-         createEnsoSpotSource(env.ENSO_API_KEY),
-         createMySpotSource(),
-       ]
-     }
-     ```
-   - For historical sources, add it to `createHistoricalSources` in [`src/registries/historical.ts`](src/registries/historical.ts).
-
-4. **Add unit tests** in `test/sources/<name>.test.ts` covering valid mapping, missing price (`null`), and error handling.
-
-For full architectural details, see [`src/sources/README.md`](src/sources/README.md).
+Sources are pluggable adapters under `src/sources/`, registered in `src/registries/spot.ts` or `src/registries/historical.ts`. See [`src/sources/README.md`](src/sources/README.md) for the full authoring guide (interface, registration steps, test checklist).
 
 ## Authentication
 

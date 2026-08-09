@@ -31,10 +31,12 @@ export class SlidingWindowRateLimiter {
 }
 
 export interface FetchJsonConfig {
+  // Used in error messages and retry logs.
   service: string
   rateLimiter: SlidingWindowRateLimiter
   headers?: Record<string, string>
   onRetry?: (attempt: number, delayMs: number, url: string, status: number) => void
+  // When true, a 404 becomes a typed NOT_FOUND ApiError instead of a retryable/internal error.
   notFoundAsError?: boolean
 }
 

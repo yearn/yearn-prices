@@ -16,14 +16,36 @@ Add a new price source = one source file + one line in the registry source list 
 ## Plugin contract
 
 ```ts
-interface PriceSource {
+export interface SpotPriceResult {
+  price: number
+  timestamp: number
+  symbol: string | null
+  confidence: number | null
+}
+
+export interface SpotPriceSource {
   name: string          // stable id; the registry stamps it on results
   priority: number      // lower = tried first; ties keep registration order
   supports(chainId: number): boolean
+  getSpotPrice(chainId: number, token: string): Promise<SpotPriceResult | null>
+}
 
-  // Implement one or both. Absence = capability not offered.
-  getSpotPrice?(chainId: number, token: string): Promise<SpotPrice | null>
-  getHistoricalPrice?(chainId: number, token: string, timestamp: number): Promise<HistoricalPrice | null>
+export interface HistoricalPriceResult {
+  price: number
+  timestamp: number
+  symbol: string | null
+  confidence: number | null
+}
+
+export interface HistoricalPriceSource {
+  name: string          // stable id; the registry stamps it on results
+  priority: number      // lower = tried first; ties keep registration order
+  supports(chainId: number): boolean
+  getHistoricalPrice(
+    chainId: number,
+    token: string,
+    timestamp: number,
+  ): Promise<HistoricalPriceResult | null>
 }
 ```
 
