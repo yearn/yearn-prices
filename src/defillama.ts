@@ -6,7 +6,7 @@ const BASE_URL = 'https://coins.llama.fi'
 export class DefiLlamaClient {
   constructor(
     private readonly rateLimiter = new SlidingWindowRateLimiter(10, 1000),
-    private readonly onRetry?: (attempt: number, delayMs: number, url: string, status: number) => void,
+    private readonly onRetry?: (attempt: number, delayMs: number, url: string, status: number) => void
   ) {}
 
   getHistorical(timestamp: number, coins: string[], searchWidth = '6h'): Promise<DefiLlamaHistoricalResponse> {
@@ -26,7 +26,7 @@ export class DefiLlamaClient {
     return fetchJsonWithRetry<T>(url, {
       service: 'DeFiLlama',
       rateLimiter: this.rateLimiter,
-      onRetry: this.onRetry,
+      onRetry: this.onRetry
     })
   }
 }

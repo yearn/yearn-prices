@@ -1,4 +1,4 @@
-import { defineChain, createPublicClient, http, parseAbi, type PublicClient } from 'viem'
+import { createPublicClient, defineChain, http, type PublicClient, parseAbi } from 'viem'
 import { CHAIN_ID_TO_NAME } from './chains'
 
 const SHARE_PRICE_ABI_V2 = parseAbi(['function pricePerShare() view returns (uint256)'])
@@ -8,12 +8,12 @@ const blockCache = new Map<string, bigint>()
 const clientCache = new Map<number, PublicClient>()
 
 function sleep(milliseconds: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, milliseconds))
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
 export function compareApiVersions(left: string | null | undefined, right: string): number {
-  const leftParts = (left ?? '0.0.0').split('.').map(part => Number(part))
-  const rightParts = right.split('.').map(part => Number(part))
+  const leftParts = (left ?? '0.0.0').split('.').map((part) => Number(part))
+  const rightParts = right.split('.').map((part) => Number(part))
   const length = Math.max(leftParts.length, rightParts.length)
 
   for (let index = 0; index < length; index += 1) {
@@ -42,13 +42,13 @@ function createChainClient(chainId: number, rpcUrl: string): PublicClient {
     nativeCurrency: {
       name: chainName,
       symbol: chainName.slice(0, 4).toUpperCase(),
-      decimals: 18,
+      decimals: 18
     },
     rpcUrls: {
       default: {
-        http: [rpcUrl],
-      },
-    },
+        http: [rpcUrl]
+      }
+    }
   })
 
   return createPublicClient({
@@ -56,8 +56,8 @@ function createChainClient(chainId: number, rpcUrl: string): PublicClient {
     transport: http(rpcUrl, {
       batch: true,
       retryCount: 2,
-      retryDelay: 250,
-    }),
+      retryDelay: 250
+    })
   })
 }
 
@@ -81,7 +81,11 @@ export function getChainClient(chainId: number): PublicClient | null {
   return client
 }
 
-export async function estimateBlockByTimestamp(client: PublicClient, chainId: number, timestamp: number): Promise<bigint> {
+export async function estimateBlockByTimestamp(
+  client: PublicClient,
+  chainId: number,
+  timestamp: number
+): Promise<bigint> {
   const cacheKey = `${chainId}:${timestamp}`
   const cached = blockCache.get(cacheKey)
   if (cached !== undefined) {
@@ -130,7 +134,7 @@ export async function readVaultSharePrice(
   vaultAddress: `0x${string}`,
   decimals: number,
   apiVersion: string | null | undefined,
-  blockNumber: bigint,
+  blockNumber: bigint
 ): Promise<number> {
   const scale = 10n ** BigInt(decimals)
 
@@ -140,7 +144,7 @@ export async function readVaultSharePrice(
       abi: SHARE_PRICE_ABI_V3,
       functionName: 'convertToAssets',
       args: [scale],
-      blockNumber,
+      blockNumber
     })
     return Number(raw) / Number(scale)
   }
@@ -149,7 +153,7 @@ export async function readVaultSharePrice(
     address: vaultAddress,
     abi: SHARE_PRICE_ABI_V2,
     functionName: 'pricePerShare',
-    blockNumber,
+    blockNumber
   })
   return Number(raw) / Number(scale)
 }

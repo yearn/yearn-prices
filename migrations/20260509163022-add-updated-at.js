@@ -1,25 +1,23 @@
-'use strict';
+'use strict'
 
-var dbm;
+var dbm
 
-exports.setup = function (options) {
-  dbm = options.dbmigrate;
-};
+exports.setup = (options) => {
+  dbm = options.dbmigrate
+}
 
-exports.up = function (db) {
-  return db.runSql(`
+exports.up = (db) =>
+  db.runSql(`
     ALTER TABLE token_prices
       ADD COLUMN updated_at TIMESTAMP DEFAULT NOW();
-  `);
-};
+  `)
 
-exports.down = function (db) {
-  return db.runSql(`
+exports.down = (db) =>
+  db.runSql(`
     ALTER TABLE token_prices
       DROP COLUMN updated_at;
-  `);
-};
+  `)
 
 exports._meta = {
   version: 1
-};
+}

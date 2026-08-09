@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
 import type { PublicClient } from 'viem'
+import { describe, expect, it, vi } from 'vitest'
 import { priceCurveLpUsd } from '../src/curve'
 
 const ZERO = '0x0000000000000000000000000000000000000000'
@@ -22,7 +22,7 @@ function mockClient(reads: MockReads = {}): PublicClient {
     registry = REGISTRY,
     pool = POOL,
     virtualPrice = VP_1_01,
-    coins = [DAI, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO],
+    coins = [DAI, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO, ZERO]
   } = reads
   return {
     readContract: vi.fn(async ({ functionName }: { functionName: string }) => {
@@ -38,7 +38,7 @@ function mockClient(reads: MockReads = {}): PublicClient {
         default:
           throw new Error(`unexpected call: ${functionName}`)
       }
-    }),
+    })
   } as unknown as PublicClient
 }
 

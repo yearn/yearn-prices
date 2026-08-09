@@ -1,4 +1,4 @@
-import { parseAbi, type PublicClient } from 'viem'
+import { type PublicClient, parseAbi } from 'viem'
 
 // Curve AddressProvider is deployed at the same address on every Curve chain.
 const ADDRESS_PROVIDER = '0x0000000022D53366457F9d5E68Ec105046FC4383' as const
@@ -7,7 +7,7 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 const ADDRESS_PROVIDER_ABI = parseAbi(['function get_registry() view returns (address)'])
 const REGISTRY_ABI = parseAbi([
   'function get_pool_from_lp_token(address) view returns (address)',
-  'function get_coins(address) view returns (address[8])',
+  'function get_coins(address) view returns (address[8])'
 ])
 const VIRTUAL_PRICE_ABI = parseAbi(['function get_virtual_price() view returns (uint256)'])
 
@@ -28,7 +28,7 @@ async function getRegistry(client: PublicClient, chainId: number): Promise<`0x${
     result = await client.readContract({
       address: ADDRESS_PROVIDER,
       abi: ADDRESS_PROVIDER_ABI,
-      functionName: 'get_registry',
+      functionName: 'get_registry'
     })
   } catch {
     // Transient RPC error — don't cache, so the next item retries.
@@ -44,7 +44,7 @@ async function resolvePool(
   client: PublicClient,
   chainId: number,
   registry: `0x${string}`,
-  lpToken: `0x${string}`,
+  lpToken: `0x${string}`
 ): Promise<`0x${string}` | null> {
   const cacheKey = `${chainId}:${lpToken.toLowerCase()}`
   const cached = poolCache.get(cacheKey)
@@ -58,7 +58,7 @@ async function resolvePool(
       address: registry,
       abi: REGISTRY_ABI,
       functionName: 'get_pool_from_lp_token',
-      args: [lpToken],
+      args: [lpToken]
     })
   } catch {
     // Transient RPC error — don't cache, so the next item retries.
@@ -88,7 +88,7 @@ export async function priceCurveLpUsd(
   chainId: number,
   lpToken: `0x${string}`,
   blockNumber: bigint,
-  fetchCoinPriceUsd: (coin: `0x${string}`) => Promise<number | null>,
+  fetchCoinPriceUsd: (coin: `0x${string}`) => Promise<number | null>
 ): Promise<number | null> {
   const registry = await getRegistry(client, chainId)
   if (!registry) {
@@ -105,18 +105,18 @@ export async function priceCurveLpUsd(
       address: pool,
       abi: VIRTUAL_PRICE_ABI,
       functionName: 'get_virtual_price',
-      blockNumber,
+      blockNumber
     }),
     client.readContract({
       address: registry,
       abi: REGISTRY_ABI,
       functionName: 'get_coins',
       args: [pool],
-      blockNumber,
-    }),
+      blockNumber
+    })
   ])
 
-  const coin0 = coins.find(coin => !isZero(coin))
+  const coin0 = coins.find((coin) => !isZero(coin))
   if (!coin0) {
     return null
   }

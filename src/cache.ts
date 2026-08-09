@@ -21,7 +21,7 @@ export function cacheControlForHistorical(timestamp: number): string {
 }
 
 export function cacheControlForBatch(timestamps: number[], allResolved: boolean): string {
-  if (timestamps.some(timestamp => isTodayNormalized(timestamp))) {
+  if (timestamps.some((timestamp) => isTodayNormalized(timestamp))) {
     return CACHE_CONTROL_TODAY
   }
 
@@ -29,7 +29,7 @@ export function cacheControlForBatch(timestamps: number[], allResolved: boolean)
 }
 
 export function cacheControlForRange(rangeEnds: number[], allResolved: boolean): string {
-  if (rangeEnds.some(timestamp => isTodayNormalized(timestamp))) {
+  if (rangeEnds.some((timestamp) => isTodayNormalized(timestamp))) {
     return CACHE_CONTROL_TODAY
   }
 
