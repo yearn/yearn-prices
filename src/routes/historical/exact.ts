@@ -1,5 +1,9 @@
 import type { Pool } from '@neondatabase/serverless'
-import { cacheControlForHistorical } from '../../cache'
+import {
+  CACHE_CONTROL_PARTIAL,
+  CACHE_CONTROL_TODAY,
+  cacheControlForHistorical,
+} from '../../cache'
 import { getExactHistoricalPrice } from '../../db'
 import { ApiError, jsonResponse } from '../../http'
 import {
@@ -9,6 +13,7 @@ import {
 import type { Env } from '../../types'
 import {
   chainNameToId,
+  isTodayNormalized,
   parseOptionalSource,
   parseTimestampSegment,
   parseTokenKey,
@@ -39,7 +44,7 @@ export async function handleHistorical(
               [tokenKeySegment]: {
                 price: historical.price,
                 symbol: historical.symbol,
-                timestamp: historical.timestamp,
+                timestamp,
                 confidence: historical.confidence,
                 source: historical.source,
               },
@@ -47,7 +52,9 @@ export async function handleHistorical(
           },
           {
             headers: {
-              'cache-control': cacheControlForHistorical(historical.timestamp),
+              'cache-control': isTodayNormalized(timestamp)
+                ? CACHE_CONTROL_TODAY
+                : CACHE_CONTROL_PARTIAL,
             },
           },
         )

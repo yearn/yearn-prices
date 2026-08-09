@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { CACHE_CONTROL_IMMUTABLE, CACHE_CONTROL_PARTIAL } from '../src/cache'
 import { handleHistorical } from '../src/routes/historical/exact'
 import type { Env } from '../src/types'
 
@@ -89,6 +90,82 @@ describe('handleHistorical', () => {
 
     expect(response.status).toBe(200)
     expect(fetchMock).toHaveBeenCalledOnce()
+    await expect(response.json()).resolves.toEqual({
+      coins: {
+        [TOKEN_KEY]: {
+          price: 27052,
+          symbol: 'WBTC',
+          timestamp: TIMESTAMP,
+          confidence: 0.99,
+          source: 'defillama',
+        },
+      },
+    })
+  })
+
+  it('serves a fallback with a short TTL while a past-day DB hit stays immutable', async () => {
+    fetchMock.mockResolvedValue(
+      defillamaResponse(200, {
+        coins: {
+          [`ethereum:${RAW_ADDR}`]: {
+            price: 27052,
+            symbol: 'WBTC',
+            timestamp: TIMESTAMP,
+            confidence: 0.99,
+          },
+        },
+      }),
+    )
+
+    const fallback = await handleHistorical(
+      request(),
+      ENV,
+      pool([]),
+      String(TIMESTAMP),
+      TOKEN_KEY,
+    )
+    expect(fallback.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
+
+    const hit = await handleHistorical(
+      request(),
+      ENV,
+      pool([{
+        chain: 'ethereum',
+        token: RAW_ADDR,
+        timestamp: new Date(TIMESTAMP * 1000),
+        price: '123.45',
+        symbol: 'WBTC',
+        confidence: '0.9',
+        source: 'defillama',
+      }]),
+      String(TIMESTAMP),
+      TOKEN_KEY,
+    )
+    expect(hit.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+  })
+
+  it('reports the normalized day-end when DefiLlama returns a different timestamp', async () => {
+    fetchMock.mockResolvedValue(
+      defillamaResponse(200, {
+        coins: {
+          [`ethereum:${RAW_ADDR}`]: {
+            price: 27052,
+            symbol: 'WBTC',
+            timestamp: TIMESTAMP + 7200,
+            confidence: 0.99,
+          },
+        },
+      }),
+    )
+
+    const response = await handleHistorical(
+      request(),
+      ENV,
+      pool([]),
+      String(TIMESTAMP),
+      TOKEN_KEY,
+    )
+
     await expect(response.json()).resolves.toEqual({
       coins: {
         [TOKEN_KEY]: {
