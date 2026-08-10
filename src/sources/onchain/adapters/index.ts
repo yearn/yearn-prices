@@ -8,9 +8,11 @@ import { curveAdapter } from './curve'
 import { erc4626Adapter } from './erc4626'
 import { nativeShareAdapter } from './native-share'
 import { pairAdapter } from './pair'
+import { DEFAULT_PENDLE_TWAP_SECONDS, pendleAdapter } from './pendle'
 import { reserveRTokenAdapter } from './reserve-rtoken'
 import { wstEthAdapter } from './wsteth'
 import { yearnShareAdapter } from './yearn-share'
+import { yip88LiquidLockerAdapter } from './yip88-liquid-locker'
 
 /**
  * Adapters in the order the engine tries them: the most specific token
@@ -20,6 +22,7 @@ export function createOnchainPriceAdapters(
   options: OnchainAdapterOptions,
 ): RecursivePriceAdapter[] {
   return [
+    yip88LiquidLockerAdapter(options),
     nativeShareAdapter(options),
     reserveRTokenAdapter(options),
     beetsBarAdapter(options),
@@ -30,6 +33,7 @@ export function createOnchainPriceAdapters(
     wstEthAdapter(options),
     pairAdapter(options),
     balancerAdapter(options),
+    pendleAdapter(options, options.pendleTwapSeconds ?? DEFAULT_PENDLE_TWAP_SECONDS),
     curveAdapter(options),
   ]
 }
