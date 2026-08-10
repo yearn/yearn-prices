@@ -90,9 +90,9 @@ Routes talk to `getSpotSourceRegistry(env)` / `getHistoricalSourceRegistry(env)`
 
 ## Adding a source (the definition)
 
-1. Create `src/sources/<name>.ts` implementing `SpotPriceSource` and/or `HistoricalPriceSource` and export it in `src/sources/index.ts`.
+1. Create `src/sources/<name>/`: a class extending `SpotPriceSourceBase` or `HistoricalPriceSourceBase`, a `create<Name>Source()` factory, and an `index.ts` exporting both. Re-export it from `src/sources/index.ts`.
 2. Add one line in `src/registries/spot.ts` (`createSpotSources`) or `src/registries/historical.ts` (`createHistoricalSources`) with an explicit `priority`.
-3. Add `test/sources/<name>.test.ts` covering: valid price mapping, the `null`/NOT_FOUND path, transient-error behavior, `supports()` boundaries.
+3. Add `test/sources/<name>/<file>.test.ts` covering: valid price mapping, the `null`/NOT_FOUND path, transient-error behavior, `supports()` boundaries.
 4. Nothing else. A PR touching registry resolution logic, routes, or another source to add a source is wrong by definition.
 
 ## Testing

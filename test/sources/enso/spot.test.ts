@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createEnsoSpotSource } from '../../src/sources/enso'
-import { toUnixSeconds } from '../../src/utils'
+import { createEnsoSpotSource } from '../../../src/sources/enso/spot'
+import { toUnixSeconds } from '../../../src/utils'
 
 const ADDRESS = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
 
