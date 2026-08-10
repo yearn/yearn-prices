@@ -1,12 +1,56 @@
 import { DefiLlamaClient } from '../clients/defillama'
 import { ApiError } from '../http/errors'
 import { createDefiLlamaHistoricalSource } from '../sources'
+import { createOnchainHistoricalSource } from '../sources/onchain'
+import type { MarketPriceResolver } from '../sources/onchain'
 import type { HistoricalPrice, HistoricalPriceSource } from '../sources/types'
 
-import type { Env } from '../types'
+import type { Env, PriceSource } from '../types'
+
+/**
+ * Prices an on-chain adapter's child tokens with the market sources only. It
+ * never sees the on-chain source, so recursion cannot loop back into itself.
+ */
+function marketPriceResolver(marketSources: HistoricalPriceSource[]): MarketPriceResolver {
+  const registry = new HistoricalSourceRegistry(marketSources)
+
+  return async (target) => {
+    if (target.timestamp == null || !marketSources.some((source) => source.supports(target.chainId))) {
+      return null
+    }
+
+    try {
+      const price = await registry.resolve(target.chainId, target.token, target.timestamp)
+      return {
+        chainId: target.chainId,
+        token: target.token,
+        requestedTimestamp: target.timestamp,
+        observedTimestamp: price.timestamp,
+        priceUsd: price.price,
+        symbol: price.symbol,
+        confidence: price.confidence,
+        source: price.source as PriceSource,
+        adapter: price.source,
+        blockNumber: target.blockNumber ?? null,
+        inputs: [],
+        metadata: {},
+      }
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'NOT_FOUND') {
+        return null
+      }
+      throw error
+    }
+  }
+}
 
 export function createHistoricalSources(_env?: Env): HistoricalPriceSource[] {
-  return [createDefiLlamaHistoricalSource(new DefiLlamaClient())]
+  const marketSources = [createDefiLlamaHistoricalSource(new DefiLlamaClient())]
+
+  return [
+    ...marketSources,
+    createOnchainHistoricalSource({ marketPrice: marketPriceResolver(marketSources) }),
+  ]
 }
 
 export class HistoricalSourceRegistry {
