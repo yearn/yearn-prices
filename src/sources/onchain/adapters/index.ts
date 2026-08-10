@@ -1,10 +1,13 @@
 import type { OnchainAdapterOptions } from '../context'
 import type { RecursivePriceAdapter } from '../types'
 import { aaveAdapter } from './aave'
+import { balancerAdapter } from './balancer'
 import { beetsBarAdapter } from './beets-bar'
 import { compoundAdapter } from './compound'
+import { curveAdapter } from './curve'
 import { erc4626Adapter } from './erc4626'
 import { nativeShareAdapter } from './native-share'
+import { pairAdapter } from './pair'
 import { reserveRTokenAdapter } from './reserve-rtoken'
 import { wstEthAdapter } from './wsteth'
 import { yearnShareAdapter } from './yearn-share'
@@ -25,5 +28,8 @@ export function createOnchainPriceAdapters(
     compoundAdapter(options),
     aaveAdapter(options),
     wstEthAdapter(options),
+    pairAdapter(options),
+    balancerAdapter(options),
+    curveAdapter(options),
   ]
 }
