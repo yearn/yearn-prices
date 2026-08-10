@@ -90,9 +90,9 @@ export async function contractContext(
 ): Promise<ContractContext> {
   const client = options.clientForChain(target.chainId)
   if (!client) {
-    throw new RetryablePricingError(
-      `RPC_URL_${target.chainId} is not configured; on-chain pricing is temporarily unavailable`,
-    )
+    // A missing RPC is a deployment gap, not a transient fault: report it as
+    // "this adapter does not apply" so it never masks a working source.
+    throw new Error(`RPC_URL_${target.chainId} is not configured`)
   }
   const blockNumber = await (options.blockForTarget ?? defaultBlockForTarget)(
     client,

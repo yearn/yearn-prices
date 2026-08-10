@@ -39,8 +39,9 @@ function toResult(result: RecursivePriceResult): SpotPriceResult | null {
 }
 
 function resolver(options: OnchainSourceOptions) {
+  const clientForChain = options.clientForChain ?? getChainClient
   const adapterOptions: OnchainAdapterOptions = {
-    clientForChain: options.clientForChain ?? getChainClient,
+    clientForChain,
     blockForTarget: options.blockForTarget,
     blockTimestampForTarget: options.blockTimestampForTarget,
     pendleTwapSeconds: options.pendleTwapSeconds,
@@ -50,22 +51,25 @@ function resolver(options: OnchainSourceOptions) {
   // shared — a fresh engine per request keeps its own resolution cache.
   const adapterHints = new Map<string, string>()
 
-  return (target: RecursivePriceTarget) =>
+  const resolve = (target: RecursivePriceTarget) =>
     new RecursivePriceEngine(
       options.marketPrice,
       adapters,
       options.maxDepth ?? 8,
       adapterHints,
     ).resolve(target)
+
+  return { resolve, clientForChain }
 }
 
 export function createOnchainSpotSource(options: OnchainSourceOptions): SpotPriceSource {
-  const resolve = resolver(options)
+  const { resolve, clientForChain } = resolver(options)
 
   return {
     name: ONCHAIN_SOURCE_NAME,
     priority: options.priority ?? 20,
-    supports: (chainId: number) => chainIdToName(chainId) !== undefined,
+    supports: (chainId: number) =>
+      chainIdToName(chainId) !== undefined && clientForChain(chainId) !== null,
     async getSpotPrice(chainId: number, token: string) {
       return toResult(await resolve({ chainId, token, timestamp: null }))
     },
@@ -75,12 +79,13 @@ export function createOnchainSpotSource(options: OnchainSourceOptions): SpotPric
 export function createOnchainHistoricalSource(
   options: OnchainSourceOptions,
 ): HistoricalPriceSource {
-  const resolve = resolver(options)
+  const { resolve, clientForChain } = resolver(options)
 
   return {
     name: ONCHAIN_SOURCE_NAME,
     priority: options.priority ?? 20,
-    supports: (chainId: number) => chainIdToName(chainId) !== undefined,
+    supports: (chainId: number) =>
+      chainIdToName(chainId) !== undefined && clientForChain(chainId) !== null,
     async getHistoricalPrice(
       chainId: number,
       token: string,
