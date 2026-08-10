@@ -49,6 +49,8 @@ export interface PriceResolutionAttempt {
   adapter: string
   reason: PriceResolutionFailureReason
   error: string
+  /** The thrown value, kept so a transient failure can be rethrown as-is. */
+  cause?: unknown
 }
 
 export interface PriceResolutionFailure {

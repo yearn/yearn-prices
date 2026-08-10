@@ -155,7 +155,7 @@ export class RecursivePriceEngine {
     }
   }
 
-  resolve(target: RecursivePriceTarget): Promise<RecursivePriceResult> {
+  async resolve(target: RecursivePriceTarget): Promise<RecursivePriceResult> {
     return this.resolveAt(normalizeTarget(target), [])
   }
 
@@ -189,7 +189,7 @@ export class RecursivePriceEngine {
         }
       } catch (error) {
         const reason = classifyError(error)
-        attempts.push({ adapter: 'market-price', reason, error: errorMessage(error) })
+        attempts.push({ adapter: 'market-price', reason, error: errorMessage(error), cause: error })
         if (reason !== 'unsupported') {
           return { path: null, failure: { reason, token: target.token, attempts } }
         }
@@ -237,6 +237,7 @@ export class RecursivePriceEngine {
           adapter: adapter.name,
           reason: classifyError(error),
           error: errorMessage(error),
+          cause: error,
         })
       }
     }

@@ -104,7 +104,7 @@ describe('RecursivePriceEngine', () => {
         throw new RetryablePricingError('timed out')
       },
     }
-    const silent: RecursivePriceAdapter = { name: 'silent', async resolve: async () => null }
+    const silent: RecursivePriceAdapter = { name: 'silent', resolve: async () => null }
     const engine = new RecursivePriceEngine(marketFor({}), [silent, flaky])
 
     const result = await engine.resolve({ chainId: 1, token: SHARE, timestamp: null })
@@ -149,7 +149,7 @@ describe('RecursivePriceEngine', () => {
   it('rejects a non-positive adapter price', async () => {
     const broken: RecursivePriceAdapter = {
       name: 'broken',
-      async resolve: async () => ({ priceUsd: 0, inputs: [], metadata: {} }),
+      resolve: async () => ({ priceUsd: 0, inputs: [], metadata: {} }),
     }
     const engine = new RecursivePriceEngine(marketFor({}), [broken])
 
