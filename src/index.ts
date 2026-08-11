@@ -4,6 +4,7 @@ import { createPool } from './db'
 import { readEdgeCache, writeEdgeCache } from './edge-cache'
 import { ApiError, jsonError } from './errors'
 import { optionsResponse, withCors } from './http'
+import { renderLandingPage } from './lander'
 import { handleHealth } from './routes/health'
 import { handleBatchHistorical, handleHistorical, handleRangeHistorical, handleSpot, notFoundErrorHeaders } from './routes/prices'
 import type { Env } from './types'
@@ -67,6 +68,13 @@ export default {
       if (pathname === '/api/health' && request.method === 'GET') {
         logRequest(request, null)
         return handleHealth()
+      }
+
+      if (pathname === '/' && request.method === 'GET') {
+        logRequest(request, null)
+        return new Response(renderLandingPage(env, url.origin), {
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+        })
       }
 
       ;({ clientId } = authenticateRequest(request, env))
