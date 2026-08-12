@@ -58,7 +58,8 @@ Semantics:
 
 ## Registries & Singletons
 
-- `SpotSourceRegistry` lives in `src/registries/spot.ts`; `HistoricalSourceRegistry` lives in `src/registries/historical.ts`.
+- Shared resolve algorithm lives in generic `SourceRegistry` (`src/registries/source-registry.ts`).
+- `SpotSourceRegistry` and `HistoricalSourceRegistry` are thin typed wrappers (distinct exported classes/singletons) in `spot.ts` / `historical.ts`.
 - Registries are instantiated lazily as Worker isolate singletons via `getSpotSourceRegistry(env)` and `getHistoricalSourceRegistry(env)` to prevent per-request allocations.
 - Priority-sorted at construction; duplicate names throw at boot.
 - `resolve` iterates supported sources in priority order; first price wins.
@@ -74,9 +75,10 @@ src/
     defillama.ts    # historical source #1 (wraps existing DefiLlamaClient)
     index.ts        # exports concrete sources & types
   registries/
-    spot.ts         # SpotSourceRegistry class, createSpotSources(env) & getSpotSourceRegistry(env) singleton
-    historical.ts   # HistoricalSourceRegistry class, createHistoricalSources(env) & getHistoricalSourceRegistry(env) singleton
-    index.ts        # barrel export for registries & resetSourceRegistries()
+    source-registry.ts  # generic SourceRegistry (constructor + resolve algorithm)
+    spot.ts             # SpotSourceRegistry wrapper, createSpotSources(env) & singleton
+    historical.ts       # HistoricalSourceRegistry wrapper, createHistoricalSources(env) & singleton
+    index.ts            # barrel export for registries & resetSourceRegistries()
   clients/          # external HTTP clients & RPC helpers (enso, defillama, http-client, rpc, curve)
   db/               # Neon pool & SQL queries
   cache/            # edge cache matching (edge.ts) & Cache-Control policies (headers.ts)
