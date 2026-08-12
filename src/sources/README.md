@@ -102,7 +102,7 @@ Use vitest + fetch-mock (see `test/sources/enso.test.ts` for the pattern).
 
 ## Rules
 
-- **Do not touch registry resolution classes**, routes, or other sources. A PR adding a source that edits these files is wrong by definition.
+- **Do not touch registry resolution** (`SourceRegistry`, the spot/historical wrappers), routes, or other sources. A PR adding a source that edits these files is wrong by definition.
 - **Do not call the registry from your source.** Sources are stateless plugins; the registry orchestrates them.
 - **Do not include `source` in your return object.** The registry stamps it.
 - Return `null` or throw `ApiError('NOT_FOUND', …)` for "I have no price for this token" — not a 404 from a downstream service.

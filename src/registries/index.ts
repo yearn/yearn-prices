@@ -22,3 +22,5 @@ export {
   resetSpotSourceRegistry,
   SpotSourceRegistry,
 }
+export { SourceRegistry } from './source-registry'
+export type { NamedSource, PriceFields, StampedPrice } from './source-registry'
