@@ -8,6 +8,7 @@ import {
   optionsResponse,
   withCors,
 } from './http'
+import { renderLandingPage } from './lander'
 import { handleHealth } from './routes/health'
 import { handleBatchHistorical } from './routes/historical/batch'
 import { handleHistorical } from './routes/historical/exact'
@@ -74,6 +75,13 @@ export default {
       if (pathname === '/api/health' && request.method === 'GET') {
         logRequest(request, null)
         return handleHealth()
+      }
+
+      if (pathname === '/' && request.method === 'GET') {
+        logRequest(request, null)
+        return new Response(renderLandingPage(env, url.origin), {
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+        })
       }
 
       ;({ clientId } = authenticateRequest(request, env))
