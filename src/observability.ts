@@ -51,19 +51,33 @@ function buildPayload(serviceName: string, err: Error): unknown {
 }
 
 export function captureError(ctx: ExecutionContext, env: Env, error: unknown): void {
-  const endpoint = env.OTEL_EXPORTER_OTLP_ENDPOINT
+  const logsEndpoint = env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+  const endpoint = logsEndpoint || env.OTEL_EXPORTER_OTLP_ENDPOINT
   if (!endpoint) return
 
   const err = error instanceof Error ? error : new Error(String(error))
-  const url = `${endpoint.replace(/\/$/, '')}/v1/logs`
+  const normalizedEndpoint = endpoint.replace(/\/$/, '')
+  const url = logsEndpoint ? normalizedEndpoint : `${normalizedEndpoint}/v1/logs`
   const body = JSON.stringify(buildPayload(env.OTEL_SERVICE_NAME || SERVICE_NAME, err))
 
   // waitUntil lets the export finish after the response is returned (no added latency).
   ctx.waitUntil(
     fetch(url, {
       method: 'POST',
-      headers: parseHeaders(env.OTEL_EXPORTER_OTLP_HEADERS),
+      headers: parseHeaders(env.OTEL_EXPORTER_OTLP_LOGS_HEADERS || env.OTEL_EXPORTER_OTLP_HEADERS),
       body,
-    }).catch(() => {}),
+    }).then((response) => {
+      if (!response.ok) {
+        console.error(JSON.stringify({
+          message: 'otel-export-error',
+          status: response.status,
+        }))
+      }
+    }).catch((exportError) => {
+      console.error(JSON.stringify({
+        message: 'otel-export-error',
+        error: exportError instanceof Error ? exportError.message : String(exportError),
+      }))
+    }),
   )
 }

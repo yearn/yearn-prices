@@ -108,6 +108,7 @@ export default {
         const headers = error.code === 'NOT_FOUND' && notFoundCacheable
           ? withCors(notFoundErrorHeaders())
           : withCors({ 'cache-control': CACHE_CONTROL_NO_STORE })
+        if (error.status >= 500) captureError(ctx, env, error)
         return jsonError(error, headers)
       }
 
