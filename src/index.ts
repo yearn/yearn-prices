@@ -89,7 +89,7 @@ export default {
 
       const response = await routePriceRequest(request, env, pathname)
       if (request.method === 'GET') {
-        writeEdgeCache(ctx, request, response)
+        writeEdgeCache(ctx, env, request, response)
       }
       return response
     } catch (error) {

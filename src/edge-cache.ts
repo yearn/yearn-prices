@@ -1,3 +1,6 @@
+import { captureError } from './observability'
+import type { Env } from './types'
+
 // Cloudflare edge caching via the Cache API.
 //
 // A worker-generated Response with a Cache-Control header only drives the
@@ -65,7 +68,12 @@ export async function readEdgeCache(request: Request): Promise<Response | undefi
   return edgeCache().match(cacheKey(request))
 }
 
-export function writeEdgeCache(ctx: ExecutionContext, request: Request, response: Response): void {
+export function writeEdgeCache(
+  ctx: ExecutionContext,
+  env: Env,
+  request: Request,
+  response: Response,
+): void {
   // Trust the Cache API for the store/TTL decision: put() honors the response's
   // Cache-Control — it refuses no-store/private and derives the edge TTL from
   // s-maxage → max-age → Expires. Only success responses reach this function (the
@@ -73,5 +81,11 @@ export function writeEdgeCache(ctx: ExecutionContext, request: Request, response
   // successes and nothing else; put() honoring Cache-Control is the backstop.
   //
   // Non-blocking: storing the response must not delay returning it to the client.
-  ctx.waitUntil(edgeCache().put(cacheKey(request), response.clone()))
+  ctx.waitUntil(
+    edgeCache()
+      .put(cacheKey(request), response.clone())
+      .catch((error: unknown) => {
+        captureError(ctx, env, error)
+      }),
+  )
 }

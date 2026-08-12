@@ -18,7 +18,11 @@ function parseHeaders(raw?: string): Record<string, string> {
   if (!raw) return headers
   for (const pair of raw.split(',')) {
     const idx = pair.indexOf('=')
-    if (idx > 0) headers[pair.slice(0, idx).trim()] = pair.slice(idx + 1).trim()
+    if (idx > 0) {
+      headers[decodeURIComponent(pair.slice(0, idx).trim())] = decodeURIComponent(
+        pair.slice(idx + 1).trim(),
+      )
+    }
   }
   return headers
 }
@@ -36,7 +40,7 @@ function buildPayload(serviceName: string, err: Error): unknown {
             scope: { name: serviceName },
             logRecords: [
               {
-                timeUnixNano: String(Date.now() * 1_000_000),
+                timeUnixNano: String(BigInt(Date.now()) * 1_000_000n),
                 severityNumber: SEVERITY_ERROR,
                 severityText: 'ERROR',
                 body: { stringValue: err.message },
