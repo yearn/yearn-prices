@@ -21,6 +21,10 @@ jobs:
           DATABASE_URL: op://webops-prod/yearn-price/DATABASE_URL
           API_KEY_KONG: op://webops-prod/yearn-price/API_KEY_KONG
           API_KEY_FRONTEND: op://webops-prod/yearn-price/API_KEY_FRONTEND
+          API_KEY_YEARN_DATA: op://webops-prod/yearn-price/API_KEY_YEARN_DATA
+          API_KEY_DEV_MURDERTEETH: op://webops-prod/yearn-price/API_KEY_DEV_MURDERTEETH
+          API_KEY_YEARN_FEES_SERVICE: op://webops-prod/yearn-price/API_KEY_YEARN_FEES_SERVICE
+          API_KEY_DEV_RAAAWS: op://webops-prod/yearn-price/API_KEY_DEV_RAAAWS
           ENSO_API_KEY: op://webops-prod/yearn-price/ENSO_API_KEY
           CLOUDFLARE_API_TOKEN: op://webops-prod/yearn-price/CLOUDFLARE_API_TOKEN
           CLOUDFLARE_ACCOUNT_ID: op://webops-prod/yearn-price/CLOUDFLARE_ACCOUNT_ID
@@ -40,6 +44,10 @@ jobs:
             DATABASE_URL: env.DATABASE_URL,
             API_KEY_KONG: env.API_KEY_KONG,
             API_KEY_FRONTEND: env.API_KEY_FRONTEND,
+            API_KEY_YEARN_DATA: env.API_KEY_YEARN_DATA,
+            API_KEY_DEV_MURDERTEETH: env.API_KEY_DEV_MURDERTEETH,
+            API_KEY_YEARN_FEES_SERVICE: env.API_KEY_YEARN_FEES_SERVICE,
+            API_KEY_DEV_RAAAWS: env.API_KEY_DEV_RAAAWS,
             ENSO_API_KEY: env.ENSO_API_KEY,
             RPC_URL_1: env.RPC_URL_1,
             RPC_URL_10: env.RPC_URL_10,

@@ -8,7 +8,8 @@ import {
   getExistingExactTimestamps,
   insertTokenPrices,
 } from "../src/queries";
-import { createChainClient, estimateBlockByTimestamp, readVaultSharePrice } from '../src/rpc'
+import { estimateBlockByTimestamp, getChainClient, readVaultSharePrice } from '../src/rpc'
+import { priceCurveLpUsd } from '../src/curve'
 import {
   isTodayNormalized,
   normalizedDaysInRange,
@@ -31,6 +32,7 @@ const stats: WarmupStats = {
   failures: 0,
   insertedDirect: 0,
   insertedDerived: 0,
+  insertedCurve: 0,
 }
 const defiLlama = new DefiLlamaClient(undefined, () => {
   stats.retries += 1
@@ -58,6 +60,7 @@ interface WarmupStats {
   failures: number
   insertedDirect: number
   insertedDerived: number
+  insertedCurve: number
 }
 
 function sleep(milliseconds: number): Promise<void> {
@@ -255,14 +258,85 @@ async function warmDirectPrices(
   })
 }
 
+async function warmCurveFallbackPrices(
+  vaults: NormalizedVault[],
+  timestamps: number[],
+  stats: WarmupStats,
+): Promise<void> {
+  // Underlying tokens DefiLlama can't price (e.g. old Curve LP tokens) leave a
+  // gap that cascades into derived vault prices. Fill those from the Curve
+  // pool's on-chain virtual price.
+  const underlyings = new Map<string, { chain: string; chainId: number; token: `0x${string}` }>()
+  for (const vault of vaults) {
+    underlyings.set(`${vault.chain}:${vault.underlyingToken}`, {
+      chain: vault.chain,
+      chainId: vault.chainId,
+      token: vault.underlyingToken,
+    })
+  }
+
+  const requests: HistoricalRequestTuple[] = []
+  for (const underlying of underlyings.values()) {
+    for (const timestamp of timestamps) {
+      requests.push({ chain: underlying.chain, token: underlying.token, timestamp })
+    }
+  }
+
+  const [existingDefillama, existingCurve] = await Promise.all([
+    getExistingExactTimestamps(pool, requests, 'defillama'),
+    getExistingExactTimestamps(pool, requests, 'curve'),
+  ])
+  const missing = requests.filter(request => {
+    const key = `${request.chain}:${request.token}:${request.timestamp}`
+    return isTodayNormalized(request.timestamp) || (!existingDefillama.has(key) && !existingCurve.has(key))
+  })
+
+  await runInGroups(missing, async request => {
+    try {
+      const underlying = underlyings.get(`${request.chain}:${request.token}`)!
+
+      const client = getChainClient(underlying.chainId)
+      if (!client) {
+        console.warn(`gap:missing-rpc chainId=${underlying.chainId}`)
+        return
+      }
+
+      const blockNumber = await estimateBlockByTimestamp(client, underlying.chainId, request.timestamp)
+
+      const price = await priceCurveLpUsd(client, underlying.chainId, underlying.token, blockNumber, async coin => {
+        const coinKey = `${request.chain}:${coin}`
+        stats.apiCalls += 1
+        const response = await defiLlama.getHistorical(toFetchTimestamp(request.timestamp, nowUnix()), [coinKey])
+        return response.coins[coinKey]?.price ?? null
+      })
+
+      if (price == null) {
+        console.warn(`gap:curve ${request.chain}:${request.token} ${request.timestamp}`)
+        return
+      }
+
+      await insertTokenPrices(pool, [{
+        chain: request.chain,
+        token: request.token,
+        timestamp: request.timestamp,
+        price,
+        symbol: null,
+        confidence: null,
+        source: 'curve',
+      }])
+      stats.insertedCurve += 1
+    } catch (error) {
+      stats.failures += 1
+      console.error('Curve fallback failed', { token: request.token, timestamp: request.timestamp }, error)
+    }
+  })
+}
+
 async function warmDerivedVaultPrices(
   vaults: NormalizedVault[],
   timestamps: number[],
   stats: WarmupStats,
 ): Promise<void> {
-  const rpcClients = new Map<number, ReturnType<typeof createChainClient>>()
-  const blockNumbers = new Map<string, bigint>()
-
   const derivedRequests: HistoricalRequestTuple[] = []
   for (const vault of vaults) {
     for (const timestamp of timestamps) {
@@ -300,24 +374,13 @@ async function warmDerivedVaultPrices(
         return
       }
 
-      const rpcUrl = process.env[`RPC_URL_${vault.chainId}`]
-      if (!rpcUrl) {
+      const client = getChainClient(vault.chainId)
+      if (!client) {
         console.warn(`gap:missing-rpc chainId=${vault.chainId}`)
         return
       }
 
-      let client = rpcClients.get(vault.chainId)
-      if (!client) {
-        client = createChainClient(vault.chainId, rpcUrl)
-        rpcClients.set(vault.chainId, client)
-      }
-
-      const blockCacheKey = `${vault.chainId}:${timestamp}`
-      let blockNumber = blockNumbers.get(blockCacheKey)
-      if (!blockNumber) {
-        blockNumber = await estimateBlockByTimestamp(client, vault.chainId, timestamp)
-        blockNumbers.set(blockCacheKey, blockNumber)
-      }
+      const blockNumber = await estimateBlockByTimestamp(client, vault.chainId, timestamp)
 
       const sharePrice = await readVaultSharePrice(
         client,
@@ -352,6 +415,7 @@ try {
 
   console.info(`Warmup start: ${timestamps.length} days, ${vaults.length} vaults`)
   await warmDirectPrices(vaults, timestamps, stats)
+  await warmCurveFallbackPrices(vaults, timestamps, stats)
   await warmDerivedVaultPrices(vaults, timestamps, stats)
 
   console.info(
