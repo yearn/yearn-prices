@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { getAddress } from 'viem'
-import { EnsoClient } from '../src/enso'
-import { handleSpot } from '../src/routes/prices'
-import { toUnixSeconds } from '../src/time'
+import { EnsoClient } from '../src/clients'
+import { handleSpot } from '../src/routes/spot'
 import type { Env } from '../src/types'
+import { toUnixSeconds } from '../src/utils'
 
 // Real key, loaded from .env via dotenv (vitest setupFiles). These tests hit the live Enso API,
 // so they are gated: they run only when ENSO_API_KEY is set, and skip in CI / when it is absent.

@@ -116,7 +116,7 @@ export async function priceCurveLpUsd(
     }),
   ])
 
-  const coin0 = coins.find(coin => !isZero(coin))
+  const coin0 = coins.find((coin) => !isZero(coin))
   if (!coin0) {
     return null
   }

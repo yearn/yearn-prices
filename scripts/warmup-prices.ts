@@ -1,23 +1,28 @@
 import { config as loadEnv } from 'dotenv'
 loadEnv();
-import { chainIdToName, normalizeTokenAddress } from "../src/chains";
-import { createPool } from '../src/db'
-import { DefiLlamaClient } from '../src/defillama'
 import {
+  DefiLlamaClient,
+  estimateBlockByTimestamp,
+  getChainClient,
+  priceCurveLpUsd,
+  readVaultSharePrice,
+} from '../src/clients'
+import {
+  createPool,
   getBatchHistoricalPrices,
   getExistingExactTimestamps,
   insertTokenPrices,
-} from "../src/queries";
-import { estimateBlockByTimestamp, getChainClient, readVaultSharePrice } from '../src/rpc'
-import { priceCurveLpUsd } from '../src/curve'
+} from '../src/db'
+import type { HistoricalRequestTuple, KongVaultListItem, TokenPriceWrite } from '../src/types'
 import {
+  chainIdToName,
   isTodayNormalized,
   normalizedDaysInRange,
+  normalizeTokenAddress,
   normalizeToEndOfDay,
   nowUnix,
   parseCliDate,
-} from "../src/time";
-import type { HistoricalRequestTuple, KongVaultListItem, TokenPriceWrite } from '../src/types'
+} from '../src/utils'
 
 const databaseUrl = process.env.DATABASE_URL
 if (!databaseUrl) {

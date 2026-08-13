@@ -44,8 +44,6 @@ export interface ExactPriceRecord extends PricePoint {
   symbol: string | null
 }
 
-export interface BatchPriceRecord extends ExactPriceRecord {}
-
 export interface HistoricalRequestTuple {
   chain: string
   token: string
@@ -70,7 +68,7 @@ export interface HistoricalResponseCoin {
   symbol: string | null
   timestamp: number
   confidence: number | null
-  source: PriceSource
+  source: string
 }
 
 export interface BatchHistoricalResponseCoin {
@@ -91,7 +89,17 @@ export type SpotTokenErrorCode = 'NOT_FOUND' | 'UNAVAILABLE'
 
 export type SpotErrorResponseCoin = ErrorBody<SpotTokenErrorCode>
 
-export type SpotResponseCoin = BatchHistoricalResponseCoin | SpotErrorResponseCoin
+export type SpotResponseCoin =
+  | {
+      symbol: string | null
+      prices: Array<{
+        timestamp: number
+        price: number
+        confidence: number | null
+        source: string
+      }>
+    }
+  | SpotErrorResponseCoin
 
 export interface TokenPriceWrite {
   chain: string

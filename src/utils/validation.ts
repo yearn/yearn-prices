@@ -1,7 +1,13 @@
+import { ApiError, ensure } from '../http/errors'
+import type {
+  HistoricalRequestTuple,
+  PriceSource,
+  RangeRequest,
+  SpotRequest,
+} from '../types'
+import { SOURCE_PRIORITY } from '../types'
 import { parseTokenKey } from './chains'
-import { ApiError, ensure } from './errors'
-import { normalizeToEndOfDay, normalizedRangeDayCount } from './time'
-import { SOURCE_PRIORITY, type SpotRequest, type HistoricalRequestTuple, type PriceSource, type RangeRequest } from './types'
+import { normalizedRangeDayCount, normalizeToEndOfDay } from './time'
 
 const MAX_BATCH_TOKENS = 50
 const MAX_BATCH_TIMESTAMPS_PER_TOKEN = 90
