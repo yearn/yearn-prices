@@ -1,20 +1,21 @@
 import { CHAIN_ID_TO_NAME } from './utils/chains'
 import type { Env } from './types'
 
-function supportedChains(env: Env): Array<{ id: number, name: string }> {
+function supportedChains(env: Env): Array<{ id: number; name: string }> {
   return Object.keys(env)
-    .filter(key => key.startsWith('RPC_URL_'))
-    .map(key => Number(key.slice('RPC_URL_'.length)))
-    .filter(id => Number.isFinite(id))
+    .filter((key) => key.startsWith('RPC_URL_'))
+    .map((key) => Number(key.slice('RPC_URL_'.length)))
+    .filter((id) => Number.isFinite(id))
     .sort((left, right) => left - right)
-    .map(id => ({ id, name: CHAIN_ID_TO_NAME[id as keyof typeof CHAIN_ID_TO_NAME] ?? String(id) }))
+    .map((id) => ({ id, name: CHAIN_ID_TO_NAME[id as keyof typeof CHAIN_ID_TO_NAME] ?? String(id) }))
 }
 
 export function renderLandingPage(env: Env, baseUrl: string): string {
   const chains = supportedChains(env)
-  const chainList = chains.length > 0
-    ? `<ul class="chains">${chains.map(chain => `<li><span class="chain-name">${chain.name}</span><span class="chain-id">${chain.id}</span></li>`).join('')}</ul>`
-    : '<p class="muted">No chains are configured on this deployment.</p>'
+  const chainList =
+    chains.length > 0
+      ? `<ul class="chains">${chains.map((chain) => `<li><span class="chain-name">${chain.name}</span><span class="chain-id">${chain.id}</span></li>`).join('')}</ul>`
+      : '<p class="muted">No chains are configured on this deployment.</p>'
 
   const curl = `curl \\
   -H "Authorization: Bearer $API_KEY" \\

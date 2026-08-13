@@ -1,13 +1,6 @@
 import { CACHE_CONTROL_NO_STORE, readEdgeCache, writeEdgeCache } from './cache'
 import { createPool } from './db'
-import {
-  ApiError,
-  authenticateRequest,
-  jsonError,
-  notFoundErrorHeaders,
-  optionsResponse,
-  withCors,
-} from './http'
+import { ApiError, authenticateRequest, jsonError, notFoundErrorHeaders, optionsResponse, withCors } from './http'
 import { renderLandingPage } from './lander'
 import { handleHealth } from './routes/health'
 import { handleBatchHistorical } from './routes/historical/batch'
@@ -23,8 +16,8 @@ function logRequest(request: Request, clientId: string | null, extra?: Record<st
       method: request.method,
       path: new URL(request.url).pathname,
       client_id: clientId,
-      ...extra,
-    }),
+      ...extra
+    })
   )
 }
 
@@ -80,7 +73,7 @@ export default {
       if (pathname === '/' && request.method === 'GET') {
         logRequest(request, null)
         return new Response(renderLandingPage(env, url.origin), {
-          headers: { 'content-type': 'text/html; charset=utf-8' },
+          headers: { 'content-type': 'text/html; charset=utf-8' }
         })
       }
 
@@ -107,13 +100,14 @@ export default {
             client_id: clientId,
             code: error.code,
             status: error.status,
-            detail: error.message,
-          }),
+            detail: error.message
+          })
         )
         const notFoundCacheable = pathname.startsWith('/api/prices/historical/')
-        const headers = error.code === 'NOT_FOUND' && notFoundCacheable
-          ? withCors(notFoundErrorHeaders())
-          : withCors({ 'cache-control': CACHE_CONTROL_NO_STORE })
+        const headers =
+          error.code === 'NOT_FOUND' && notFoundCacheable
+            ? withCors(notFoundErrorHeaders())
+            : withCors({ 'cache-control': CACHE_CONTROL_NO_STORE })
         return jsonError(error, headers)
       }
 
@@ -122,10 +116,13 @@ export default {
           message: 'request-error',
           path: pathname,
           client_id: clientId,
-          error: error instanceof Error ? error.message : String(error),
-        }),
+          error: error instanceof Error ? error.message : String(error)
+        })
       )
-      return jsonError(new ApiError('INTERNAL_ERROR', 'Unexpected internal error'), withCors({ 'cache-control': CACHE_CONTROL_NO_STORE }))
+      return jsonError(
+        new ApiError('INTERNAL_ERROR', 'Unexpected internal error'),
+        withCors({ 'cache-control': CACHE_CONTROL_NO_STORE })
+      )
     }
-  },
+  }
 }

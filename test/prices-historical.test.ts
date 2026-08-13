@@ -38,17 +38,19 @@ describe('handleHistorical', () => {
     const response = await handleHistorical(
       request(),
       ENV,
-      pool([{
-        chain: 'ethereum',
-        token: RAW_ADDR,
-        timestamp: new Date(TIMESTAMP * 1000),
-        price: '123.45',
-        symbol: 'WBTC',
-        confidence: '0.9',
-        source: 'defillama',
-      }]),
+      pool([
+        {
+          chain: 'ethereum',
+          token: RAW_ADDR,
+          timestamp: new Date(TIMESTAMP * 1000),
+          price: '123.45',
+          symbol: 'WBTC',
+          confidence: '0.9',
+          source: 'defillama'
+        }
+      ]),
       String(TIMESTAMP),
-      TOKEN_KEY,
+      TOKEN_KEY
     )
 
     expect(response.status).toBe(200)
@@ -60,9 +62,9 @@ describe('handleHistorical', () => {
           symbol: 'WBTC',
           timestamp: TIMESTAMP,
           confidence: 0.9,
-          source: 'defillama',
-        },
-      },
+          source: 'defillama'
+        }
+      }
     })
   })
 
@@ -74,19 +76,13 @@ describe('handleHistorical', () => {
             price: 27052,
             symbol: 'WBTC',
             timestamp: TIMESTAMP,
-            confidence: 0.99,
-          },
-        },
-      }),
+            confidence: 0.99
+          }
+        }
+      })
     )
 
-    const response = await handleHistorical(
-      request(),
-      ENV,
-      pool([]),
-      String(TIMESTAMP),
-      TOKEN_KEY,
-    )
+    const response = await handleHistorical(request(), ENV, pool([]), String(TIMESTAMP), TOKEN_KEY)
 
     expect(response.status).toBe(200)
     expect(fetchMock).toHaveBeenCalledOnce()
@@ -97,9 +93,9 @@ describe('handleHistorical', () => {
           symbol: 'WBTC',
           timestamp: TIMESTAMP,
           confidence: 0.99,
-          source: 'defillama',
-        },
-      },
+          source: 'defillama'
+        }
+      }
     })
   })
 
@@ -111,35 +107,31 @@ describe('handleHistorical', () => {
             price: 27052,
             symbol: 'WBTC',
             timestamp: TIMESTAMP,
-            confidence: 0.99,
-          },
-        },
-      }),
+            confidence: 0.99
+          }
+        }
+      })
     )
 
-    const fallback = await handleHistorical(
-      request(),
-      ENV,
-      pool([]),
-      String(TIMESTAMP),
-      TOKEN_KEY,
-    )
+    const fallback = await handleHistorical(request(), ENV, pool([]), String(TIMESTAMP), TOKEN_KEY)
     expect(fallback.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
 
     const hit = await handleHistorical(
       request(),
       ENV,
-      pool([{
-        chain: 'ethereum',
-        token: RAW_ADDR,
-        timestamp: new Date(TIMESTAMP * 1000),
-        price: '123.45',
-        symbol: 'WBTC',
-        confidence: '0.9',
-        source: 'defillama',
-      }]),
+      pool([
+        {
+          chain: 'ethereum',
+          token: RAW_ADDR,
+          timestamp: new Date(TIMESTAMP * 1000),
+          price: '123.45',
+          symbol: 'WBTC',
+          confidence: '0.9',
+          source: 'defillama'
+        }
+      ]),
       String(TIMESTAMP),
-      TOKEN_KEY,
+      TOKEN_KEY
     )
     expect(hit.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
   })
@@ -152,19 +144,13 @@ describe('handleHistorical', () => {
             price: 27052,
             symbol: 'WBTC',
             timestamp: TIMESTAMP + 7200,
-            confidence: 0.99,
-          },
-        },
-      }),
+            confidence: 0.99
+          }
+        }
+      })
     )
 
-    const response = await handleHistorical(
-      request(),
-      ENV,
-      pool([]),
-      String(TIMESTAMP),
-      TOKEN_KEY,
-    )
+    const response = await handleHistorical(request(), ENV, pool([]), String(TIMESTAMP), TOKEN_KEY)
 
     await expect(response.json()).resolves.toEqual({
       coins: {
@@ -173,25 +159,25 @@ describe('handleHistorical', () => {
           symbol: 'WBTC',
           timestamp: TIMESTAMP,
           confidence: 0.99,
-          source: 'defillama',
-        },
-      },
+          source: 'defillama'
+        }
+      }
     })
   })
 
   it('does not fall back when an explicit source is requested', async () => {
-    await expect(
-      handleHistorical(request('enso'), ENV, pool([]), String(TIMESTAMP), TOKEN_KEY),
-    ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    await expect(handleHistorical(request('enso'), ENV, pool([]), String(TIMESTAMP), TOKEN_KEY)).rejects.toMatchObject({
+      code: 'NOT_FOUND'
+    })
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('returns NOT_FOUND when both DB and the fallback miss', async () => {
     fetchMock.mockResolvedValue(defillamaResponse(200, { coins: {} }))
 
-    await expect(
-      handleHistorical(request(), ENV, pool([]), String(TIMESTAMP), TOKEN_KEY),
-    ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    await expect(handleHistorical(request(), ENV, pool([]), String(TIMESTAMP), TOKEN_KEY)).rejects.toMatchObject({
+      code: 'NOT_FOUND'
+    })
   })
 
   // A degraded upstream must not be folded into NOT_FOUND: that response is served
@@ -202,7 +188,7 @@ describe('handleHistorical', () => {
     vi.useFakeTimers()
 
     const assertion = expect(
-      handleHistorical(request(), ENV, pool([]), String(TIMESTAMP), TOKEN_KEY),
+      handleHistorical(request(), ENV, pool([]), String(TIMESTAMP), TOKEN_KEY)
     ).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
     await vi.runAllTimersAsync()
     await assertion

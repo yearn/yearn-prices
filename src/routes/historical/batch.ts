@@ -6,11 +6,7 @@ import type { Env } from '../../types'
 import { parseBatchCoins, parseOptionalSource } from '../../utils'
 import { buildOriginalKeyMap, groupRowsByToken, toExactKey } from './shared'
 
-export async function handleBatchHistorical(
-  request: Request,
-  _env: Env,
-  pool: Pool,
-): Promise<Response> {
+export async function handleBatchHistorical(request: Request, _env: Env, pool: Pool): Promise<Response> {
   const url = new URL(request.url)
   const source = parseOptionalSource(url.searchParams.get('source'))
   const rawCoins = url.searchParams.get('coins')
@@ -28,9 +24,9 @@ export async function handleBatchHistorical(
       headers: {
         'cache-control': cacheControlForBatch(
           requests.map((entry) => entry.timestamp),
-          allResolved,
-        ),
-      },
-    },
+          allResolved
+        )
+      }
+    }
   )
 }

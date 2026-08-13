@@ -29,7 +29,7 @@ describe.skipIf(!ENSO_API_KEY)('Enso integration (live API)', () => {
       expect(seconds).toBeGreaterThan(1_000_000_000) // after 2001
       expect(seconds).toBeLessThan(100_000_000_000) // before year ~5138 (i.e. not still in ms)
     },
-    NETWORK_TIMEOUT,
+    NETWORK_TIMEOUT
   )
 
   it(
@@ -38,9 +38,7 @@ describe.skipIf(!ENSO_API_KEY)('Enso integration (live API)', () => {
       const env: Env = { DATABASE_URL: 'postgres://unused', ENSO_API_KEY }
 
       const coinKey = `ethereum:${WETH}`
-      const request = new Request(
-        `https://svc/api/prices/spot?coins=${encodeURIComponent(JSON.stringify([coinKey]))}`,
-      )
+      const request = new Request(`https://svc/api/prices/spot?coins=${encodeURIComponent(JSON.stringify([coinKey]))}`)
       const response = await handleSpot(request, env)
 
       expect(response.status).toBe(200)
@@ -53,6 +51,6 @@ describe.skipIf(!ENSO_API_KEY)('Enso integration (live API)', () => {
       expect(price.timestamp).toBeGreaterThan(1_700_000_000)
       expect(price.timestamp).toBeLessThanOrEqual(Math.floor(Date.now() / 1000) + 60)
     },
-    NETWORK_TIMEOUT,
+    NETWORK_TIMEOUT
   )
 })

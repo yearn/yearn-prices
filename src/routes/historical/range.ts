@@ -6,11 +6,7 @@ import type { Env } from '../../types'
 import { normalizedDaysInRange, parseOptionalSource, parseRangeCoins } from '../../utils'
 import { buildOriginalKeyMap, groupRowsByToken, toExactKey } from './shared'
 
-export async function handleRangeHistorical(
-  request: Request,
-  _env: Env,
-  pool: Pool,
-): Promise<Response> {
+export async function handleRangeHistorical(request: Request, _env: Env, pool: Pool): Promise<Response> {
   const url = new URL(request.url)
   const source = parseOptionalSource(url.searchParams.get('source'))
   const rawCoins = url.searchParams.get('coins')
@@ -22,10 +18,7 @@ export async function handleRangeHistorical(
 
   const expectedTimestamps = new Set<string>()
   for (const requestRange of requests) {
-    for (const timestamp of normalizedDaysInRange(
-      requestRange.startTimestamp,
-      requestRange.endTimestamp,
-    )) {
+    for (const timestamp of normalizedDaysInRange(requestRange.startTimestamp, requestRange.endTimestamp)) {
       expectedTimestamps.add(`${requestRange.chain}:${requestRange.token}:${timestamp}`)
     }
   }
@@ -39,9 +32,9 @@ export async function handleRangeHistorical(
       headers: {
         'cache-control': cacheControlForRange(
           requests.map((entry) => entry.endTimestamp),
-          allResolved,
-        ),
-      },
-    },
+          allResolved
+        )
+      }
+    }
   )
 }

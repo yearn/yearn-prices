@@ -2,9 +2,7 @@ import { DefiLlamaClient } from '../clients/defillama'
 import { chainIdToName } from '../utils/chains'
 import type { HistoricalPriceSource } from './types'
 
-export function createDefiLlamaHistoricalSource(
-  client: DefiLlamaClient,
-): HistoricalPriceSource {
+export function createDefiLlamaHistoricalSource(client: DefiLlamaClient): HistoricalPriceSource {
   return {
     name: 'defillama',
     priority: 10,
@@ -35,8 +33,8 @@ export function createDefiLlamaHistoricalSource(
         price: priceData.price,
         timestamp: priceData.timestamp,
         symbol: priceData.symbol ?? null,
-        confidence: priceData.confidence ?? null,
+        confidence: priceData.confidence ?? null
       }
-    },
+    }
   }
 }

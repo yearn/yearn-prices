@@ -60,9 +60,5 @@ export interface HistoricalPriceSource {
    * if no other source succeeds.
    * The registry guarantees `source` is stamped.
    */
-  getHistoricalPrice(
-    chainId: number,
-    token: string,
-    timestamp: number,
-  ): Promise<HistoricalPriceResult | null>
+  getHistoricalPrice(chainId: number, token: string, timestamp: number): Promise<HistoricalPriceResult | null>
 }

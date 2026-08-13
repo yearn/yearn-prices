@@ -1,10 +1,5 @@
 import { ApiError, ensure } from '../http/errors'
-import type {
-  HistoricalRequestTuple,
-  PriceSource,
-  RangeRequest,
-  SpotRequest,
-} from '../types'
+import type { HistoricalRequestTuple, PriceSource, RangeRequest, SpotRequest } from '../types'
 import { SOURCE_PRIORITY } from '../types'
 import { parseTokenKey } from './chains'
 import { normalizedRangeDayCount, normalizeToEndOfDay } from './time'
@@ -78,19 +73,31 @@ export function parseBatchCoins(raw: string | null): HistoricalRequestTuple[] {
     throw new ApiError('INVALID_INPUT', 'Invalid coins query parameter')
   }
 
-  ensure(parsed && typeof parsed === 'object' && !Array.isArray(parsed), 'INVALID_INPUT', 'Coins payload must be an object')
+  ensure(
+    parsed && typeof parsed === 'object' && !Array.isArray(parsed),
+    'INVALID_INPUT',
+    'Coins payload must be an object'
+  )
   const entries = Object.entries(parsed)
   ensure(entries.length <= MAX_BATCH_TOKENS, 'INVALID_INPUT', `A maximum of ${MAX_BATCH_TOKENS} tokens is allowed`)
 
   const requests: HistoricalRequestTuple[] = []
   for (const [tokenKey, timestamps] of entries) {
     ensure(Array.isArray(timestamps), 'INVALID_INPUT', `Batch timestamps for ${tokenKey} must be an array`)
-    ensure(timestamps.length <= MAX_BATCH_TIMESTAMPS_PER_TOKEN, 'INVALID_INPUT', `A maximum of ${MAX_BATCH_TIMESTAMPS_PER_TOKEN} timestamps is allowed per token`)
+    ensure(
+      timestamps.length <= MAX_BATCH_TIMESTAMPS_PER_TOKEN,
+      'INVALID_INPUT',
+      `A maximum of ${MAX_BATCH_TIMESTAMPS_PER_TOKEN} timestamps is allowed per token`
+    )
 
     const parsedTokenKey = parseTokenKey(tokenKey)
     const dedupedTimestamps = new Set<number>()
     for (const timestamp of timestamps) {
-      ensure(typeof timestamp === 'number' || /^\d+$/.test(String(timestamp)), 'INVALID_INPUT', `Invalid timestamp for ${tokenKey}`)
+      ensure(
+        typeof timestamp === 'number' || /^\d+$/.test(String(timestamp)),
+        'INVALID_INPUT',
+        `Invalid timestamp for ${tokenKey}`
+      )
       dedupedTimestamps.add(normalizeToEndOfDay(Number(timestamp)))
     }
 
@@ -98,7 +105,7 @@ export function parseBatchCoins(raw: string | null): HistoricalRequestTuple[] {
       requests.push({
         chain: parsedTokenKey.chain,
         token: parsedTokenKey.token,
-        timestamp: normalizedTimestamp,
+        timestamp: normalizedTimestamp
       })
     }
   }
@@ -116,15 +123,27 @@ export function parseRangeCoins(raw: string | null): RangeRequest[] {
     throw new ApiError('INVALID_INPUT', 'Invalid coins query parameter')
   }
 
-  ensure(parsed && typeof parsed === 'object' && !Array.isArray(parsed), 'INVALID_INPUT', 'Coins payload must be an object')
+  ensure(
+    parsed && typeof parsed === 'object' && !Array.isArray(parsed),
+    'INVALID_INPUT',
+    'Coins payload must be an object'
+  )
   const entries = Object.entries(parsed)
   ensure(entries.length <= MAX_RANGE_TOKENS, 'INVALID_INPUT', `A maximum of ${MAX_RANGE_TOKENS} tokens is allowed`)
 
   return entries.map(([tokenKey, range]) => {
     ensure(Array.isArray(range) && range.length === 2, 'INVALID_INPUT', `Range for ${tokenKey} must be [start, end]`)
     const [startRaw, endRaw] = range
-    ensure(typeof startRaw === 'number' || /^\d+$/.test(String(startRaw)), 'INVALID_INPUT', `Invalid start timestamp for ${tokenKey}`)
-    ensure(typeof endRaw === 'number' || /^\d+$/.test(String(endRaw)), 'INVALID_INPUT', `Invalid end timestamp for ${tokenKey}`)
+    ensure(
+      typeof startRaw === 'number' || /^\d+$/.test(String(startRaw)),
+      'INVALID_INPUT',
+      `Invalid start timestamp for ${tokenKey}`
+    )
+    ensure(
+      typeof endRaw === 'number' || /^\d+$/.test(String(endRaw)),
+      'INVALID_INPUT',
+      `Invalid end timestamp for ${tokenKey}`
+    )
 
     const startTimestamp = normalizeToEndOfDay(Number(startRaw))
     const endTimestamp = normalizeToEndOfDay(Number(endRaw))
@@ -132,7 +151,7 @@ export function parseRangeCoins(raw: string | null): RangeRequest[] {
     ensure(
       normalizedRangeDayCount(startTimestamp, endTimestamp) <= MAX_RANGE_DAYS,
       'INVALID_INPUT',
-      `A maximum of ${MAX_RANGE_DAYS} days is allowed per token range`,
+      `A maximum of ${MAX_RANGE_DAYS} days is allowed per token range`
     )
 
     const parsedTokenKey = parseTokenKey(tokenKey)
@@ -140,7 +159,7 @@ export function parseRangeCoins(raw: string | null): RangeRequest[] {
       chain: parsedTokenKey.chain,
       token: parsedTokenKey.token,
       startTimestamp,
-      endTimestamp,
+      endTimestamp
     }
   })
 }

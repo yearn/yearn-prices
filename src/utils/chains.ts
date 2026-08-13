@@ -11,13 +11,13 @@ export const CHAIN_ID_TO_NAME = {
   8453: 'base',
   42161: 'arbitrum',
   80094: 'berachain',
-  747474: 'katana',
+  747474: 'katana'
 } as const
 
 export const SUPPORTED_CHAIN_NAMES: ReadonlySet<string> = new Set(Object.values(CHAIN_ID_TO_NAME))
 
 export const CHAIN_NAME_TO_ID: Record<string, number> = Object.fromEntries(
-  Object.entries(CHAIN_ID_TO_NAME).map(([id, name]) => [name, Number(id)]),
+  Object.entries(CHAIN_ID_TO_NAME).map(([id, name]) => [name, Number(id)])
 )
 
 const TOKEN_ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/

@@ -1,18 +1,13 @@
 import { config as loadEnv } from 'dotenv'
-loadEnv();
+loadEnv()
 import {
   DefiLlamaClient,
   estimateBlockByTimestamp,
   getChainClient,
   priceCurveLpUsd,
-  readVaultSharePrice,
+  readVaultSharePrice
 } from '../src/clients'
-import {
-  createPool,
-  getBatchHistoricalPrices,
-  getExistingExactTimestamps,
-  insertTokenPrices,
-} from '../src/db'
+import { createPool, getBatchHistoricalPrices, getExistingExactTimestamps, insertTokenPrices } from '../src/db'
 import type { HistoricalRequestTuple, KongVaultListItem, TokenPriceWrite } from '../src/types'
 import {
   chainIdToName,
@@ -21,7 +16,7 @@ import {
   normalizeTokenAddress,
   normalizeToEndOfDay,
   nowUnix,
-  parseCliDate,
+  parseCliDate
 } from '../src/utils'
 
 const databaseUrl = process.env.DATABASE_URL
@@ -37,7 +32,7 @@ const stats: WarmupStats = {
   failures: 0,
   insertedDirect: 0,
   insertedDerived: 0,
-  insertedCurve: 0,
+  insertedCurve: 0
 }
 const defiLlama = new DefiLlamaClient(undefined, () => {
   stats.retries += 1
@@ -69,7 +64,7 @@ interface WarmupStats {
 }
 
 function sleep(milliseconds: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, milliseconds))
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
 function parseArgs(argv: string[]): { start: number; end: number } {
@@ -101,7 +96,7 @@ async function fetchYearnVaults(): Promise<NormalizedVault[]> {
     throw new Error(`Failed to fetch Kong vault list: ${response.status}`)
   }
 
-  const json = await response.json() as KongVaultListItem[]
+  const json = (await response.json()) as KongVaultListItem[]
   const vaults: NormalizedVault[] = []
 
   for (const item of json) {
@@ -118,7 +113,7 @@ async function fetchYearnVaults(): Promise<NormalizedVault[]> {
         underlyingToken: normalizeTokenAddress(item.asset.address),
         symbol: item.symbol,
         apiVersion: item.apiVersion,
-        decimals: item.decimals,
+        decimals: item.decimals
       })
     } catch {
       continue
@@ -142,7 +137,7 @@ function chunk<T>(items: T[], size: number): T[][] {
 
 async function runInGroups<T>(items: T[], worker: (item: T) => Promise<void>): Promise<void> {
   for (const group of chunk(items, REQUEST_GROUP_SIZE)) {
-    await Promise.all(group.map(item => worker(item)))
+    await Promise.all(group.map((item) => worker(item)))
     if (group.length === REQUEST_GROUP_SIZE) {
       await sleep(REQUEST_GROUP_DELAY_MS)
     }
@@ -154,11 +149,11 @@ function buildDirectRequests(vaults: NormalizedVault[], timestamps: number[]): H
   for (const vault of vaults) {
     tokenMap.set(`${vault.chain}:${vault.underlyingToken}`, {
       chain: vault.chain,
-      token: vault.underlyingToken,
+      token: vault.underlyingToken
     })
     tokenMap.set(`${vault.chain}:${vault.vaultToken}`, {
       chain: vault.chain,
-      token: vault.vaultToken,
+      token: vault.vaultToken
     })
   }
 
@@ -192,28 +187,30 @@ function toFetchTimestamp(timestamp: number, currentTimestamp: number): number {
   return isTodayNormalized(timestamp, currentTimestamp) ? currentTimestamp : timestamp
 }
 
-function buildDefiLlamaPayloads(grouped: Record<string, number[]>, currentTimestamp = nowUnix()): Array<Record<string, number[]>> {
+function buildDefiLlamaPayloads(
+  grouped: Record<string, number[]>,
+  currentTimestamp = nowUnix()
+): Array<Record<string, number[]>> {
   const tokenChunks: Array<{ tokenKey: string; timestamps: number[] }> = []
   for (const [tokenKey, timestamps] of Object.entries(grouped)) {
-    const fetchTimestamps = timestamps.map(timestamp => toFetchTimestamp(timestamp, currentTimestamp))
-    for (const timestampChunk of chunk([...new Set(fetchTimestamps)].sort((left, right) => left - right), DEFI_LLAMA_TIMESTAMP_BATCH)) {
+    const fetchTimestamps = timestamps.map((timestamp) => toFetchTimestamp(timestamp, currentTimestamp))
+    for (const timestampChunk of chunk(
+      [...new Set(fetchTimestamps)].sort((left, right) => left - right),
+      DEFI_LLAMA_TIMESTAMP_BATCH
+    )) {
       tokenChunks.push({ tokenKey, timestamps: timestampChunk })
     }
   }
 
-  return chunk(tokenChunks, DEFI_LLAMA_TOKEN_BATCH).map(group => {
-    return Object.fromEntries(group.map(item => [item.tokenKey, item.timestamps]))
+  return chunk(tokenChunks, DEFI_LLAMA_TOKEN_BATCH).map((group) => {
+    return Object.fromEntries(group.map((item) => [item.tokenKey, item.timestamps]))
   })
 }
 
-async function warmDirectPrices(
-  vaults: NormalizedVault[],
-  timestamps: number[],
-  stats: WarmupStats,
-): Promise<void> {
+async function warmDirectPrices(vaults: NormalizedVault[], timestamps: number[], stats: WarmupStats): Promise<void> {
   const requests = buildDirectRequests(vaults, timestamps)
   const existing = await getExistingExactTimestamps(pool, requests, 'defillama')
-  stats.cacheHits += [...existing].filter(key => {
+  stats.cacheHits += [...existing].filter((key) => {
     const timestamp = Number(key.slice(key.lastIndexOf(':') + 1))
     return !isTodayNormalized(timestamp)
   }).length
@@ -221,7 +218,7 @@ async function warmDirectPrices(
   const groupedMissing = groupMissingRequests(requests, existing)
   const payloads = buildDefiLlamaPayloads(groupedMissing)
 
-  await runInGroups(payloads, async payload => {
+  await runInGroups(payloads, async (payload) => {
     stats.apiCalls += 1
     try {
       const response = await defiLlama.getBatchHistorical(payload)
@@ -242,7 +239,7 @@ async function warmDirectPrices(
               price: price.price,
               symbol: responseCoin.symbol ?? null,
               confidence: price.confidence ?? null,
-              source: 'defillama',
+              source: 'defillama'
             })
           }
         }
@@ -266,7 +263,7 @@ async function warmDirectPrices(
 async function warmCurveFallbackPrices(
   vaults: NormalizedVault[],
   timestamps: number[],
-  stats: WarmupStats,
+  stats: WarmupStats
 ): Promise<void> {
   // Underlying tokens DefiLlama can't price (e.g. old Curve LP tokens) leave a
   // gap that cascades into derived vault prices. Fill those from the Curve
@@ -276,7 +273,7 @@ async function warmCurveFallbackPrices(
     underlyings.set(`${vault.chain}:${vault.underlyingToken}`, {
       chain: vault.chain,
       chainId: vault.chainId,
-      token: vault.underlyingToken,
+      token: vault.underlyingToken
     })
   }
 
@@ -289,14 +286,14 @@ async function warmCurveFallbackPrices(
 
   const [existingDefillama, existingCurve] = await Promise.all([
     getExistingExactTimestamps(pool, requests, 'defillama'),
-    getExistingExactTimestamps(pool, requests, 'curve'),
+    getExistingExactTimestamps(pool, requests, 'curve')
   ])
-  const missing = requests.filter(request => {
+  const missing = requests.filter((request) => {
     const key = `${request.chain}:${request.token}:${request.timestamp}`
     return isTodayNormalized(request.timestamp) || (!existingDefillama.has(key) && !existingCurve.has(key))
   })
 
-  await runInGroups(missing, async request => {
+  await runInGroups(missing, async (request) => {
     try {
       const underlying = underlyings.get(`${request.chain}:${request.token}`)!
 
@@ -308,7 +305,7 @@ async function warmCurveFallbackPrices(
 
       const blockNumber = await estimateBlockByTimestamp(client, underlying.chainId, request.timestamp)
 
-      const price = await priceCurveLpUsd(client, underlying.chainId, underlying.token, blockNumber, async coin => {
+      const price = await priceCurveLpUsd(client, underlying.chainId, underlying.token, blockNumber, async (coin) => {
         const coinKey = `${request.chain}:${coin}`
         stats.apiCalls += 1
         const response = await defiLlama.getHistorical(toFetchTimestamp(request.timestamp, nowUnix()), [coinKey])
@@ -320,15 +317,17 @@ async function warmCurveFallbackPrices(
         return
       }
 
-      await insertTokenPrices(pool, [{
-        chain: request.chain,
-        token: request.token,
-        timestamp: request.timestamp,
-        price,
-        symbol: null,
-        confidence: null,
-        source: 'curve',
-      }])
+      await insertTokenPrices(pool, [
+        {
+          chain: request.chain,
+          token: request.token,
+          timestamp: request.timestamp,
+          price,
+          symbol: null,
+          confidence: null,
+          source: 'curve'
+        }
+      ])
       stats.insertedCurve += 1
     } catch (error) {
       stats.failures += 1
@@ -340,7 +339,7 @@ async function warmCurveFallbackPrices(
 async function warmDerivedVaultPrices(
   vaults: NormalizedVault[],
   timestamps: number[],
-  stats: WarmupStats,
+  stats: WarmupStats
 ): Promise<void> {
   const derivedRequests: HistoricalRequestTuple[] = []
   for (const vault of vaults) {
@@ -348,27 +347,30 @@ async function warmDerivedVaultPrices(
       derivedRequests.push({
         chain: vault.chain,
         token: vault.vaultToken,
-        timestamp,
+        timestamp
       })
     }
   }
 
   const existingDerived = await getExistingExactTimestamps(pool, derivedRequests, 'derived')
-  const missingVaults = vaults.flatMap(vault => {
+  const missingVaults = vaults.flatMap((vault) => {
     return timestamps
-      .filter(timestamp => isTodayNormalized(timestamp) || !existingDerived.has(`${vault.chain}:${vault.vaultToken}:${timestamp}`))
-      .map(timestamp => ({ vault, timestamp }))
+      .filter(
+        (timestamp) =>
+          isTodayNormalized(timestamp) || !existingDerived.has(`${vault.chain}:${vault.vaultToken}:${timestamp}`)
+      )
+      .map((timestamp) => ({ vault, timestamp }))
   })
 
   const underlyingRequests: HistoricalRequestTuple[] = missingVaults.map(({ vault, timestamp }) => ({
     chain: vault.chain,
     token: vault.underlyingToken,
-    timestamp,
+    timestamp
   }))
 
   const underlyingPrices = await getBatchHistoricalPrices(pool, underlyingRequests)
   const underlyingMap = new Map(
-    underlyingPrices.map(price => [`${price.chain}:${price.token}:${price.timestamp}`, price]),
+    underlyingPrices.map((price) => [`${price.chain}:${price.token}:${price.timestamp}`, price])
   )
 
   await runInGroups(missingVaults, async ({ vault, timestamp }) => {
@@ -392,19 +394,21 @@ async function warmDerivedVaultPrices(
         vault.vaultToken,
         vault.decimals,
         vault.apiVersion,
-        blockNumber,
+        blockNumber
       )
 
       const derivedPrice = underlying.price * sharePrice
-      await insertTokenPrices(pool, [{
-        chain: vault.chain,
-        token: vault.vaultToken,
-        timestamp,
-        price: derivedPrice,
-        symbol: vault.symbol,
-        confidence: null,
-        source: 'derived',
-      }])
+      await insertTokenPrices(pool, [
+        {
+          chain: vault.chain,
+          token: vault.vaultToken,
+          timestamp,
+          price: derivedPrice,
+          symbol: vault.symbol,
+          confidence: null,
+          source: 'derived'
+        }
+      ])
       stats.insertedDerived += 1
     } catch (error) {
       stats.failures += 1
@@ -429,8 +433,8 @@ try {
       range: { start, end },
       timestamps: timestamps.length,
       vaults: vaults.length,
-      ...stats,
-    }),
+      ...stats
+    })
   )
 } finally {
   await pool.end()

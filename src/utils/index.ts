@@ -6,7 +6,7 @@ export {
   chainNameToId,
   normalizeTokenAddress,
   normalizeTokenKey,
-  parseTokenKey,
+  parseTokenKey
 } from './chains'
 export { optionalResponseNumber, toResponseNumber } from './format'
 export {
@@ -19,12 +19,12 @@ export {
   parseCliDate,
   pgTimestampToUnix,
   toUnixSeconds,
-  unixToIsoTimestamp,
+  unixToIsoTimestamp
 } from './time'
 export {
   parseBatchCoins,
   parseOptionalSource,
   parseRangeCoins,
   parseSpotCoins,
-  parseTimestampSegment,
+  parseTimestampSegment
 } from './validation'
