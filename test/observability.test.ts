@@ -115,4 +115,22 @@ describe('captureError', () => {
       String(1_700_000_000_123n * 1_000_000n),
     )
   })
+
+  it('does not throw when OTLP headers contain a raw percent', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const ctx = context()
+
+    expect(() => {
+      captureError(ctx, {
+        DATABASE_URL: 'postgres://x',
+        OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example.test',
+        OTEL_EXPORTER_OTLP_HEADERS: 'authorization=Api-Key 50%off',
+      }, new Error('boom'))
+    }).not.toThrow()
+
+    await pending(ctx)
+
+    expect(fetchMock.mock.calls[0][1].headers['authorization']).toBe('Api-Key 50%off')
+  })
 })

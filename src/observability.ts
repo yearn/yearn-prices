@@ -12,6 +12,14 @@ function attr(key: string, value: string): OtlpAttribute {
   return { key, value: { stringValue: value } }
 }
 
+function decodeHeaderPart(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
 // OTEL_EXPORTER_OTLP_HEADERS format: "key1=value1,key2=value2".
 function parseHeaders(raw?: string): Record<string, string> {
   const headers: Record<string, string> = { 'content-type': 'application/json' }
@@ -19,7 +27,7 @@ function parseHeaders(raw?: string): Record<string, string> {
   for (const pair of raw.split(',')) {
     const idx = pair.indexOf('=')
     if (idx > 0) {
-      headers[decodeURIComponent(pair.slice(0, idx).trim())] = decodeURIComponent(
+      headers[decodeHeaderPart(pair.slice(0, idx).trim())] = decodeHeaderPart(
         pair.slice(idx + 1).trim(),
       )
     }
