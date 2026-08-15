@@ -112,6 +112,31 @@ describe('createDefiLlamaAliasHistoricalSource', () => {
     await expect(source.getHistoricalPrice(10, OPTIMISM_DAI, TIMESTAMP)).resolves.toBeNull()
   })
 
+  it('refuses a bridged token at the exact impairment second', async () => {
+    const validUntil = 1_688_667_035
+    const source = createDefiLlamaAliasHistoricalSource(
+      client({
+        'coingecko:usd-coin': { price: 1, timestamp: validUntil, symbol: 'USDC' },
+      }),
+    )
+
+    await expect(source.getHistoricalPrice(250, FANTOM_USDC, validUntil)).resolves.toBeNull()
+  })
+
+  it('prices a bridged token one second before the impairment', async () => {
+    const validUntil = 1_688_667_035
+    const source = createDefiLlamaAliasHistoricalSource(
+      client({
+        'coingecko:usd-coin': { price: 1, timestamp: validUntil - 1, symbol: 'USDC' },
+      }),
+    )
+
+    const price = await source.getHistoricalPrice(250, FANTOM_USDC, validUntil - 1)
+
+    expect(price?.price).toBe(1)
+    expect(price?.timestamp).toBe(validUntil - 1)
+  })
+
   it('rejects an observation that falls outside the alias window', async () => {
     const validUntil = 1_688_667_035
     const requested = validUntil - 60
