@@ -10,7 +10,7 @@ const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
 
 const reads = {
   [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
-  [CURVE_POOL]: { N_COINS: 2n, coins: TOKEN_A, balances: 100n * 10n ** 6n },
+  [CURVE_POOL]: { token: LP, N_COINS: 2n, coins: TOKEN_A, balances: 100n * 10n ** 6n },
   [TOKEN_A]: { decimals: 6 },
 }
 
@@ -26,6 +26,7 @@ describe('curveAdapter', () => {
     const nativeReads = {
       ...reads,
       [CURVE_POOL]: {
+        token: LP,
         N_COINS: 1n,
         coins: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
         balances: 10n * 10n ** 18n,
@@ -63,8 +64,24 @@ describe('curveAdapter', () => {
     expect(result.path?.priceUsd).toBeCloseTo(1)
   })
 
+  it('refuses a token whose minter does not claim it as its LP', async () => {
+    const counterfeit = '0x5555555555555555555555555555555555555555'
+    const result = await priceWith(
+      curveAdapter(
+        adapterOptions({
+          ...reads,
+          [counterfeit]: { minter: CURVE_POOL, decimals: 18, totalSupply: 1n },
+        }),
+      ),
+      { [TOKEN_A]: 1 },
+      counterfeit,
+    )
+
+    expect(result.path).toBeNull()
+  })
+
   it('refuses to price when a coin is missing from an authoritative count', async () => {
-    const brokenReads = { ...reads, [CURVE_POOL]: { N_COINS: 2n, balances: 1n } }
+    const brokenReads = { ...reads, [CURVE_POOL]: { token: LP, N_COINS: 2n, balances: 1n } }
 
     const result = await priceWith(
       curveAdapter(adapterOptions(brokenReads)),

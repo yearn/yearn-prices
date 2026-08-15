@@ -23,6 +23,10 @@ const MAX_REGISTRY_ID = 12
 const MAX_COINS = 8
 
 const minterAbi = parseAbi(['function minter() view returns (address)'])
+const poolLpTokenAbi = parseAbi([
+  'function token() view returns (address)',
+  'function lp_token() view returns (address)',
+])
 const providerAbi = parseAbi(['function get_address(uint256) view returns (address)'])
 const registryAbi = parseAbi([
   'function get_pool_from_lp_token(address) view returns (address)',
@@ -196,6 +200,28 @@ async function readCoinCount(
   })
 }
 
+/**
+ * A minter() answer is self-reported by the token being priced, so the pool
+ * itself must claim the token back as its LP before it is trusted. Otherwise a
+ * counterfeit token could point at a real pool and be priced from its reserves.
+ */
+async function poolClaimsLpToken(
+  client: PublicClient,
+  pool: Address,
+  lpToken: string,
+  blockNumber: bigint,
+): Promise<boolean> {
+  for (const functionName of ['token', 'lp_token'] as const) {
+    const claimed = await maybe(() =>
+      client.readContract({ address: pool, abi: poolLpTokenAbi, functionName, blockNumber }),
+    )
+    if (claimed && claimed.toLowerCase() === lpToken.toLowerCase()) {
+      return true
+    }
+  }
+  return false
+}
+
 async function resolvePool(
   target: RecursivePriceTarget,
   state: ContractContext,
@@ -210,7 +236,10 @@ async function resolvePool(
   )
   if (minterRaw) {
     const minter = normalizedAddress(minterRaw)
-    if (minter) {
+    if (
+      minter &&
+      (await poolClaimsLpToken(state.client, minter as Address, target.token, state.blockNumber))
+    ) {
       return minter
     }
   }
