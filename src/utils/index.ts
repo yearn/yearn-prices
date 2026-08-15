@@ -1,20 +1,20 @@
 export {
   CHAIN_ID_TO_NAME,
   CHAIN_NAME_TO_ID,
-  SUPPORTED_CHAIN_NAMES,
   chainIdToName,
   chainNameToId,
   normalizeTokenAddress,
   normalizeTokenKey,
-  parseTokenKey
+  parseTokenKey,
+  SUPPORTED_CHAIN_NAMES
 } from './chains'
 export { optionalResponseNumber, toResponseNumber } from './format'
 export {
   currentUtcDayEnd,
   isTodayNormalized,
-  normalizeToEndOfDay,
   normalizedDaysInRange,
   normalizedRangeDayCount,
+  normalizeToEndOfDay,
   nowUnix,
   parseCliDate,
   pgTimestampToUnix,

@@ -2,7 +2,7 @@ import type { Pool } from '@neondatabase/serverless'
 import { CACHE_CONTROL_PARTIAL, CACHE_CONTROL_TODAY, cacheControlForHistorical } from '../../cache'
 import { getExactHistoricalPrice } from '../../db'
 import { ApiError, jsonResponse } from '../../http'
-import { getHistoricalSourceRegistry, HistoricalSourceRegistry } from '../../registries'
+import { getHistoricalSourceRegistry, type HistoricalSourceRegistry } from '../../registries'
 import type { Env } from '../../types'
 import {
   chainNameToId,

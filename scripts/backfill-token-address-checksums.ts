@@ -1,5 +1,7 @@
 import { config as loadEnv } from 'dotenv'
+
 loadEnv()
+
 import { getAddress } from 'viem'
 import { createPool } from '../src/db'
 

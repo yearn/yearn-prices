@@ -6,6 +6,8 @@ export function resetSourceRegistries(): void {
   resetHistoricalSourceRegistry()
 }
 
+export type { NamedSource, PriceFields, StampedPrice } from './source-registry'
+export { SourceRegistry } from './source-registry'
 export {
   getHistoricalSourceRegistry,
   getSpotSourceRegistry,
@@ -14,5 +16,3 @@ export {
   resetSpotSourceRegistry,
   SpotSourceRegistry
 }
-export { SourceRegistry } from './source-registry'
-export type { NamedSource, PriceFields, StampedPrice } from './source-registry'

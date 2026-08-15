@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createDefiLlamaHistoricalSource } from '../../src/sources/defillama'
 import type { DefiLlamaClient } from '../../src/clients/defillama'
 import { ApiError } from '../../src/http/errors'
+import { createDefiLlamaHistoricalSource } from '../../src/sources/defillama'
 
 const ADDRESS = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
 

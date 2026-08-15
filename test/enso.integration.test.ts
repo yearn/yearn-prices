@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
 import { getAddress } from 'viem'
+import { describe, expect, it } from 'vitest'
 import { EnsoClient } from '../src/clients'
 import { handleSpot } from '../src/routes/spot'
 import type { Env } from '../src/types'

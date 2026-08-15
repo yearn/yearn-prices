@@ -1,4 +1,4 @@
-import { createPublicClient, defineChain, http, parseAbi, type PublicClient } from 'viem'
+import { createPublicClient, defineChain, http, type PublicClient, parseAbi } from 'viem'
 import { CHAIN_ID_TO_NAME } from '../utils/chains'
 
 const SHARE_PRICE_ABI_V2 = parseAbi(['function pricePerShare() view returns (uint256)'])

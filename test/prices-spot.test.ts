@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getAddress } from 'viem'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { errorEnvelope } from '../src/http'
 import { handleSpot } from '../src/routes/spot'
 import type { Env } from '../src/types'

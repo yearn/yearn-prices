@@ -46,7 +46,7 @@ export function parseSpotCoins(raw: string | null): SpotRequest[] {
   for (const entry of parsed) {
     ensure(typeof entry === 'string', 'INVALID_INPUT', 'Each coin must be a "<chain>:<address>" string')
 
-    let parsedKey
+    let parsedKey: ReturnType<typeof parseTokenKey>
     try {
       parsedKey = parseTokenKey(entry)
     } catch (error) {

@@ -1,4 +1,4 @@
-import { parseAbi, type PublicClient } from 'viem'
+import { type PublicClient, parseAbi } from 'viem'
 
 // Curve AddressProvider is deployed at the same address on every Curve chain.
 const ADDRESS_PROVIDER = '0x0000000022D53366457F9d5E68Ec105046FC4383' as const

@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
 import type { PublicClient } from 'viem'
+import { describe, expect, it, vi } from 'vitest'
 import { priceCurveLpUsd } from '../src/clients'
 
 const ZERO = '0x0000000000000000000000000000000000000000'

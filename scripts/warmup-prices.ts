@@ -1,5 +1,7 @@
 import { config as loadEnv } from 'dotenv'
+
 loadEnv()
+
 import {
   DefiLlamaClient,
   estimateBlockByTimestamp,
@@ -13,8 +15,8 @@ import {
   chainIdToName,
   isTodayNormalized,
   normalizedDaysInRange,
-  normalizeTokenAddress,
   normalizeToEndOfDay,
+  normalizeTokenAddress,
   nowUnix,
   parseCliDate
 } from '../src/utils'
@@ -115,9 +117,7 @@ async function fetchYearnVaults(): Promise<NormalizedVault[]> {
         apiVersion: item.apiVersion,
         decimals: item.decimals
       })
-    } catch {
-      continue
-    }
+    } catch {}
   }
 
   return vaults

@@ -1,4 +1,4 @@
-import { DefiLlamaClient } from '../clients/defillama'
+import type { DefiLlamaClient } from '../clients/defillama'
 import { chainIdToName } from '../utils/chains'
 import type { HistoricalPriceSource } from './types'
 

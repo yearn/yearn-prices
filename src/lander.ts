@@ -1,5 +1,5 @@
-import { CHAIN_ID_TO_NAME } from './utils/chains'
 import type { Env } from './types'
+import { CHAIN_ID_TO_NAME } from './utils/chains'
 
 function supportedChains(env: Env): Array<{ id: number; name: string }> {
   return Object.keys(env)
