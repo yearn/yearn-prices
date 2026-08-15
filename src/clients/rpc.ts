@@ -4,8 +4,57 @@ import { CHAIN_ID_TO_NAME } from '../utils/chains'
 const SHARE_PRICE_ABI_V2 = parseAbi(['function pricePerShare() view returns (uint256)'])
 const SHARE_PRICE_ABI_V3 = parseAbi(['function convertToAssets(uint256) view returns (uint256)'])
 
+const MAX_BLOCK_CACHE = 512
+const MAX_SAMPLES_PER_CHAIN = 64
+
 const blockCache = new Map<string, bigint>()
+const blockSamples = new Map<number, Array<{ number: bigint; timestamp: number }>>()
 const clientCache = new Map<number, PublicClient>()
+
+function setCapped<K, V>(map: Map<K, V>, key: K, value: V, max: number): void {
+  if (map.has(key)) {
+    map.delete(key)
+  }
+  map.set(key, value)
+  if (map.size > max) {
+    const oldest = map.keys().next().value
+    if (oldest !== undefined) {
+      map.delete(oldest)
+    }
+  }
+}
+
+function rememberSample(chainId: number, number: bigint, timestamp: number): void {
+  const samples = blockSamples.get(chainId) ?? []
+  samples.push({ number, timestamp })
+  if (samples.length > MAX_SAMPLES_PER_CHAIN) {
+    samples.shift()
+  }
+  blockSamples.set(chainId, samples)
+}
+
+function seedBounds(
+  chainId: number,
+  timestamp: number,
+  latest: bigint,
+): { low: bigint; high: bigint; best: bigint } {
+  let low = 0n
+  let high = latest
+  let best = latest
+  for (const sample of blockSamples.get(chainId) ?? []) {
+    if (sample.timestamp === timestamp) {
+      return { low: sample.number, high: sample.number, best: sample.number }
+    }
+    if (sample.timestamp < timestamp && sample.number > low) {
+      low = sample.number
+      best = sample.number
+    }
+    if (sample.timestamp > timestamp && sample.number < high) {
+      high = sample.number
+    }
+  }
+  return { low, high, best }
+}
 
 function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds))
@@ -107,26 +156,31 @@ export async function estimateBlockByTimestamp(
   const cacheKey = `${chainId}:${timestamp}`
   const cached = blockCache.get(cacheKey)
   if (cached !== undefined) {
+    setCapped(blockCache, cacheKey, cached, MAX_BLOCK_CACHE)
     return cached
   }
 
   const latestBlock = await client.getBlock()
-  if (Number(latestBlock.timestamp) <= timestamp) {
-    blockCache.set(cacheKey, latestBlock.number)
+  const latestTimestamp = Number(latestBlock.timestamp)
+  rememberSample(chainId, latestBlock.number, latestTimestamp)
+  if (latestTimestamp <= timestamp) {
+    setCapped(blockCache, cacheKey, latestBlock.number, MAX_BLOCK_CACHE)
     return latestBlock.number
   }
 
-  let low = 0n
-  let high = latestBlock.number
-  let best = latestBlock.number
+  const seed = seedBounds(chainId, timestamp, latestBlock.number)
+  let low = seed.low
+  let high = seed.high
+  let best = seed.best
 
   while (low <= high) {
     const mid = (low + high) / 2n
     const block = await client.getBlock({ blockNumber: mid })
     const blockTimestamp = Number(block.timestamp)
+    rememberSample(chainId, mid, blockTimestamp)
 
     if (blockTimestamp === timestamp) {
-      blockCache.set(cacheKey, mid)
+      setCapped(blockCache, cacheKey, mid, MAX_BLOCK_CACHE)
       return mid
     }
 
@@ -143,7 +197,7 @@ export async function estimateBlockByTimestamp(
     await sleep(10)
   }
 
-  blockCache.set(cacheKey, best)
+  setCapped(blockCache, cacheKey, best, MAX_BLOCK_CACHE)
   return best
 }
 

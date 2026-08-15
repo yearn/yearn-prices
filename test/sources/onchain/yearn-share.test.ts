@@ -18,6 +18,18 @@ describe('yearnShareAdapter', () => {
     expect(result.path?.metadata.method).toBe('pricePerShare')
   })
 
+  it('scales pricePerShare by vault decimals, not underlying decimals', async () => {
+    const options = adapterOptions({
+      [VAULT]: { token: UNDERLYING, pricePerShare: 15n * 10n ** 17n, decimals: 18 },
+      [UNDERLYING]: { decimals: 6 },
+    })
+
+    const result = await priceWith(yearnShareAdapter(options), { [UNDERLYING]: 2 }, VAULT)
+
+    expect(result.path?.priceUsd).toBeCloseTo(3)
+    expect(result.path?.metadata.rateDecimals).toBe(18)
+  })
+
   it('treats getPricePerFullShare as an 18-decimal rate', async () => {
     const options = adapterOptions({
       [VAULT]: { want: UNDERLYING, getPricePerFullShare: 2n * 10n ** 18n, decimals: 6 },

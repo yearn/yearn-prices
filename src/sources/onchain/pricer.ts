@@ -3,14 +3,13 @@ import { ApiError } from '../../http/errors'
 import { chainIdToName } from '../../utils/chains'
 import type { SpotPriceResult } from '../types'
 import { createOnchainPriceAdapters } from './adapters'
-import type { ClientForChain } from './context'
+import type { ClientForChain, OnchainAdapterOptions } from './context'
 import { RecursivePriceEngine } from './engine'
 import { RecursiveDependencyError, RetryablePricingError } from './errors'
 import { DEFAULT_MAX_DEPTH, type OnchainSourceOptions } from './options'
 import type {
   MarketPriceResolver,
   PriceResolutionFailure,
-  RecursivePriceAdapter,
   RecursivePriceResult,
   RecursivePriceTarget,
 } from './types'
@@ -41,7 +40,7 @@ function transientCause(failure: PriceResolutionFailure): unknown {
  */
 export class OnchainPricer {
   private readonly clientForChain: ClientForChain
-  private readonly adapters: RecursivePriceAdapter[]
+  private readonly adapterOptions: OnchainAdapterOptions
   private readonly marketPrice: MarketPriceResolver
   private readonly maxDepth: number
   // Shared across requests: which adapter last priced a token. Prices are not
@@ -53,12 +52,12 @@ export class OnchainPricer {
       options.clientForChain ?? ((chainId) => getChainClient(chainId, options.env))
     this.marketPrice = options.marketPrice
     this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH
-    this.adapters = createOnchainPriceAdapters({
+    this.adapterOptions = {
       clientForChain: this.clientForChain,
       blockForTarget: options.blockForTarget,
       blockTimestampForTarget: options.blockTimestampForTarget,
       pendleTwapSeconds: options.pendleTwapSeconds,
-    })
+    }
   }
 
   supports(chainId: number): boolean {
@@ -66,9 +65,13 @@ export class OnchainPricer {
   }
 
   async price(target: RecursivePriceTarget): Promise<SpotPriceResult | null> {
+    const adapters = createOnchainPriceAdapters({
+      ...this.adapterOptions,
+      blockContextCache: new Map(),
+    })
     const engine = new RecursivePriceEngine(
       this.marketPrice,
-      this.adapters,
+      adapters,
       this.maxDepth,
       this.adapterHints,
     )

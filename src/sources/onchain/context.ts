@@ -35,6 +35,7 @@ export interface OnchainAdapterOptions {
   blockForTarget?: BlockForTarget
   blockTimestampForTarget?: BlockTimestampForTarget
   pendleTwapSeconds?: number
+  blockContextCache?: Map<string, Promise<ContractContext>>
 }
 
 export interface ContractContext {
@@ -114,6 +115,15 @@ export function normalizedAddress(address: string): `0x${string}` | null {
   return normalizeTokenAddress(address)
 }
 
+function blockContextKey(target: RecursivePriceTarget): string {
+  return [
+    target.chainId,
+    target.token.toLowerCase(),
+    target.timestamp ?? 'latest',
+    target.blockNumber ?? 'none',
+  ].join(':')
+}
+
 async function defaultBlockForTarget(
   client: PublicClient,
   chainId: number,
@@ -128,7 +138,7 @@ async function defaultBlockForTarget(
   return estimateBlockByTimestamp(client, chainId, target.timestamp)
 }
 
-export async function contractContext(
+async function loadContractContext(
   target: RecursivePriceTarget,
   options: OnchainAdapterOptions,
 ): Promise<ContractContext> {
@@ -164,6 +174,24 @@ export async function contractContext(
     blockTimestamp,
     address: target.token as Address,
   }
+}
+
+export async function contractContext(
+  target: RecursivePriceTarget,
+  options: OnchainAdapterOptions,
+): Promise<ContractContext> {
+  const cache = options.blockContextCache
+  if (!cache) {
+    return loadContractContext(target, options)
+  }
+  const key = blockContextKey(target)
+  const cached = cache.get(key)
+  if (cached) {
+    return cached
+  }
+  const pending = loadContractContext(target, options)
+  cache.set(key, pending)
+  return pending
 }
 
 export function blockEvidence(

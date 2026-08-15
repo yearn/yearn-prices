@@ -51,11 +51,11 @@ interface CurveCoinCount {
   source: 'pool-N_COINS' | 'curve-registry' | 'curve-metaregistry'
 }
 
-async function poolFromRegistry(
+async function forEachRegistry<T>(
   client: PublicClient,
-  lpToken: Address,
   blockNumber: bigint,
-): Promise<string | null> {
+  visit: (registry: Address) => Promise<T | null>,
+): Promise<T | null> {
   for (let registryId = 0; registryId <= MAX_REGISTRY_ID; registryId += 1) {
     const registryRaw = await maybe(() =>
       client.readContract({
@@ -73,6 +73,20 @@ async function poolFromRegistry(
     if (!registry) {
       continue
     }
+    const result = await visit(registry)
+    if (result != null) {
+      return result
+    }
+  }
+  return null
+}
+
+async function poolFromRegistry(
+  client: PublicClient,
+  lpToken: Address,
+  blockNumber: bigint,
+): Promise<string | null> {
+  return forEachRegistry(client, blockNumber, async (registry) => {
     const poolRaw = await maybe(() =>
       client.readContract({
         address: registry,
@@ -82,15 +96,8 @@ async function poolFromRegistry(
         blockNumber,
       }),
     )
-    if (!poolRaw) {
-      continue
-    }
-    const pool = normalizedAddress(poolRaw)
-    if (pool) {
-      return pool
-    }
-  }
-  return null
+    return poolRaw ? normalizedAddress(poolRaw) : null
+  })
 }
 
 async function readCoinAddress(
@@ -157,24 +164,7 @@ async function readCoinCount(
     return { count: directCount, source: 'pool-N_COINS' }
   }
 
-  for (let registryId = 0; registryId <= MAX_REGISTRY_ID; registryId += 1) {
-    const registryRaw = await maybe(() =>
-      client.readContract({
-        address: CURVE_ADDRESS_PROVIDER,
-        abi: providerAbi,
-        functionName: 'get_address',
-        args: [BigInt(registryId)],
-        blockNumber,
-      }),
-    )
-    if (!registryRaw) {
-      continue
-    }
-    const registry = normalizedAddress(registryRaw)
-    if (!registry) {
-      continue
-    }
-
+  return forEachRegistry(client, blockNumber, async (registry) => {
     const registryCounts = await maybe(() =>
       client.readContract({
         address: registry,
@@ -186,7 +176,7 @@ async function readCoinCount(
     )
     const registryCount = registryCounts == null ? null : validCoinCount(registryCounts[0])
     if (registryCount != null) {
-      return { count: registryCount, source: 'curve-registry' }
+      return { count: registryCount, source: 'curve-registry' } satisfies CurveCoinCount
     }
 
     const metaRegistryCountRaw = await maybe(() =>
@@ -200,11 +190,10 @@ async function readCoinCount(
     )
     const metaRegistryCount =
       metaRegistryCountRaw == null ? null : validCoinCount(metaRegistryCountRaw)
-    if (metaRegistryCount != null) {
-      return { count: metaRegistryCount, source: 'curve-metaregistry' }
-    }
-  }
-  return null
+    return metaRegistryCount == null
+      ? null
+      : ({ count: metaRegistryCount, source: 'curve-metaregistry' } satisfies CurveCoinCount)
+  })
 }
 
 async function resolvePool(

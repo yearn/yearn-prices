@@ -80,9 +80,9 @@ export function yearnShareAdapter(options: OnchainAdapterOptions): RecursivePric
         tokenDecimals(state.client, target.token, state.blockNumber),
         tokenDecimals(state.client, underlying, state.blockNumber),
       ])
-      // Only getPricePerFullShare is fixed at 1e18; the others scale with the
-      // underlying token.
-      const rateDecimals = rate.method === 'getPricePerFullShare' ? 18 : underlyingDecimals
+      // Only getPricePerFullShare is fixed at 1e18; Yearn v2 defines the other
+      // rates in the vault's (share) decimals.
+      const rateDecimals = rate.method === 'getPricePerFullShare' ? 18 : shareDecimals
       const conversion = {
         ...blockEvidence(state, target),
         method: rate.method,

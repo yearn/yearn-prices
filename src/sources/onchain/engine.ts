@@ -16,6 +16,21 @@ import type {
   ResolvedPricePath,
 } from './types'
 
+const MAX_ADAPTER_HINTS = 256
+
+function setCapped<K, V>(map: Map<K, V>, key: K, value: V, max: number): void {
+  if (map.has(key)) {
+    map.delete(key)
+  }
+  map.set(key, value)
+  if (map.size > max) {
+    const oldest = map.keys().next().value
+    if (oldest !== undefined) {
+      map.delete(oldest)
+    }
+  }
+}
+
 const FAILURE_ORDER: PriceResolutionFailureReason[] = [
   'retryable',
   'invalid',
@@ -271,7 +286,7 @@ export class RecursivePriceEngine {
         }
         const path = buildAdapterPath(target, adapter, quote)
         this.successful.set(key, path)
-        this.adapterHints.set(adapterHintKey(target), adapter.name)
+        setCapped(this.adapterHints, adapterHintKey(target), adapter.name, MAX_ADAPTER_HINTS)
         return { path, failure: null }
       } catch (error) {
         attempts.push({
