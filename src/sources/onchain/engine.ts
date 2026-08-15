@@ -1,9 +1,11 @@
+import { ApiError } from '../../http/errors'
 import { normalizeTokenAddress } from '../../utils/chains'
 import { InvalidPricingError, RecursiveDependencyError, isRetryablePricingError } from './errors'
 import type {
   MarketPriceResolver,
   PriceInputEvidence,
   PriceResolutionAttempt,
+  PriceResolutionFailure,
   PriceResolutionFailureReason,
   RecursiveAdapterQuote,
   RecursivePriceAdapter,
@@ -62,6 +64,7 @@ function errorMessage(error: unknown): string {
 
 function classifyError(error: unknown): PriceResolutionFailureReason {
   if (error instanceof RecursiveDependencyError) return error.failure.reason
+  if (error instanceof ApiError) return 'retryable'
   if (error instanceof InvalidPricingError) return 'invalid'
   if (isRetryablePricingError(error)) return 'retryable'
   return 'unsupported'
@@ -143,15 +146,22 @@ function buildAdapterPath(
  */
 export class RecursivePriceEngine {
   private readonly successful = new Map<string, ResolvedPricePath>()
+  private readonly failed = new Map<string, PriceResolutionFailure>()
+  private readonly inflight = new Map<string, Promise<RecursivePriceResult>>()
+  private resolutions = 0
 
   constructor(
     private readonly marketPrice: MarketPriceResolver,
     private readonly adapters: RecursivePriceAdapter[],
     private readonly maxDepth = 8,
     private readonly adapterHints = new Map<string, string>(),
+    private readonly resolutionBudget = 32,
   ) {
     if (!Number.isInteger(maxDepth) || maxDepth < 1) {
       throw new Error('Recursive price depth must be a positive integer')
+    }
+    if (!Number.isInteger(resolutionBudget) || resolutionBudget < 1) {
+      throw new Error('Recursive price resolution budget must be a positive integer')
     }
   }
 
@@ -175,6 +185,35 @@ export class RecursivePriceEngine {
     if (cached) {
       return { path: cached, failure: null }
     }
+    const cachedFailure = this.failed.get(key)
+    if (cachedFailure) {
+      return { path: null, failure: cachedFailure }
+    }
+    const pending = this.inflight.get(key)
+    if (pending) {
+      return pending
+    }
+
+    const work = this.resolveUncached(target, ancestry, key)
+    this.inflight.set(key, work)
+    try {
+      return await work
+    } finally {
+      this.inflight.delete(key)
+    }
+  }
+
+  private async resolveUncached(
+    target: RecursivePriceTarget,
+    ancestry: string[],
+    key: string,
+  ): Promise<RecursivePriceResult> {
+    if (this.resolutions >= this.resolutionBudget) {
+      const failure = { reason: 'unsupported' as const, token: target.token, attempts: [] }
+      this.failed.set(key, failure)
+      return { path: null, failure }
+    }
+    this.resolutions += 1
 
     const attempts: PriceResolutionAttempt[] = []
     // The root token already failed every market source before this engine ran;
@@ -191,7 +230,9 @@ export class RecursivePriceEngine {
         const reason = classifyError(error)
         attempts.push({ adapter: 'market-price', reason, error: errorMessage(error), cause: error })
         if (reason !== 'unsupported') {
-          return { path: null, failure: { reason, token: target.token, attempts } }
+          const failure = { reason, token: target.token, attempts }
+          this.failed.set(key, failure)
+          return { path: null, failure }
         }
       }
     }
@@ -242,9 +283,12 @@ export class RecursivePriceEngine {
       }
     }
 
-    return {
-      path: null,
-      failure: { reason: selectFailureReason(attempts), token: target.token, attempts },
+    const failure = {
+      reason: selectFailureReason(attempts),
+      token: target.token,
+      attempts,
     }
+    this.failed.set(key, failure)
+    return { path: null, failure }
   }
 }

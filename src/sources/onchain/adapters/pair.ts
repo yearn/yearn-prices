@@ -1,19 +1,18 @@
 import { parseAbi } from 'viem'
 import {
   blockEvidence,
-  childTarget,
   contractContext,
   erc20Abi,
   maybe,
   normalizedAddress,
   rawState,
   recursiveInput,
+  requireChildren,
   tokenDecimals,
   type OnchainAdapterOptions,
 } from '../context'
-import { InvalidPricingError, RetryablePricingError } from '../errors'
 import { calculatePoolNavPrice } from '../math'
-import type { RecursivePriceAdapter, ResolvedPricePath } from '../types'
+import type { RecursivePriceAdapter } from '../types'
 
 const pairAbi = parseAbi([
   'function token0() view returns (address)',
@@ -84,45 +83,17 @@ export function pairAdapter(options: OnchainAdapterOptions): RecursivePriceAdapt
         return null
       }
 
-      const [token0Decimals, token1Decimals, resolutions] = await Promise.all([
+      const [token0Decimals, token1Decimals, inputs] = await Promise.all([
         tokenDecimals(state.client, token0, state.blockNumber),
         tokenDecimals(state.client, token1, state.blockNumber),
-        Promise.all([
-          context.resolve(childTarget(target, token0, state.numericBlockNumber)),
-          context.resolve(childTarget(target, token1, state.numericBlockNumber)),
-        ]),
+        requireChildren(
+          context,
+          target,
+          [token0, token1],
+          state.numericBlockNumber,
+          'AMM constituent',
+        ),
       ])
-      const paths: Array<ResolvedPricePath | null> = resolutions.map(
-        (resolution) => resolution.path,
-      )
-      const blockingFailure = resolutions.find(
-        (resolution) => resolution.failure && resolution.failure.reason !== 'unsupported',
-      )?.failure
-      if (blockingFailure?.reason === 'retryable') {
-        throw new RetryablePricingError(
-          `AMM constituent failed transiently: ${JSON.stringify(blockingFailure)}`,
-        )
-      }
-      if (blockingFailure) {
-        throw new InvalidPricingError(
-          `AMM constituent is not safely substitutable: ${JSON.stringify(blockingFailure)}`,
-        )
-      }
-      if (!paths[0] || !paths[1]) {
-        const unavailable = [
-          { address: token0, resolution: resolutions[0] },
-          { address: token1, resolution: resolutions[1] },
-        ].flatMap(({ address, resolution }) =>
-          resolution.path
-            ? []
-            : [{ address, failureClass: resolution.failure?.reason ?? 'unavailable' }],
-        )
-        throw new InvalidPricingError(
-          `AMM reserve NAV requires every constituent price: ${JSON.stringify(unavailable)}`,
-        )
-      }
-
-      const inputs = paths as [ResolvedPricePath, ResolvedPricePath]
       const decimals = [token0Decimals, token1Decimals]
       const balances = [reserves[0], reserves[1]]
       const poolDecimals = Number(poolDecimalsRaw)

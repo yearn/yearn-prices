@@ -7,6 +7,7 @@ import {
   maybe,
   normalizedAddress,
   rawState,
+  readShareConversion,
   recursiveInput,
   tokenDecimals,
   type OnchainAdapterOptions,
@@ -47,31 +48,16 @@ export function erc4626Adapter(options: OnchainAdapterOptions): RecursivePriceAd
 
       const shareDecimals = Number(shareDecimalsRaw)
       const oneShareRaw = 10n ** BigInt(shareDecimals)
-      let method = 'convertToAssets'
-      let convertedAssetsRaw = await maybe(() =>
-        state.client.readContract({
-          address: state.address,
-          abi: erc4626Abi,
-          functionName: 'convertToAssets',
-          args: [oneShareRaw],
-          blockNumber: state.blockNumber,
-        }),
+      const conversionRaw = await readShareConversion(
+        state.client,
+        state.address,
+        state.blockNumber,
+        oneShareRaw,
       )
-      if (convertedAssetsRaw == null) {
-        method = 'previewRedeem'
-        convertedAssetsRaw = await maybe(() =>
-          state.client.readContract({
-            address: state.address,
-            abi: erc4626Abi,
-            functionName: 'previewRedeem',
-            args: [oneShareRaw],
-            blockNumber: state.blockNumber,
-          }),
-        )
-      }
-      if (convertedAssetsRaw == null) {
+      if (!conversionRaw) {
         return null
       }
+      const { method, convertedAssetsRaw } = conversionRaw
 
       const underlyingDecimals = await tokenDecimals(state.client, underlying, state.blockNumber)
       const conversion = {

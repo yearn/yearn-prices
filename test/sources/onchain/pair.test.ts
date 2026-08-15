@@ -35,7 +35,7 @@ describe('pairAdapter', () => {
     const result = await priceWith(pairAdapter(adapterOptions(reads)), { [TOKEN_A]: 1 }, LP)
 
     expect(result.path).toBeNull()
-    expect(result.failure?.reason).toBe('invalid')
+    expect(result.failure?.reason).toBe('unsupported')
   })
 
   it('reports a transient leg failure as retryable', async () => {

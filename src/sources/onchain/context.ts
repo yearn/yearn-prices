@@ -1,6 +1,7 @@
 import { parseAbi, type Address, type PublicClient } from 'viem'
 import { estimateBlockByTimestamp } from '../../clients/rpc'
 import { normalizeTokenAddress } from '../../utils/chains'
+import { erc4626Abi } from './abis'
 import { InvalidPricingError, RetryablePricingError, isRetryablePricingError } from './errors'
 import type {
   RecursivePriceContext,
@@ -50,17 +51,60 @@ export interface ContractContext {
  * contract does not implement the call"; a transport failure is rethrown as
  * retryable so it never reads as absence.
  */
+function transientReadMessage(error: unknown): string {
+  if (error instanceof Error) {
+    const status = 'status' in error && typeof error.status === 'number' ? error.status : undefined
+    return status === undefined ? error.name : `${error.name} ${status}`
+  }
+  return 'retryable contract read'
+}
+
 export async function maybe<T>(read: () => Promise<T>): Promise<T | null> {
   try {
     return await read()
   } catch (error) {
     if (isRetryablePricingError(error)) {
-      throw new RetryablePricingError(error instanceof Error ? error.message : String(error), {
-        cause: error,
-      })
+      throw new RetryablePricingError(transientReadMessage(error), { cause: error })
     }
     return null
   }
+}
+
+export async function readShareConversion(
+  client: PublicClient,
+  address: Address,
+  blockNumber: bigint,
+  oneShareRaw: bigint,
+): Promise<{ method: 'convertToAssets' | 'previewRedeem'; convertedAssetsRaw: bigint } | null> {
+  let method: 'convertToAssets' | 'previewRedeem' = 'convertToAssets'
+  let convertedAssetsRaw = await maybe(() =>
+    client.readContract({
+      address,
+      abi: erc4626Abi,
+      functionName: 'convertToAssets',
+      args: [oneShareRaw],
+      blockNumber,
+    }),
+  )
+  if (convertedAssetsRaw == null) {
+    method = 'previewRedeem'
+    convertedAssetsRaw = await maybe(() =>
+      client.readContract({
+        address,
+        abi: erc4626Abi,
+        functionName: 'previewRedeem',
+        args: [oneShareRaw],
+        blockNumber,
+      }),
+    )
+  }
+  if (convertedAssetsRaw == null) {
+    return null
+  }
+  if (convertedAssetsRaw === 0n) {
+    throw new InvalidPricingError('Share conversion returned zero assets')
+  }
+  return { method, convertedAssetsRaw }
 }
 
 export function normalizedAddress(address: string): `0x${string}` | null {

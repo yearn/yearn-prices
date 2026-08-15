@@ -46,6 +46,18 @@ describe('erc4626Adapter', () => {
     expect(result.path).toBeNull()
   })
 
+  it('rejects a zero share conversion as invalid', async () => {
+    const options = adapterOptions({
+      [VAULT]: { asset: UNDERLYING, decimals: 18, convertToAssets: 0n },
+      [UNDERLYING]: { decimals: 18 },
+    })
+
+    const result = await priceWith(erc4626Adapter(options), { [UNDERLYING]: 1 }, VAULT)
+
+    expect(result.path).toBeNull()
+    expect(result.failure?.reason).toBe('invalid')
+  })
+
   it('fails when the underlying has no price', async () => {
     const options = adapterOptions({
       [VAULT]: { asset: UNDERLYING, decimals: 18, convertToAssets: 10n ** 18n },

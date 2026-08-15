@@ -65,13 +65,31 @@ function createChainClient(chainId: number, rpcUrl: string): PublicClient {
  * Returns a memoized client for `chainId`, or null when no `RPC_URL_<chainId>`
  * is configured. Callers decide how to surface the missing-RPC gap.
  */
-export function getChainClient(chainId: number): PublicClient | null {
+function rpcUrlForChain(
+  chainId: number,
+  env?: Record<string, string | undefined>,
+): string | undefined {
+  if (env) {
+    return env[`RPC_URL_${chainId}`]
+  }
+  // Workers have no `process` unless nodejs_compat is on. Scripts and tests
+  // still read process.env when no Worker env is passed.
+  if (typeof process === 'undefined') {
+    return undefined
+  }
+  return process.env[`RPC_URL_${chainId}`]
+}
+
+export function getChainClient(
+  chainId: number,
+  env?: Record<string, string | undefined>,
+): PublicClient | null {
   const cached = clientCache.get(chainId)
   if (cached) {
     return cached
   }
 
-  const rpcUrl = process.env[`RPC_URL_${chainId}`]
+  const rpcUrl = rpcUrlForChain(chainId, env)
   if (!rpcUrl) {
     return null
   }

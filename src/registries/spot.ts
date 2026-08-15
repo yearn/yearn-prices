@@ -1,47 +1,22 @@
 import { ApiError } from '../http/errors'
+import { getChainClient } from '../clients/rpc'
 import { createEnsoSpotSource } from '../sources'
 import { createOnchainSpotSource } from '../sources/onchain'
-import type { MarketPriceResolver } from '../sources/onchain'
 import type { SpotPrice, SpotPriceSource } from '../sources/types'
-import type { Env, PriceSource } from '../types'
+import type { Env } from '../types'
 
+import { createMarketPriceResolver } from './market-price'
 import { SourceRegistry } from './source-registry'
 
 /**
  * Prices an on-chain adapter's child tokens with the market sources only. It
  * never sees the on-chain source, so recursion cannot loop back into itself.
  */
-function marketPriceResolver(marketSources: SpotPriceSource[]): MarketPriceResolver {
+function marketPriceResolver(marketSources: SpotPriceSource[]) {
   const registry = new SpotSourceRegistry(marketSources)
-
-  return async (target) => {
-    if (!marketSources.some((source) => source.supports(target.chainId))) {
-      return null
-    }
-
-    try {
-      const price = await registry.resolve(target.chainId, target.token)
-      return {
-        chainId: target.chainId,
-        token: target.token,
-        requestedTimestamp: target.timestamp,
-        observedTimestamp: price.timestamp,
-        priceUsd: price.price,
-        symbol: price.symbol,
-        confidence: price.confidence,
-        source: price.source as PriceSource,
-        adapter: price.source,
-        blockNumber: target.blockNumber ?? null,
-        inputs: [],
-        metadata: {},
-      }
-    } catch (error) {
-      if (error instanceof ApiError && error.code === 'NOT_FOUND') {
-        return null
-      }
-      throw error
-    }
-  }
+  return createMarketPriceResolver(marketSources, (chainId, token) =>
+    registry.resolve(chainId, token),
+  )
 }
 
 export function createSpotSources(env: Env): SpotPriceSource[] {
@@ -53,7 +28,11 @@ export function createSpotSources(env: Env): SpotPriceSource[] {
 
   return [
     ...marketSources,
-    createOnchainSpotSource({ marketPrice: marketPriceResolver(marketSources) }),
+    createOnchainSpotSource({
+      marketPrice: marketPriceResolver(marketSources),
+      env,
+      clientForChain: (chainId) => getChainClient(chainId, env),
+    }),
   ]
 }
 

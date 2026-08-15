@@ -25,6 +25,17 @@ describe('nativeShareAdapter', () => {
     expect(result.path).toBeNull()
   })
 
+  it('rejects a zero share conversion as invalid', async () => {
+    const options = adapterOptions({
+      [NATIVE_SHARE]: { decimals: 18, convertToAssets: 0n },
+    })
+
+    const result = await priceWith(nativeShareAdapter(options), { [WETH]: 1500 }, NATIVE_SHARE)
+
+    expect(result.path).toBeNull()
+    expect(result.failure?.reason).toBe('invalid')
+  })
+
   it('ignores chains with no wrapped native asset', async () => {
     const options = adapterOptions({
       [NATIVE_SHARE]: { decimals: 18, convertToAssets: 10n ** 18n },

@@ -1,4 +1,6 @@
 import { getChainClient } from '../../clients/rpc'
+import { ApiError } from '../../http/errors'
+import type { Env } from '../../types'
 import { chainIdToName } from '../../utils/chains'
 import { HistoricalPriceSourceBase, SpotPriceSourceBase } from '../base'
 import type { HistoricalPriceResult, SpotPriceResult } from '../types'
@@ -22,6 +24,8 @@ const DEFAULT_MAX_DEPTH = 8
 export interface OnchainSourceOptions extends Partial<OnchainAdapterOptions> {
   /** Prices the tokens an adapter converts into. Injected by the registry. */
   marketPrice: MarketPriceResolver
+  /** Worker bindings. Used when `clientForChain` is omitted. */
+  env?: Env
   priority?: number
   maxDepth?: number
 }
@@ -60,7 +64,8 @@ class OnchainPricer {
   private readonly adapterHints = new Map<string, string>()
 
   constructor(options: OnchainSourceOptions) {
-    this.clientForChain = options.clientForChain ?? getChainClient
+    this.clientForChain =
+      options.clientForChain ?? ((chainId) => getChainClient(chainId, options.env))
     this.marketPrice = options.marketPrice
     this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH
     this.adapters = createOnchainPriceAdapters({
@@ -88,11 +93,13 @@ class OnchainPricer {
   private toResult(result: RecursivePriceResult): SpotPriceResult | null {
     if (!result.path) {
       if (result.failure.reason === 'retryable') {
-        throw (
-          transientCause(result.failure) ??
-          new RetryablePricingError(
-            `On-chain pricing failed transiently for ${result.failure.token}`,
-          )
+        const cause = transientCause(result.failure)
+        if (cause instanceof ApiError) {
+          throw cause
+        }
+        throw new RetryablePricingError(
+          `On-chain pricing failed transiently for ${result.failure.token}`,
+          cause === undefined ? undefined : { cause },
         )
       }
       return null

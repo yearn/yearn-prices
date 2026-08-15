@@ -190,4 +190,119 @@ describe('RecursivePriceEngine', () => {
       engine.resolve({ chainId: 1, token: SHARE, timestamp: -1 }),
     ).rejects.toBeInstanceOf(InvalidPricingError)
   })
+
+  it('runs an unresolvable shared child adapter set exactly once', async () => {
+    const childResolve = vi.fn(async () => null)
+    const childAdapter: RecursivePriceAdapter = {
+      name: 'child-probe',
+      async resolve(target) {
+        if (target.token.toLowerCase() !== UNDERLYING) {
+          return null
+        }
+        return childResolve()
+      },
+    }
+    const wrap = (name: string, token: string): RecursivePriceAdapter => ({
+      name,
+      async resolve(target, context) {
+        if (target.token.toLowerCase() !== token) {
+          return null
+        }
+        const input = await context.require({ ...target, token: UNDERLYING }, name)
+        return { priceUsd: input.priceUsd, inputs: [{ path: input }], metadata: {} }
+      },
+    })
+    const parent: RecursivePriceAdapter = {
+      name: 'two-parents',
+      async resolve(target, context) {
+        if (target.token.toLowerCase() !== SHARE) {
+          return null
+        }
+        const [a, b] = await Promise.all([
+          context.require({ ...target, token: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }, 'a'),
+          context.require({ ...target, token: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' }, 'b'),
+        ])
+        return {
+          priceUsd: a.priceUsd + b.priceUsd,
+          inputs: [{ path: a }, { path: b }],
+          metadata: {},
+        }
+      },
+    }
+    const engine = new RecursivePriceEngine(marketFor({}), [
+      parent,
+      wrap('wrap-a', '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+      wrap('wrap-b', '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
+      childAdapter,
+    ])
+
+    const result = await engine.resolve({ chainId: 1, token: SHARE, timestamp: null })
+
+    expect(result.path).toBeNull()
+    expect(childResolve).toHaveBeenCalledTimes(1)
+  })
+
+  it('aborts as unsupported once the resolution budget is spent', async () => {
+    const probe = vi.fn(async () => null)
+    const engine = new RecursivePriceEngine(marketFor({}), [{ name: 'probe', resolve: probe }], 8, new Map(), 1)
+
+    const first = await engine.resolve({ chainId: 1, token: SHARE, timestamp: null })
+    const second = await engine.resolve({
+      chainId: 1,
+      token: UNDERLYING,
+      timestamp: null,
+    })
+
+    expect(first.failure?.reason).toBe('unsupported')
+    expect(second.failure?.reason).toBe('unsupported')
+    expect(probe).toHaveBeenCalledTimes(1)
+  })
+
+  it('tries the previously successful adapter first on the next engine', async () => {
+    const hints = new Map<string, string>()
+    const order: string[] = []
+    const miss: RecursivePriceAdapter = {
+      name: 'early-miss',
+      async resolve() {
+        order.push('early-miss')
+        return null
+      },
+    }
+    const winner: RecursivePriceAdapter = {
+      name: 'late-winner',
+      async resolve(target) {
+        order.push('late-winner')
+        if (target.token.toLowerCase() !== SHARE) {
+          return null
+        }
+        return { priceUsd: 1, inputs: [], metadata: {} }
+      },
+    }
+
+    const first = new RecursivePriceEngine(marketFor({}), [miss, winner], 8, hints)
+    await first.resolve({ chainId: 1, token: SHARE, timestamp: null })
+    expect(order).toEqual(['early-miss', 'late-winner'])
+    expect([...hints.values()]).toEqual(['late-winner'])
+
+    order.length = 0
+    const second = new RecursivePriceEngine(marketFor({}), [miss, winner], 8, hints)
+    await second.resolve({ chainId: 1, token: SHARE, timestamp: null })
+    expect(order[0]).toBe('late-winner')
+    expect(hints.get(`1:${SHARE.toLowerCase()}`)).toBe('late-winner')
+  })
+
+  it('replaces a stale adapter hint after a later adapter wins', async () => {
+    const hints = new Map<string, string>([[`1:${SHARE.toLowerCase()}`, 'gone']])
+    const gone: RecursivePriceAdapter = { name: 'gone', resolve: async () => null }
+    const winner: RecursivePriceAdapter = {
+      name: 'winner',
+      resolve: async () => ({ priceUsd: 1, inputs: [], metadata: {} }),
+    }
+    const engine = new RecursivePriceEngine(marketFor({}), [gone, winner], 8, hints)
+
+    const result = await engine.resolve({ chainId: 1, token: SHARE, timestamp: null })
+
+    expect(result.path?.adapter).toBe('winner')
+    expect(hints.get(`1:${SHARE.toLowerCase()}`)).toBe('winner')
+  })
 })

@@ -1,10 +1,9 @@
-import { erc4626Abi } from '../abis'
 import {
   blockEvidence,
   childTarget,
   contractContext,
-  maybe,
   rawState,
+  readShareConversion,
   recursiveInput,
   tokenDecimals,
   type OnchainAdapterOptions,
@@ -37,31 +36,16 @@ export function nativeShareAdapter(options: OnchainAdapterOptions): RecursivePri
       const state = await contractContext(target, options)
       const shareDecimals = await tokenDecimals(state.client, target.token, state.blockNumber)
       const oneShareRaw = 10n ** BigInt(shareDecimals)
-      let method = 'convertToAssets'
-      let convertedAssetsRaw = await maybe(() =>
-        state.client.readContract({
-          address: state.address,
-          abi: erc4626Abi,
-          functionName: 'convertToAssets',
-          args: [oneShareRaw],
-          blockNumber: state.blockNumber,
-        }),
+      const conversionRaw = await readShareConversion(
+        state.client,
+        state.address,
+        state.blockNumber,
+        oneShareRaw,
       )
-      if (convertedAssetsRaw == null) {
-        method = 'previewRedeem'
-        convertedAssetsRaw = await maybe(() =>
-          state.client.readContract({
-            address: state.address,
-            abi: erc4626Abi,
-            functionName: 'previewRedeem',
-            args: [oneShareRaw],
-            blockNumber: state.blockNumber,
-          }),
-        )
-      }
-      if (convertedAssetsRaw == null || convertedAssetsRaw === 0n) {
+      if (!conversionRaw) {
         return null
       }
+      const { method, convertedAssetsRaw } = conversionRaw
 
       const conversion = {
         ...blockEvidence(state, target),
