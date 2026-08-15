@@ -11,6 +11,7 @@ const POOL_ID = '0xaaaa'
 const reads = {
   [LP]: { getPoolId: POOL_ID, decimals: 18, totalSupply: 100n * 10n ** 18n },
   [VAULT]: {
+    getPool: [LP, 0],
     getPoolTokens: [
       [TOKEN_A, TOKEN_B],
       [100n * 10n ** 6n, 50n * 10n ** 18n],
@@ -37,6 +38,7 @@ describe('balancerAdapter', () => {
       ...reads,
       [LP]: { getPoolId: POOL_ID, decimals: 18, totalSupply: 200n * 10n ** 18n },
       [VAULT]: {
+        getPool: [LP, 0],
         getPoolTokens: [
           [LP, TOKEN_A],
           [100n * 10n ** 18n, 100n * 10n ** 6n],
@@ -56,6 +58,22 @@ describe('balancerAdapter', () => {
 
   it('returns no price on chains without a vault', async () => {
     const result = await priceWith(balancerAdapter(adapterOptions(reads)), {}, LP, 146)
+
+    expect(result.path).toBeNull()
+  })
+
+  it('refuses a token that reports another pool\'s ID', async () => {
+    const counterfeit = '0x4444444444444444444444444444444444444444'
+    const result = await priceWith(
+      balancerAdapter(
+        adapterOptions({
+          ...reads,
+          [counterfeit]: { getPoolId: POOL_ID, decimals: 18, totalSupply: 1n },
+        }),
+      ),
+      { [TOKEN_A]: 1, [TOKEN_B]: 2 },
+      counterfeit,
+    )
 
     expect(result.path).toBeNull()
   })

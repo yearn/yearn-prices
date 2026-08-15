@@ -26,6 +26,7 @@ const VAULTS: Record<number, string> = {
 
 const poolAbi = parseAbi(['function getPoolId() view returns (bytes32)'])
 const vaultAbi = parseAbi([
+  'function getPool(bytes32 poolId) view returns (address pool, uint8 specialization)',
   'function getPoolTokens(bytes32 poolId) view returns (address[] tokens, uint256[] balances, uint256 lastChangeBlock)',
 ])
 
@@ -47,6 +48,21 @@ export function balancerAdapter(options: OnchainAdapterOptions): RecursivePriceA
         }),
       )
       if (!poolId) {
+        return null
+      }
+      // The pool ID is self-reported by the queried token. The vault is the
+      // authority on which contract owns that ID; a mismatch means a token
+      // borrowing a real pool's ID to get its NAV.
+      const registeredPool = await maybe(() =>
+        state.client.readContract({
+          address: vaultAddress as Address,
+          abi: vaultAbi,
+          functionName: 'getPool',
+          args: [poolId],
+          blockNumber: state.blockNumber,
+        }),
+      )
+      if (!registeredPool || registeredPool[0].toLowerCase() !== target.token.toLowerCase()) {
         return null
       }
 
