@@ -42,6 +42,7 @@ export type PriceResolutionFailureReason =
   | 'cycle'
   | 'max-depth'
   | 'retryable'
+  | 'budget'
   | 'unsupported'
   | 'invalid'
 

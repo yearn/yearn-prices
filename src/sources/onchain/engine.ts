@@ -33,6 +33,7 @@ function setCapped<K, V>(map: Map<K, V>, key: K, value: V, max: number): void {
 
 const FAILURE_ORDER: PriceResolutionFailureReason[] = [
   'retryable',
+  'budget',
   'invalid',
   'cycle',
   'max-depth',
@@ -224,7 +225,7 @@ export class RecursivePriceEngine {
     key: string,
   ): Promise<RecursivePriceResult> {
     if (this.resolutions >= this.resolutionBudget) {
-      const failure = { reason: 'unsupported' as const, token: target.token, attempts: [] }
+      const failure = { reason: 'budget' as const, token: target.token, attempts: [] }
       this.failed.set(key, failure)
       return { path: null, failure }
     }

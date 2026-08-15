@@ -84,6 +84,21 @@ describe('createOnchainSpotSource', () => {
     expect(source.supports(1)).toBe(false)
   })
 
+  it('surfaces a spent resolution budget instead of reporting no price', async () => {
+    const underlying = '0x2222222222222222222222222222222222222222'
+    const source = createOnchainSpotSource({
+      marketPrice: noMarket,
+      clientForChain: () =>
+        fakeClient({
+          [TOKEN]: { asset: underlying, decimals: 18, convertToAssets: 10n ** 18n },
+          [underlying]: { decimals: 18 },
+        }),
+      resolutionBudget: 1,
+    })
+
+    await expect(source.getSpotPrice(1, TOKEN)).rejects.toThrow(/resolution budget/)
+  })
+
   it('rethrows an upstream ApiError as itself', async () => {
     const underlying = '0x2222222222222222222222222222222222222222'
     const source = createOnchainSpotSource({

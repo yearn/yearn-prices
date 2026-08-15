@@ -14,4 +14,5 @@ export interface OnchainSourceOptions extends Partial<OnchainAdapterOptions> {
   env?: Env
   priority?: number
   maxDepth?: number
+  resolutionBudget?: number
 }

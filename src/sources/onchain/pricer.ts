@@ -43,6 +43,7 @@ export class OnchainPricer {
   private readonly adapterOptions: OnchainAdapterOptions
   private readonly marketPrice: MarketPriceResolver
   private readonly maxDepth: number
+  private readonly resolutionBudget: number | undefined
   // Shared across requests: which adapter last priced a token. Prices are not
   // shared - a fresh engine per request keeps its own resolution cache.
   private readonly adapterHints = new Map<string, string>()
@@ -52,6 +53,7 @@ export class OnchainPricer {
       options.clientForChain ?? ((chainId) => getChainClient(chainId, options.env))
     this.marketPrice = options.marketPrice
     this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH
+    this.resolutionBudget = options.resolutionBudget
     this.adapterOptions = {
       clientForChain: this.clientForChain,
       blockForTarget: options.blockForTarget,
@@ -74,12 +76,20 @@ export class OnchainPricer {
       adapters,
       this.maxDepth,
       this.adapterHints,
+      this.resolutionBudget,
     )
     return this.toResult(await engine.resolve(target))
   }
 
   private toResult(result: RecursivePriceResult): SpotPriceResult | null {
     if (!result.path) {
+      // A spent budget is a resource cutoff, not absence: surfacing it as
+      // NOT_FOUND would make an over-broad pool read as an unpriced token.
+      if (result.failure.reason === 'budget') {
+        throw new RetryablePricingError(
+          `On-chain pricing exhausted its resolution budget for ${result.failure.token}`,
+        )
+      }
       if (result.failure.reason === 'retryable') {
         const cause = transientCause(result.failure)
         if (cause instanceof ApiError) {

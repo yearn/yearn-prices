@@ -242,7 +242,7 @@ describe('RecursivePriceEngine', () => {
     expect(childResolve).toHaveBeenCalledTimes(1)
   })
 
-  it('aborts as unsupported once the resolution budget is spent', async () => {
+  it('aborts with a budget failure once the resolution budget is spent', async () => {
     const probe = vi.fn(async () => null)
     const engine = new RecursivePriceEngine(marketFor({}), [{ name: 'probe', resolve: probe }], 8, new Map(), 1)
 
@@ -254,7 +254,7 @@ describe('RecursivePriceEngine', () => {
     })
 
     expect(first.failure?.reason).toBe('unsupported')
-    expect(second.failure?.reason).toBe('unsupported')
+    expect(second.failure?.reason).toBe('budget')
     expect(probe).toHaveBeenCalledTimes(1)
   })
 
