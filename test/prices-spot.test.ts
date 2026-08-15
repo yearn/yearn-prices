@@ -1,6 +1,7 @@
 import { getAddress } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { errorEnvelope } from '../src/http'
+import { resetSpotSourceRegistry } from '../src/registries'
 import { handleSpot } from '../src/routes/spot'
 import type { Env, SpotResponseCoin } from '../src/types'
 import { toUnixSeconds } from '../src/utils'
@@ -41,8 +42,6 @@ type SpotBody = { coins: Record<string, SpotResponseCoin> }
 function priced(coin: SpotResponseCoin) {
   return coin as Extract<SpotResponseCoin, { prices: unknown }>
 }
-
-import { resetSpotSourceRegistry } from '../src/registries'
 
 describe('handleSpot', () => {
   let fetchMock: ReturnType<typeof vi.fn>
