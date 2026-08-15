@@ -2,7 +2,7 @@ import { getAddress } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { EnsoClient } from '../src/clients'
 import { handleSpot } from '../src/routes/spot'
-import type { Env } from '../src/types'
+import type { Env, SpotResponseCoin } from '../src/types'
 import { toUnixSeconds } from '../src/utils'
 
 // Real key, loaded from .env via dotenv (vitest setupFiles). These tests hit the live Enso API,
@@ -42,8 +42,10 @@ describe.skipIf(!ENSO_API_KEY)('Enso integration (live API)', () => {
       const response = await handleSpot(request, env)
 
       expect(response.status).toBe(200)
-      const body = (await response.json()) as any
-      const price = body.coins[coinKey].prices[0]
+      const body = (await response.json()) as { coins: Record<string, SpotResponseCoin> }
+      const coin = body.coins[coinKey]
+      if (!('prices' in coin)) throw new Error('expected a priced coin')
+      const price = coin.prices[0]
       expect(price.price).toBeGreaterThan(0)
       expect(price.source).toBe('enso')
       // Live spot timestamp: Enso ms converted to seconds, near now (not normalized to a day-end).

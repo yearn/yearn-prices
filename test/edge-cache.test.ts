@@ -131,11 +131,12 @@ describe('readEdgeCache / writeEdgeCache', () => {
 
   it('reads and writes under the canonical key, not the raw url', async () => {
     const { cache, store } = stubEdgeCache()
-    const ctx = { waitUntil: vi.fn() } as unknown as ExecutionContext
+    const waitUntil = vi.fn()
+    const ctx = { waitUntil } as unknown as ExecutionContext
     const written = new Request(spotUrl(['Ethereum:0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2']))
 
     writeEdgeCache(ctx, written, new Response('{"coins":{}}'))
-    await (ctx.waitUntil as any).mock.calls[0][0]
+    await waitUntil.mock.calls[0][0]
 
     expect([...store.keys()]).toEqual([canonicalCacheKey(written.url)])
     const hit = await readEdgeCache(new Request(spotUrl([TOKEN])))
@@ -151,12 +152,13 @@ describe('readEdgeCache / writeEdgeCache', () => {
 
   it('writes a clone so the original response body stays readable', async () => {
     const { store } = stubEdgeCache()
-    const ctx = { waitUntil: vi.fn() } as unknown as ExecutionContext
+    const waitUntil = vi.fn()
+    const ctx = { waitUntil } as unknown as ExecutionContext
     const request = new Request(spotUrl([TOKEN]))
     const response = new Response('{"coins":{}}')
 
     writeEdgeCache(ctx, request, response)
-    await (ctx.waitUntil as any).mock.calls[0][0]
+    await waitUntil.mock.calls[0][0]
 
     await expect(response.text()).resolves.toBe('{"coins":{}}')
     await expect(store.get(canonicalCacheKey(request.url))!.text()).resolves.toBe('{"coins":{}}')

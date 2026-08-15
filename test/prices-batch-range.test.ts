@@ -1,3 +1,4 @@
+import type { Pool } from '@neondatabase/serverless'
 import { describe, expect, it, vi } from 'vitest'
 import { CACHE_CONTROL_IMMUTABLE, CACHE_CONTROL_PARTIAL, CACHE_CONTROL_TODAY } from '../src/cache'
 import { handleBatchHistorical } from '../src/routes/historical/batch'
@@ -29,8 +30,8 @@ function row(timestamp: number, price: string, source = 'defillama') {
   }
 }
 
-function pool(rows: unknown[]) {
-  return { query: vi.fn(async () => ({ rows })) } as any
+function pool(rows: unknown[]): Pool {
+  return { query: vi.fn(async () => ({ rows })) } as unknown as Pool
 }
 
 describe('handleBatchHistorical', () => {

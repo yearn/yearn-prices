@@ -1,3 +1,4 @@
+import type { Pool } from '@neondatabase/serverless'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CACHE_CONTROL_IMMUTABLE, CACHE_CONTROL_PARTIAL } from '../src/cache'
 import { handleHistorical } from '../src/routes/historical/exact'
@@ -13,8 +14,8 @@ function request(source?: string) {
   return new Request(`https://svc/api/prices/historical/${TIMESTAMP}/${TOKEN_KEY}${query}`)
 }
 
-function pool(rows: unknown[]) {
-  return { query: vi.fn(async () => ({ rows })) } as any
+function pool(rows: unknown[]): Pool {
+  return { query: vi.fn(async () => ({ rows })) } as unknown as Pool
 }
 
 function defillamaResponse(status: number, body?: unknown) {

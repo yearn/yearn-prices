@@ -25,7 +25,7 @@ export class SourceRegistry<TSource extends NamedSource, TArgs extends unknown[]
 
   constructor(
     sources: TSource[],
-    private readonly kind: string,
+    readonly kind: string,
     private readonly fetchPrice: (
       source: TSource,
       chainId: number,

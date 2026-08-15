@@ -2,7 +2,7 @@ import { getAddress } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { errorEnvelope } from '../src/http'
 import { handleSpot } from '../src/routes/spot'
-import type { Env } from '../src/types'
+import type { Env, SpotResponseCoin } from '../src/types'
 import { toUnixSeconds } from '../src/utils'
 
 const SPOT_NOT_FOUND = errorEnvelope('NOT_FOUND', 'No price available for this token')
@@ -36,6 +36,12 @@ function spotRequest(coins: unknown) {
   return new Request(`https://svc/api/prices/spot?coins=${encodeURIComponent(JSON.stringify(coins))}`)
 }
 
+type SpotBody = { coins: Record<string, SpotResponseCoin> }
+
+function priced(coin: SpotResponseCoin) {
+  return coin as Extract<SpotResponseCoin, { prices: unknown }>
+}
+
 import { resetSpotSourceRegistry } from '../src/registries'
 
 describe('handleSpot', () => {
@@ -58,7 +64,7 @@ describe('handleSpot', () => {
     const response = await handleSpot(spotRequest([ETH_KEY]), ENV)
 
     expect(response.status).toBe(200)
-    const body = (await response.json()) as any
+    const body = (await response.json()) as SpotBody
     expect(Object.keys(body.coins)).toEqual([ETH_KEY])
     expect(body.coins[ETH_KEY]).toEqual({
       symbol: 'WBTC',
@@ -82,11 +88,11 @@ describe('handleSpot', () => {
     })
 
     const response = await handleSpot(spotRequest([ETH_KEY, BASE_KEY]), ENV)
-    const body = (await response.json()) as any
+    const body = (await response.json()) as SpotBody
 
     expect(Object.keys(body.coins).sort()).toEqual([BASE_KEY, ETH_KEY].sort())
-    expect(body.coins[ETH_KEY].prices[0].price).toBe(100)
-    expect(body.coins[BASE_KEY].prices[0].price).toBe(200)
+    expect(priced(body.coins[ETH_KEY]).prices[0].price).toBe(100)
+    expect(priced(body.coins[BASE_KEY]).prices[0].price).toBe(200)
   })
 
   it('returns a friendly per-token error when Enso has no price', async () => {
@@ -97,7 +103,7 @@ describe('handleSpot', () => {
     })
 
     const response = await handleSpot(spotRequest([ETH_KEY, BASE_KEY]), ENV)
-    const body = (await response.json()) as any
+    const body = (await response.json()) as SpotBody
 
     expect(Object.keys(body.coins).sort()).toEqual([BASE_KEY, ETH_KEY].sort())
     expect(body.coins[BASE_KEY]).toEqual(SPOT_NOT_FOUND)
@@ -107,7 +113,7 @@ describe('handleSpot', () => {
     fetchMock.mockResolvedValue(ensoRes(404, {}))
 
     const response = await handleSpot(spotRequest([ETH_KEY, BASE_KEY]), ENV)
-    const body = (await response.json()) as any
+    const body = (await response.json()) as SpotBody
 
     expect(body.coins).toEqual({
       [ETH_KEY]: SPOT_NOT_FOUND,
@@ -120,7 +126,7 @@ describe('handleSpot', () => {
     fetchMock.mockRejectedValue(new Error('network down'))
 
     const response = await handleSpot(spotRequest([ETH_KEY]), ENV)
-    const body = (await response.json()) as any
+    const body = (await response.json()) as SpotBody
 
     expect(body.coins).toEqual({
       [ETH_KEY]: SPOT_UNAVAILABLE
@@ -149,10 +155,10 @@ describe('handleSpot', () => {
     fetchMock.mockResolvedValue(ensoRes(200, okBody({ symbol: undefined, confidence: undefined })))
 
     const response = await handleSpot(spotRequest([ETH_KEY]), ENV)
-    const body = (await response.json()) as any
+    const body = (await response.json()) as SpotBody
 
-    expect(body.coins[ETH_KEY].symbol).toBeNull()
-    expect(body.coins[ETH_KEY].prices[0].confidence).toBeNull()
+    expect(priced(body.coins[ETH_KEY]).symbol).toBeNull()
+    expect(priced(body.coins[ETH_KEY]).prices[0].confidence).toBeNull()
   })
 
   it('sets the spot cache-control header', async () => {
@@ -168,10 +174,10 @@ describe('handleSpot', () => {
     fetchMock.mockResolvedValue(ensoRes(200, okBody({ timestamp: ms })))
 
     const response = await handleSpot(spotRequest([ETH_KEY]), ENV)
-    const body = (await response.json()) as any
+    const body = (await response.json()) as SpotBody
 
-    expect(body.coins[ETH_KEY].prices[0].timestamp).toBe(toUnixSeconds(ms))
-    expect(body.coins[ETH_KEY].prices[0].timestamp).toBe(Math.floor(ms / 1000))
+    expect(priced(body.coins[ETH_KEY]).prices[0].timestamp).toBe(toUnixSeconds(ms))
+    expect(priced(body.coins[ETH_KEY]).prices[0].timestamp).toBe(Math.floor(ms / 1000))
   })
 
   it('falls back to the current time when Enso omits the timestamp', async () => {
@@ -179,10 +185,10 @@ describe('handleSpot', () => {
 
     const before = Math.floor(Date.now() / 1000)
     const response = await handleSpot(spotRequest([ETH_KEY]), ENV)
-    const body = (await response.json()) as any
+    const body = (await response.json()) as SpotBody
     const after = Math.floor(Date.now() / 1000)
 
-    const ts = body.coins[ETH_KEY].prices[0].timestamp
+    const ts = priced(body.coins[ETH_KEY]).prices[0].timestamp
     expect(ts).toBeGreaterThanOrEqual(before)
     expect(ts).toBeLessThanOrEqual(after + 1)
   })
@@ -191,7 +197,7 @@ describe('handleSpot', () => {
     fetchMock.mockResolvedValue(ensoRes(200, okBody({ price: 0 })))
 
     const response = await handleSpot(spotRequest([ETH_KEY]), ENV)
-    const body = (await response.json()) as any
+    const body = (await response.json()) as SpotBody
 
     expect(body.coins).toEqual({
       [ETH_KEY]: SPOT_NOT_FOUND
@@ -202,7 +208,7 @@ describe('handleSpot', () => {
     fetchMock.mockResolvedValue(ensoRes(404, {}))
 
     const response = await handleSpot(spotRequest([ETH_KEY]), ENV)
-    const body = (await response.json()) as any
+    const body = (await response.json()) as SpotBody
 
     expect(body.coins).toEqual({
       [ETH_KEY]: SPOT_NOT_FOUND
