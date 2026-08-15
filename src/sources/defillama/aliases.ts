@@ -44,12 +44,12 @@ function fantomProxy(input: Omit<DefiLlamaCoinGeckoAlias, 'chain' | 'kind' | 'as
     chain: 'fantom',
     kind: 'canonical-market-proxy',
     assumption: 'pre-multichain-impairment-canonical-market-proxy',
+    ...input,
     references: [
       MULTICHAIN_INCIDENT_REFERENCE,
       MULTICHAIN_FANTOM_BRIDGE_REFERENCE,
       ...(input.references ?? []),
     ],
-    ...input,
   }
 }
 
