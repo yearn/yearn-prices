@@ -1,10 +1,10 @@
 export const SOURCE_PRIORITY = [
   'defillama',
-  'defillama-alias',
   'on-chain-oracle',
   'bobs-api',
   'curve',
   'derived',
+  'defillama-alias',
   'enso',
 ] as const
 
