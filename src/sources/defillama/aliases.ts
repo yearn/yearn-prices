@@ -196,6 +196,10 @@ export function listDefiLlamaCoinGeckoAliases(): readonly DefiLlamaCoinGeckoAlia
   return ALIASES
 }
 
+export const DEFI_LLAMA_ALIAS_CHAINS: ReadonlySet<string> = new Set(
+  ALIASES.map((alias) => alias.chain),
+)
+
 export function isDefiLlamaAliasValidAt(alias: DefiLlamaCoinGeckoAlias, timestamp: number): boolean {
   return (alias.validFrom == null || timestamp >= alias.validFrom)
     && (alias.validUntil == null || timestamp < alias.validUntil)

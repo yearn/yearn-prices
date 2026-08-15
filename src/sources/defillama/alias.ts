@@ -2,7 +2,11 @@ import { DefiLlamaClient } from '../../clients/defillama'
 import { chainIdToName } from '../../utils/chains'
 import { HistoricalPriceSourceBase } from '../base'
 import type { HistoricalPriceResult } from '../types'
-import { getDefiLlamaCoinGeckoAlias, isDefiLlamaAliasValidAt } from './aliases'
+import {
+  DEFI_LLAMA_ALIAS_CHAINS,
+  getDefiLlamaCoinGeckoAlias,
+  isDefiLlamaAliasValidAt,
+} from './aliases'
 import { toHistoricalPrice } from './coin'
 
 const SEARCH_WIDTH_PATTERN = /^(\d+)(s|m|h|d)$/
@@ -28,19 +32,23 @@ export class DefiLlamaAliasHistoricalSource extends HistoricalPriceSourceBase {
   readonly name = 'defillama-alias'
   readonly priority = 30
 
-  private readonly widthSeconds: number | null
+  private readonly widthSeconds: number
 
   constructor(
     private readonly client: DefiLlamaClient = new DefiLlamaClient(),
     private readonly searchWidth = '6h',
   ) {
     super()
-    this.widthSeconds = searchWidthSeconds(searchWidth)
+    const widthSeconds = searchWidthSeconds(searchWidth)
+    if (widthSeconds == null) {
+      throw new Error(`Invalid DeFiLlama searchWidth: ${searchWidth}`)
+    }
+    this.widthSeconds = widthSeconds
   }
 
   supports(chainId: number): boolean {
     const chain = chainIdToName(chainId)
-    return chain === 'optimism' || chain === 'fantom'
+    return chain !== undefined && DEFI_LLAMA_ALIAS_CHAINS.has(chain)
   }
 
   async getHistoricalPrice(
@@ -74,7 +82,10 @@ export class DefiLlamaAliasHistoricalSource extends HistoricalPriceSourceBase {
 
     // The provider ignores searchWidth for some markets; an observation
     // outside the window is a different day's price, not this one's.
-    if (this.widthSeconds != null && Math.abs(price.timestamp - timestamp) > this.widthSeconds) {
+    if (Math.abs(price.timestamp - timestamp) > this.widthSeconds) {
+      return null
+    }
+    if (!isDefiLlamaAliasValidAt(alias, price.timestamp)) {
       return null
     }
 

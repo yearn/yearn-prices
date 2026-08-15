@@ -104,7 +104,7 @@ If callers must be able to filter on your source with `?source=<name>`, or its r
 
 ### 3. Add tests
 
-Create `test/sources/<name>.test.ts` covering:
+Create `test/sources/<name>/<file>.test.ts` covering:
 - ✓ valid response mapping
 - ✓ `null` return when price is missing
 - ✓ transient-error behavior (thrown error gets rethrown if no fallback succeeds)
