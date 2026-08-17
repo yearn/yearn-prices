@@ -53,7 +53,11 @@ describe('createOnchainSpotSource', () => {
         fakeClient({ [TOKEN]: { decimals: new RetryablePricingError('rpc down') } }),
     })
 
-    await expect(source.getSpotPrice(1, TOKEN)).rejects.toBeInstanceOf(RetryablePricingError)
+    await expect(source.getSpotPrice(1, TOKEN)).rejects.toMatchObject({
+      name: 'ApiError',
+      code: 'UNAVAILABLE',
+      status: 503,
+    })
   })
 
   it('does not leak an rpc url from an injected client error', async () => {
@@ -73,7 +77,7 @@ describe('createOnchainSpotSource', () => {
       (caught: unknown) => caught,
     )
 
-    expect(error).toBeInstanceOf(RetryablePricingError)
+    expect(error).toBeInstanceOf(ApiError)
     expect(error instanceof Error ? error.message : '').not.toMatch(/https?:|SECRETKEY|rpc\.example/)
     expect(String(error)).not.toMatch(/SECRETKEY/)
   })

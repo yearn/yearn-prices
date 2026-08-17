@@ -5,7 +5,7 @@ import type { SpotPriceResult } from '../types'
 import { createOnchainPriceAdapters } from './adapters'
 import type { ClientForChain, OnchainAdapterOptions } from './context'
 import { RecursivePriceEngine } from './engine'
-import { RecursiveDependencyError, RetryablePricingError } from './errors'
+import { RecursiveDependencyError } from './errors'
 import { DEFAULT_MAX_DEPTH, type OnchainSourceOptions } from './options'
 import type {
   MarketPriceResolver,
@@ -86,7 +86,8 @@ export class OnchainPricer {
       // A spent budget is a resource cutoff, not absence: surfacing it as
       // NOT_FOUND would make an over-broad pool read as an unpriced token.
       if (result.failure.reason === 'budget') {
-        throw new RetryablePricingError(
+        throw new ApiError(
+          'UNAVAILABLE',
           `On-chain pricing exhausted its resolution budget for ${result.failure.token}`,
         )
       }
@@ -95,9 +96,11 @@ export class OnchainPricer {
         if (cause instanceof ApiError) {
           throw cause
         }
-        throw new RetryablePricingError(
+        // An ApiError, not a bare Error: the historical route rethrows anything
+        // it does not recognise and the worker turns that into a 500.
+        throw new ApiError(
+          'UNAVAILABLE',
           `On-chain pricing failed transiently for ${result.failure.token}`,
-          cause === undefined ? undefined : { cause },
         )
       }
       return null

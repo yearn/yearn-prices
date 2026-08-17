@@ -49,8 +49,7 @@ export function isRetryablePricingError(error: unknown): boolean {
       message.includes('unknown rpc error occurred') ||
       message.includes('fetch failed') ||
       message.includes('timed out') ||
-      /http (408|425|429|5\d\d)/.test(message) ||
-      /status (408|425|429|5\d\d)/.test(message)
+      /\b(http|status)(\s+code)?:?\s+(408|425|429|5\d\d)\b/.test(message)
     ) {
       return true
     }
