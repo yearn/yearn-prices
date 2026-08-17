@@ -164,6 +164,9 @@ export class RecursivePriceEngine {
   private readonly successful = new Map<string, ResolvedPricePath>()
   private readonly failed = new Map<string, PriceResolutionFailure>()
   private readonly inflight = new Map<string, Promise<RecursivePriceResult>>()
+  // waiter -> targets it is currently blocked on. `ancestry` only covers one
+  // branch, so it cannot see a cycle that closes across two concurrent ones.
+  private readonly waiting = new Map<string, Set<string>>()
   private resolutions = 0
 
   constructor(
@@ -205,18 +208,53 @@ export class RecursivePriceEngine {
     if (cachedFailure) {
       return { path: null, failure: cachedFailure }
     }
-    const pending = this.inflight.get(key)
-    if (pending) {
-      return pending
+    const waiter = ancestry[ancestry.length - 1]
+    if (waiter !== undefined && this.wouldDeadlock(waiter, key)) {
+      return { path: null, failure: { reason: 'cycle', token: target.token, attempts: [] } }
     }
 
-    const work = this.resolveUncached(target, ancestry, key)
-    this.inflight.set(key, work)
+    const pending = this.inflight.get(key)
+    const work = pending ?? this.resolveUncached(target, ancestry, key)
+    if (!pending) {
+      this.inflight.set(key, work)
+    }
+    if (waiter !== undefined) {
+      const blocked = this.waiting.get(waiter) ?? new Set<string>()
+      blocked.add(key)
+      this.waiting.set(waiter, blocked)
+    }
     try {
       return await work
     } finally {
-      this.inflight.delete(key)
+      if (waiter !== undefined) {
+        const blocked = this.waiting.get(waiter)
+        if (blocked) {
+          blocked.delete(key)
+          if (blocked.size === 0) {
+            this.waiting.delete(waiter)
+          }
+        }
+      }
+      if (!pending) {
+        this.inflight.delete(key)
+      }
     }
+  }
+
+  /** True when awaiting `awaited` would close a loop in the wait graph. */
+  private wouldDeadlock(waiter: string, awaited: string): boolean {
+    const seen = new Set<string>()
+    const queue = [awaited]
+    while (queue.length > 0) {
+      const node = queue.pop() as string
+      if (node === waiter) return true
+      if (seen.has(node)) continue
+      seen.add(node)
+      for (const next of this.waiting.get(node) ?? []) {
+        queue.push(next)
+      }
+    }
+    return false
   }
 
   private async resolveUncached(
@@ -304,7 +342,11 @@ export class RecursivePriceEngine {
       token: target.token,
       attempts,
     }
-    this.failed.set(key, failure)
+    // 'cycle' and 'max-depth' depend on where the token sat in this branch, so
+    // caching them would refuse it on a shallower branch that could price it.
+    if (failure.reason !== 'cycle' && failure.reason !== 'max-depth') {
+      this.failed.set(key, failure)
+    }
     return { path: null, failure }
   }
 }

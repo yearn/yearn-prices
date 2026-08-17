@@ -305,4 +305,76 @@ describe('RecursivePriceEngine', () => {
     expect(result.path?.adapter).toBe('winner')
     expect(hints.get(`1:${SHARE.toLowerCase()}`)).toBe('winner')
   })
+
+  it('fails a cycle that closes across two concurrent branches', { timeout: 2_000 }, async () => {
+    const X = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    const Y = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    const pool: RecursivePriceAdapter = {
+      name: 'pool',
+      async resolve(target, context) {
+        if (target.token.toLowerCase() !== SHARE) return null
+        const [x, y] = await Promise.all([
+          context.require({ ...target, token: X }, 'x'),
+          context.require({ ...target, token: Y }, 'y'),
+        ])
+        return {
+          priceUsd: x.priceUsd + y.priceUsd,
+          inputs: [{ path: x }, { path: y }],
+          metadata: {},
+        }
+      },
+    }
+    const mutual = (name: string, self: string, other: string): RecursivePriceAdapter => ({
+      name,
+      async resolve(target, context) {
+        if (target.token.toLowerCase() !== self) return null
+        const input = await context.require({ ...target, token: other }, name)
+        return { priceUsd: input.priceUsd, inputs: [{ path: input }], metadata: {} }
+      },
+    })
+    const engine = new RecursivePriceEngine(marketFor({}), [
+      pool,
+      mutual('x-needs-y', X, Y),
+      mutual('y-needs-x', Y, X),
+    ])
+
+    const result = await engine.resolve({ chainId: 1, token: SHARE, timestamp: null })
+
+    expect(result.path).toBeNull()
+    expect(result.failure?.reason).toBe('cycle')
+  })
+
+  it('does not memoise a max-depth failure against a shallower branch', async () => {
+    const A = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    const P = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    const Q = '0xcccccccccccccccccccccccccccccccccccccccc'
+    const via = (name: string, self: string, child: string): RecursivePriceAdapter => ({
+      name,
+      async resolve(target, context) {
+        if (target.token.toLowerCase() !== self) return null
+        const input = await context.require({ ...target, token: child }, name)
+        return { priceUsd: input.priceUsd, inputs: [{ path: input }], metadata: {} }
+      },
+    })
+    const root: RecursivePriceAdapter = {
+      name: 'root',
+      async resolve(target, context) {
+        if (target.token.toLowerCase() !== SHARE) return null
+        // Deep branch first: P sits at maxDepth there and must not be pinned.
+        await context.resolve({ ...target, token: A })
+        const input = await context.require({ ...target, token: P }, 'p')
+        return { priceUsd: input.priceUsd, inputs: [{ path: input }], metadata: {} }
+      },
+    }
+    const engine = new RecursivePriceEngine(
+      marketFor({ [Q]: 7 }),
+      [root, via('a', A, P), via('p', P, Q)],
+      3,
+    )
+
+    const result = await engine.resolve({ chainId: 1, token: SHARE, timestamp: null })
+
+    expect(result.failure).toBeNull()
+    expect(result.path?.priceUsd).toBe(7)
+  })
 })
