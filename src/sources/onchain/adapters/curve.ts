@@ -55,42 +55,53 @@ interface CurveCoinCount {
   source: 'pool-N_COINS' | 'curve-registry' | 'curve-metaregistry'
 }
 
-async function forEachRegistry<T>(
-  client: PublicClient,
-  blockNumber: bigint,
-  visit: (registry: Address) => Promise<T | null>,
-): Promise<T | null> {
-  for (let registryId = 0; registryId <= MAX_REGISTRY_ID; registryId += 1) {
-    const registryRaw = await maybe(() =>
-      client.readContract({
-        address: CURVE_ADDRESS_PROVIDER,
-        abi: providerAbi,
-        functionName: 'get_address',
-        args: [BigInt(registryId)],
-        blockNumber,
-      }),
-    )
-    if (!registryRaw) {
-      continue
+type RegistryWalk = <T>(visit: (registry: Address) => Promise<T | null>) => Promise<T | null>
+
+/**
+ * Walks the address provider's registries, remembering each answer. The pool
+ * lookup and the coin count both walk it, and a registry address does not
+ * change inside one resolution.
+ */
+function registryWalk(client: PublicClient, blockNumber: bigint): RegistryWalk {
+  const seen = new Map<number, Address | null>()
+
+  return async function forEachRegistry<T>(
+    visit: (registry: Address) => Promise<T | null>,
+  ): Promise<T | null> {
+    for (let registryId = 0; registryId <= MAX_REGISTRY_ID; registryId += 1) {
+      let registry = seen.get(registryId)
+      if (registry === undefined) {
+        const registryRaw = await maybe(() =>
+          client.readContract({
+            address: CURVE_ADDRESS_PROVIDER,
+            abi: providerAbi,
+            functionName: 'get_address',
+            args: [BigInt(registryId)],
+            blockNumber,
+          }),
+        )
+        registry = (registryRaw ? normalizedAddress(registryRaw) : null) as Address | null
+        seen.set(registryId, registry)
+      }
+      if (!registry) {
+        continue
+      }
+      const result = await visit(registry)
+      if (result != null) {
+        return result
+      }
     }
-    const registry = normalizedAddress(registryRaw)
-    if (!registry) {
-      continue
-    }
-    const result = await visit(registry)
-    if (result != null) {
-      return result
-    }
+    return null
   }
-  return null
 }
 
 async function poolFromRegistry(
   client: PublicClient,
   lpToken: Address,
   blockNumber: bigint,
+  forEachRegistry: RegistryWalk,
 ): Promise<string | null> {
-  return forEachRegistry(client, blockNumber, async (registry) => {
+  return forEachRegistry(async (registry) => {
     const poolRaw = await maybe(() =>
       client.readContract({
         address: registry,
@@ -154,6 +165,7 @@ async function readCoinCount(
   client: PublicClient,
   poolAddress: Address,
   blockNumber: bigint,
+  forEachRegistry: RegistryWalk,
 ): Promise<CurveCoinCount | null> {
   const direct = await maybe(() =>
     client.readContract({
@@ -168,7 +180,7 @@ async function readCoinCount(
     return { count: directCount, source: 'pool-N_COINS' }
   }
 
-  return forEachRegistry(client, blockNumber, async (registry) => {
+  return forEachRegistry(async (registry) => {
     const registryCounts = await maybe(() =>
       client.readContract({
         address: registry,
@@ -225,6 +237,7 @@ async function poolClaimsLpToken(
 async function resolvePool(
   target: RecursivePriceTarget,
   state: ContractContext,
+  forEachRegistry: RegistryWalk,
 ): Promise<string | null> {
   const minterRaw = await maybe(() =>
     state.client.readContract({
@@ -246,7 +259,7 @@ async function resolvePool(
   if (await readCoinAddress(state.client, state.address, 0, state.blockNumber)) {
     return target.token
   }
-  return poolFromRegistry(state.client, state.address, state.blockNumber)
+  return poolFromRegistry(state.client, state.address, state.blockNumber, forEachRegistry)
 }
 
 export function curveAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
@@ -254,11 +267,17 @@ export function curveAdapter(options: OnchainAdapterOptions): RecursivePriceAdap
     name: 'curve-reserve-nav',
     async resolve(target, context) {
       const state = await contractContext(target, options)
-      const poolAddress = await resolvePool(target, state)
+      const forEachRegistry = registryWalk(state.client, state.blockNumber)
+      const poolAddress = await resolvePool(target, state, forEachRegistry)
       if (!poolAddress) {
         return null
       }
-      const coinCount = await readCoinCount(state.client, poolAddress as Address, state.blockNumber)
+      const coinCount = await readCoinCount(
+        state.client,
+        poolAddress as Address,
+        state.blockNumber,
+        forEachRegistry,
+      )
       if (!coinCount) {
         return null
       }

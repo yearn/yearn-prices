@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { curveAdapter } from '../../../src/sources/onchain/adapters/curve'
-import { adapterOptions, priceWith } from './helpers'
+import { adapterOptions, fakeClient, priceWith } from './helpers'
 
 const LP = '0x1111111111111111111111111111111111111111'
 const TOKEN_A = '0x2222222222222222222222222222222222222222'
@@ -62,6 +62,40 @@ describe('curveAdapter', () => {
     )
 
     expect(result.path?.priceUsd).toBeCloseTo(1)
+  })
+
+  it('reads each address-provider registry once across both registry walks', async () => {
+    const registryReads = {
+      [LP]: { decimals: 18, totalSupply: 100n * 10n ** 18n },
+      [CURVE_PROVIDER]: { get_address: CURVE_POOL },
+      [CURVE_POOL]: {
+        get_pool_from_lp_token: CURVE_POOL,
+        get_n_coins: [1n, 1n],
+        coins: TOKEN_A,
+        balances: 100n * 10n ** 6n,
+      },
+      [TOKEN_A]: { decimals: 6 },
+    }
+    const client = fakeClient(registryReads)
+    let providerReads = 0
+    const counting = {
+      ...client,
+      readContract: (args: { address: string; functionName: string }) => {
+        if (args.functionName === 'get_address') {
+          providerReads += 1
+        }
+        return client.readContract(args as never)
+      },
+    } as unknown as typeof client
+
+    const result = await priceWith(
+      curveAdapter({ clientForChain: () => counting }),
+      { [TOKEN_A]: 1 },
+      LP,
+    )
+
+    expect(result.path?.metadata.coinCountSource).toBe('curve-registry')
+    expect(providerReads).toBe(1)
   })
 
   it('refuses a token whose minter does not claim it as its LP', async () => {
