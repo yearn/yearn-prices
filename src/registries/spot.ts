@@ -18,7 +18,7 @@ export class SpotSourceRegistry extends SourceRegistry<SpotPriceSource> {
       sources,
       'spot',
       (source, chainId, token) => source.getSpotPrice(chainId, token),
-      'No price available for this token',
+      'No price available for this token'
     )
   }
 

@@ -5,6 +5,6 @@ export default defineConfig({
     environment: 'node',
     include: ['test/**/*.test.ts'],
     // Loads .env so live-API integration tests can read a real ENSO_API_KEY.
-    setupFiles: ['dotenv/config'],
-  },
+    setupFiles: ['dotenv/config']
+  }
 })

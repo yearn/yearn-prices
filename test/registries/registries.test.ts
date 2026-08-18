@@ -5,21 +5,16 @@ import {
   getSpotSourceRegistry,
   HistoricalSourceRegistry,
   resetSourceRegistries,
-  SpotSourceRegistry,
+  SpotSourceRegistry
 } from '../../src/registries'
-import type {
-  HistoricalPrice,
-  HistoricalPriceSource,
-  SpotPrice,
-  SpotPriceSource,
-} from '../../src/sources'
+import type { HistoricalPrice, HistoricalPriceSource, SpotPrice, SpotPriceSource } from '../../src/sources'
 
 const PRICE: SpotPrice = {
   price: 1,
   timestamp: 100,
   symbol: 'TOKEN',
   confidence: null,
-  source: 'placeholder',
+  source: 'placeholder'
 }
 
 const HISTORICAL_PRICE: HistoricalPrice = {
@@ -27,14 +22,14 @@ const HISTORICAL_PRICE: HistoricalPrice = {
   timestamp: 100,
   symbol: 'TOKEN',
   confidence: null,
-  source: 'placeholder',
+  source: 'placeholder'
 }
 
 function source(
   name: string,
   priority: number,
   getSpotPrice: SpotPriceSource['getSpotPrice'],
-  supports = () => true,
+  supports = () => true
 ): SpotPriceSource {
   return { name, priority, supports, getSpotPrice }
 }
@@ -43,7 +38,7 @@ function historicalSource(
   name: string,
   priority: number,
   getHistoricalPrice: HistoricalPriceSource['getHistoricalPrice'],
-  supports = () => true,
+  supports = () => true
 ): HistoricalPriceSource {
   return { name, priority, supports, getHistoricalPrice }
 }
@@ -59,7 +54,7 @@ describe('SpotSourceRegistry', () => {
       source('first', 10, async () => {
         calls.push('first')
         return PRICE
-      }),
+      })
     ])
 
     await expect(registry.resolve(1, '0xtoken')).resolves.toEqual({ ...PRICE, source: 'first' })
@@ -68,10 +63,7 @@ describe('SpotSourceRegistry', () => {
 
   it('falls through when a source returns null', async () => {
     const fallback = vi.fn(async () => PRICE)
-    const registry = new SpotSourceRegistry([
-      source('empty', 1, async () => null),
-      source('fallback', 2, fallback),
-    ])
+    const registry = new SpotSourceRegistry([source('empty', 1, async () => null), source('fallback', 2, fallback)])
 
     await expect(registry.resolve(1, '0xtoken')).resolves.toEqual({ ...PRICE, source: 'fallback' })
     expect(fallback).toHaveBeenCalledOnce()
@@ -82,7 +74,7 @@ describe('SpotSourceRegistry', () => {
       source('missing', 1, async () => {
         throw new ApiError('NOT_FOUND', 'missing')
       }),
-      source('fallback', 2, async () => PRICE),
+      source('fallback', 2, async () => PRICE)
     ])
 
     await expect(registry.resolve(1, '0xtoken')).resolves.toEqual({ ...PRICE, source: 'fallback' })
@@ -94,7 +86,12 @@ describe('SpotSourceRegistry', () => {
       source('broken', 1, async () => {
         throw error
       }),
-      source('unsupported', 2, async () => PRICE, () => false),
+      source(
+        'unsupported',
+        2,
+        async () => PRICE,
+        () => false
+      )
     ])
 
     await expect(registry.resolve(1, '0xtoken')).rejects.toBe(error)
@@ -105,7 +102,7 @@ describe('SpotSourceRegistry', () => {
       source('broken', 1, async () => {
         throw new Error('temporary failure')
       }),
-      source('fallback', 2, async () => PRICE),
+      source('fallback', 2, async () => PRICE)
     ])
 
     await expect(registry.resolve(1, '0xtoken')).resolves.toEqual({ ...PRICE, source: 'fallback' })
@@ -114,10 +111,7 @@ describe('SpotSourceRegistry', () => {
   it('rejects duplicate source names', () => {
     expect(
       () =>
-        new SpotSourceRegistry([
-          source('duplicate', 1, async () => PRICE),
-          source('duplicate', 2, async () => PRICE),
-        ]),
+        new SpotSourceRegistry([source('duplicate', 1, async () => PRICE), source('duplicate', 2, async () => PRICE)])
     ).toThrow('Duplicate spot price source name: duplicate')
   })
 })
@@ -126,12 +120,12 @@ describe('HistoricalSourceRegistry', () => {
   it('uses priority order and stamps the winning source', async () => {
     const registry = new HistoricalSourceRegistry([
       historicalSource('later', 20, async () => HISTORICAL_PRICE),
-      historicalSource('first', 10, async () => ({ ...HISTORICAL_PRICE, source: 'wrong' })),
+      historicalSource('first', 10, async () => ({ ...HISTORICAL_PRICE, source: 'wrong' }))
     ])
 
     await expect(registry.resolve(1, '0xtoken', 100)).resolves.toEqual({
       ...HISTORICAL_PRICE,
-      source: 'first',
+      source: 'first'
     })
   })
 
@@ -144,7 +138,7 @@ describe('HistoricalSourceRegistry', () => {
       }),
       historicalSource('broken', 3, async () => {
         throw error
-      }),
+      })
     ])
 
     await expect(registry.resolve(1, '0xtoken', 100)).rejects.toBe(error)
@@ -155,12 +149,12 @@ describe('HistoricalSourceRegistry', () => {
       historicalSource('broken', 1, async () => {
         throw new Error('temporary failure')
       }),
-      historicalSource('fallback', 2, async () => HISTORICAL_PRICE),
+      historicalSource('fallback', 2, async () => HISTORICAL_PRICE)
     ])
 
     await expect(registry.resolve(1, '0xtoken', 100)).resolves.toEqual({
       ...HISTORICAL_PRICE,
-      source: 'fallback',
+      source: 'fallback'
     })
   })
 
@@ -169,8 +163,8 @@ describe('HistoricalSourceRegistry', () => {
       () =>
         new HistoricalSourceRegistry([
           historicalSource('duplicate', 1, async () => HISTORICAL_PRICE),
-          historicalSource('duplicate', 2, async () => HISTORICAL_PRICE),
-        ]),
+          historicalSource('duplicate', 2, async () => HISTORICAL_PRICE)
+        ])
     ).toThrow('Duplicate historical price source name: duplicate')
   })
 })

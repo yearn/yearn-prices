@@ -1,11 +1,4 @@
-export const SOURCE_PRIORITY = [
-  'defillama',
-  'on-chain-oracle',
-  'bobs-api',
-  'curve',
-  'derived',
-  'enso',
-] as const
+export const SOURCE_PRIORITY = ['defillama', 'on-chain-oracle', 'bobs-api', 'curve', 'derived', 'enso'] as const
 
 export type PriceSource = (typeof SOURCE_PRIORITY)[number]
 

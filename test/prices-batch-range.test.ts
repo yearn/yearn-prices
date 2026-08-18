@@ -1,9 +1,6 @@
+import type { Pool } from '@neondatabase/serverless'
 import { describe, expect, it, vi } from 'vitest'
-import {
-  CACHE_CONTROL_IMMUTABLE,
-  CACHE_CONTROL_PARTIAL,
-  CACHE_CONTROL_TODAY,
-} from '../src/cache'
+import { CACHE_CONTROL_IMMUTABLE, CACHE_CONTROL_PARTIAL, CACHE_CONTROL_TODAY } from '../src/cache'
 import { handleBatchHistorical } from '../src/routes/historical/batch'
 import { handleRangeHistorical } from '../src/routes/historical/range'
 import type { Env } from '../src/types'
@@ -18,9 +15,7 @@ const DAY_TWO = 1695340799
 const TODAY = normalizeToEndOfDay(Math.floor(Date.now() / 1000))
 
 function url(path: string, coins: unknown, extra = '') {
-  return new Request(
-    `https://svc/api/prices/${path}?coins=${encodeURIComponent(JSON.stringify(coins))}${extra}`,
-  )
+  return new Request(`https://svc/api/prices/${path}?coins=${encodeURIComponent(JSON.stringify(coins))}${extra}`)
 }
 
 function row(timestamp: number, price: string, source = 'defillama') {
@@ -31,12 +26,12 @@ function row(timestamp: number, price: string, source = 'defillama') {
     price,
     symbol: 'WETH',
     confidence: '0.9',
-    source,
+    source
   }
 }
 
-function pool(rows: unknown[]) {
-  return { query: vi.fn(async () => ({ rows })) } as any
+function pool(rows: unknown[]): Pool {
+  return { query: vi.fn(async () => ({ rows })) } as unknown as Pool
 }
 
 describe('handleBatchHistorical', () => {
@@ -44,7 +39,7 @@ describe('handleBatchHistorical', () => {
     const response = await handleBatchHistorical(
       url('batchHistorical', { [CHECKSUM_KEY]: [DAY_TWO, DAY_ONE] }),
       ENV,
-      pool([row(DAY_TWO, '2'), row(DAY_ONE, '1')]),
+      pool([row(DAY_TWO, '2'), row(DAY_ONE, '1')])
     )
 
     expect(response.status).toBe(200)
@@ -54,10 +49,10 @@ describe('handleBatchHistorical', () => {
           symbol: 'WETH',
           prices: [
             { timestamp: DAY_ONE, price: 1, confidence: 0.9, source: 'defillama' },
-            { timestamp: DAY_TWO, price: 2, confidence: 0.9, source: 'defillama' },
-          ],
-        },
-      },
+            { timestamp: DAY_TWO, price: 2, confidence: 0.9, source: 'defillama' }
+          ]
+        }
+      }
     })
   })
 
@@ -65,7 +60,7 @@ describe('handleBatchHistorical', () => {
     const response = await handleBatchHistorical(
       url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE] }),
       ENV,
-      pool([row(DAY_ONE, '1')]),
+      pool([row(DAY_ONE, '1')])
     )
 
     expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
@@ -75,7 +70,7 @@ describe('handleBatchHistorical', () => {
     const response = await handleBatchHistorical(
       url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE, DAY_TWO] }),
       ENV,
-      pool([row(DAY_ONE, '1')]),
+      pool([row(DAY_ONE, '1')])
     )
 
     expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
@@ -85,7 +80,7 @@ describe('handleBatchHistorical', () => {
     const response = await handleBatchHistorical(
       url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [TODAY] }),
       ENV,
-      pool([row(TODAY, '1')]),
+      pool([row(TODAY, '1')])
     )
 
     expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_TODAY)
@@ -96,7 +91,7 @@ describe('handleBatchHistorical', () => {
     await handleBatchHistorical(
       url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE] }, '&source=enso'),
       ENV,
-      queryPool,
+      queryPool
     )
 
     expect(queryPool.query.mock.calls[0][1]).toContain('enso')
@@ -107,8 +102,8 @@ describe('handleBatchHistorical', () => {
       handleBatchHistorical(
         url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE] }, '&source=nope'),
         ENV,
-        pool([]),
-      ),
+        pool([])
+      )
     ).rejects.toMatchObject({ code: 'INVALID_INPUT' })
   })
 })
@@ -118,7 +113,7 @@ describe('handleRangeHistorical', () => {
     const response = await handleRangeHistorical(
       url('rangeHistorical', { [CHECKSUM_KEY]: [DAY_ONE, DAY_TWO] }),
       ENV,
-      pool([row(DAY_ONE, '1'), row(DAY_TWO, '2')]),
+      pool([row(DAY_ONE, '1'), row(DAY_TWO, '2')])
     )
 
     expect(response.status).toBe(200)
@@ -128,10 +123,10 @@ describe('handleRangeHistorical', () => {
           symbol: 'WETH',
           prices: [
             { timestamp: DAY_ONE, price: 1, confidence: 0.9, source: 'defillama' },
-            { timestamp: DAY_TWO, price: 2, confidence: 0.9, source: 'defillama' },
-          ],
-        },
-      },
+            { timestamp: DAY_TWO, price: 2, confidence: 0.9, source: 'defillama' }
+          ]
+        }
+      }
     })
     expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
   })
@@ -140,7 +135,7 @@ describe('handleRangeHistorical', () => {
     const response = await handleRangeHistorical(
       url('rangeHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE, DAY_TWO] }),
       ENV,
-      pool([row(DAY_ONE, '1')]),
+      pool([row(DAY_ONE, '1')])
     )
 
     expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
@@ -150,7 +145,7 @@ describe('handleRangeHistorical', () => {
     const response = await handleRangeHistorical(
       url('rangeHistorical', { [`ethereum:${RAW_ADDR}`]: [TODAY, TODAY] }),
       ENV,
-      pool([row(TODAY, '1')]),
+      pool([row(TODAY, '1')])
     )
 
     expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_TODAY)
@@ -158,11 +153,7 @@ describe('handleRangeHistorical', () => {
 
   it('rejects a reversed range', async () => {
     await expect(
-      handleRangeHistorical(
-        url('rangeHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_TWO, DAY_ONE] }),
-        ENV,
-        pool([]),
-      ),
+      handleRangeHistorical(url('rangeHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_TWO, DAY_ONE] }), ENV, pool([]))
     ).rejects.toMatchObject({ code: 'INVALID_INPUT' })
   })
 })

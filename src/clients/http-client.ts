@@ -9,7 +9,7 @@ export class SlidingWindowRateLimiter {
 
   constructor(
     private readonly limit: number,
-    private readonly intervalMs: number,
+    private readonly intervalMs: number
   ) {}
 
   async waitTurn(): Promise<void> {

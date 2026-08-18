@@ -10,7 +10,7 @@ export class EnsoClient {
   constructor(
     private readonly apiKey: string,
     private readonly rateLimiter: SlidingWindowRateLimiter = sharedRateLimiter,
-    private readonly onRetry?: (attempt: number, delayMs: number, url: string, status: number) => void,
+    private readonly onRetry?: (attempt: number, delayMs: number, url: string, status: number) => void
   ) {}
 
   getPrice(chainId: number, address: string): Promise<EnsoPriceResponse> {
@@ -20,7 +20,7 @@ export class EnsoClient {
       rateLimiter: this.rateLimiter,
       headers: { authorization: `Bearer ${this.apiKey}` },
       notFoundAsError: true,
-      onRetry: this.onRetry,
+      onRetry: this.onRetry
     })
   }
 }

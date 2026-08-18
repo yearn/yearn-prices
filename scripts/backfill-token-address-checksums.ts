@@ -1,5 +1,7 @@
 import { config as loadEnv } from 'dotenv'
+
 loadEnv()
+
 import { getAddress } from 'viem'
 import { createPool } from '../src/db'
 
@@ -46,7 +48,7 @@ function parseArgs(argv: string[]): Args {
 
   return {
     batchSize,
-    dryRun: options.get('--dry-run') === true,
+    dryRun: options.get('--dry-run') === true
   }
 }
 
@@ -68,7 +70,7 @@ try {
     unchanged: 0,
     mappings: 0,
     copied: 0,
-    deleted: 0,
+    deleted: 0
   }
 
   const result = await pool.query<{ token: string }>('SELECT DISTINCT token FROM token_prices ORDER BY token')
@@ -92,7 +94,7 @@ try {
 
     if ((index + 1) % 1_000 === 0 || index + 1 === result.rows.length) {
       console.info(
-        `Scanned ${index + 1}/${result.rows.length} addresses: ${mappings.size} need updates, ${stats.unchanged} unchanged, ${stats.invalid} invalid`,
+        `Scanned ${index + 1}/${result.rows.length} addresses: ${mappings.size} need updates, ${stats.unchanged} unchanged, ${stats.invalid} invalid`
       )
     }
   }
@@ -116,7 +118,9 @@ try {
 
       await pool.query('BEGIN')
       try {
-        console.info(`Batch ${batchIndex + 1}/${mappingBatches.length}: updating ${mappingBatch.length} address mappings`)
+        console.info(
+          `Batch ${batchIndex + 1}/${mappingBatches.length}: updating ${mappingBatch.length} address mappings`
+        )
         const backfill = await pool.query<{ copied: string; deleted: string }>(
           `
             WITH mappings(old_token, new_token) AS (
@@ -151,7 +155,7 @@ try {
               (SELECT COUNT(*) FROM copied) AS copied,
               (SELECT COUNT(*) FROM deleted) AS deleted
           `,
-          params,
+          params
         )
 
         await pool.query('COMMIT')
@@ -160,7 +164,7 @@ try {
         stats.copied += copied
         stats.deleted += deleted
         console.info(
-          `Batch ${batchIndex + 1}/${mappingBatches.length} complete: copied ${copied}, deleted ${deleted}, cumulative copied ${stats.copied}, deleted ${stats.deleted}`,
+          `Batch ${batchIndex + 1}/${mappingBatches.length} complete: copied ${copied}, deleted ${deleted}, cumulative copied ${stats.copied}, deleted ${stats.deleted}`
         )
       } catch (error) {
         await pool.query('ROLLBACK')
