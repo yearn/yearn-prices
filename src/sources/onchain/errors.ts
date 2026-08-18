@@ -57,3 +57,11 @@ export function isRetryablePricingError(error: unknown): boolean {
   }
   return false
 }
+
+/** The request spent its whole on-chain read allowance. */
+export class ReadBudgetExceededError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ReadBudgetExceededError'
+  }
+}

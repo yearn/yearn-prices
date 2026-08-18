@@ -1,3 +1,4 @@
+import type { PublicClient } from 'viem'
 import { getChainClient } from '../../clients/rpc'
 import { ApiError } from '../../http/errors'
 import { chainIdToName } from '../../utils/chains'
@@ -6,7 +7,8 @@ import { createOnchainPriceAdapters } from './adapters'
 import type { ClientForChain } from './context'
 import { RecursivePriceEngine } from './engine'
 import { RecursiveDependencyError } from './errors'
-import { DEFAULT_MAX_DEPTH, type OnchainSourceOptions } from './options'
+import { DEFAULT_MAX_DEPTH, DEFAULT_READ_BUDGET, type OnchainSourceOptions } from './options'
+import { createReadBudget } from './read-budget'
 import type { PriceResolutionFailure, RecursivePriceResult, RecursivePriceTarget } from './types'
 
 /**
@@ -45,7 +47,19 @@ export class OnchainPricer {
   private readonly engine: RecursivePriceEngine
 
   constructor(options: OnchainSourceOptions) {
-    this.clientForChain = options.clientForChain ?? ((chainId) => getChainClient(chainId, options.env))
+    const clientForChain = options.clientForChain ?? ((chainId) => getChainClient(chainId, options.env))
+    const readBudget = createReadBudget(options.readBudget ?? DEFAULT_READ_BUDGET)
+    const metered = new Map<number, PublicClient | null>()
+    this.clientForChain = (chainId) => {
+      const cached = metered.get(chainId)
+      if (cached !== undefined) {
+        return cached
+      }
+      const client = clientForChain(chainId)
+      const wrapped = client ? readBudget.meter(client) : null
+      metered.set(chainId, wrapped)
+      return wrapped
+    }
     const adapters = createOnchainPriceAdapters({
       clientForChain: this.clientForChain,
       blockForTarget: options.blockForTarget,

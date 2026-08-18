@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../../../src/http/errors'
 import { RetryablePricingError } from '../../../src/sources/onchain/errors'
+import { DEFAULT_READ_BUDGET } from '../../../src/sources/onchain/options'
 import { createOnchainHistoricalSource, createOnchainSpotSource } from '../../../src/sources/onchain/source'
 import type { MarketPriceResolver } from '../../../src/sources/onchain/types'
 import { fakeClient, marketFor } from './helpers'
@@ -149,7 +150,7 @@ describe('one source, one request', () => {
     expect(marketPrice.mock.calls.filter(([target]) => target.token.toLowerCase() === UNDERLYING)).toHaveLength(1)
   })
 
-  it('spends one shared budget across every token in the request', async () => {
+  it('keeps a fifty-token request under the worker subrequest limit on production defaults', async () => {
     const reads = sharedUnderlyingReads()
     let contractReads = 0
     const source = createOnchainSpotSource({
@@ -164,8 +165,7 @@ describe('one source, one request', () => {
             return readContract(args)
           }
         } as unknown as ReturnType<typeof fakeClient>
-      },
-      resolutionBudget: 4
+      }
     })
 
     const settled = await Promise.allSettled(
@@ -175,9 +175,21 @@ describe('one source, one request', () => {
     )
 
     expect(settled.filter((outcome) => outcome.status === 'rejected').length).toBeGreaterThan(0)
-    // Four resolutions of budget, thirteen adapters, a handful of reads each:
-    // without the shared budget this is fifty independent walks.
-    expect(contractReads).toBeLessThan(200)
+    expect(contractReads).toBeLessThanOrEqual(DEFAULT_READ_BUDGET)
+  })
+
+  it('reports a spent read budget as unavailable, not as a missing price', async () => {
+    const source = createOnchainSpotSource({
+      marketPrice: noMarket,
+      clientForChain: () => fakeClient(sharedUnderlyingReads()),
+      readBudget: 1
+    })
+
+    await expect(source.getSpotPrice(1, VAULT_A)).rejects.toMatchObject({
+      name: 'ApiError',
+      code: 'UNAVAILABLE',
+      status: 503
+    })
   })
 })
 

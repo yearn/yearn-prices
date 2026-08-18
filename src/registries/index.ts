@@ -15,8 +15,6 @@ export function historicalSourceRegistry(env?: Env): HistoricalSourceRegistry {
   return new HistoricalSourceRegistry(createHistoricalSources(env))
 }
 
-export { createHistoricalSources, createSpotSources, HistoricalSourceRegistry, SpotSourceRegistry }
-
-export { SourceRegistry } from './source-registry'
 export type { NamedSource, PriceFields, StampedPrice } from './source-registry'
-
+export { SourceRegistry } from './source-registry'
+export { createHistoricalSources, createSpotSources, HistoricalSourceRegistry, SpotSourceRegistry }

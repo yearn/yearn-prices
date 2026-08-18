@@ -5,9 +5,9 @@ import {
   contractContext,
   maybe,
   normalizedAddress,
+  type OnchainAdapterOptions,
   rawState,
-  recursiveInput,
-  type OnchainAdapterOptions
+  recursiveInput
 } from '../context'
 import { calculateWrapperPrice } from '../math'
 import type { RecursivePriceAdapter } from '../types'

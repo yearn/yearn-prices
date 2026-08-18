@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../../src/http'
 import {
-  historicalSourceRegistry,
   HistoricalSourceRegistry,
-  spotSourceRegistry,
-  SpotSourceRegistry
+  historicalSourceRegistry,
+  SpotSourceRegistry,
+  spotSourceRegistry
 } from '../../src/registries'
 import type { HistoricalPrice, HistoricalPriceSource, SpotPrice, SpotPriceSource } from '../../src/sources'
 

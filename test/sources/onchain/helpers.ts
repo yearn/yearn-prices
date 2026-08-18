@@ -1,6 +1,6 @@
 import type { PublicClient } from 'viem'
-import { RecursivePriceEngine } from '../../../src/sources/onchain/engine'
 import type { OnchainAdapterOptions } from '../../../src/sources/onchain/context'
+import { RecursivePriceEngine } from '../../../src/sources/onchain/engine'
 import type { MarketPriceResolver, RecursivePriceAdapter, ResolvedPricePath } from '../../../src/sources/onchain/types'
 
 export const BLOCK_NUMBER = 19_000_000n

@@ -1,15 +1,15 @@
-import { parseAbi, type Address } from 'viem'
+import { type Address, parseAbi } from 'viem'
 import {
   blockEvidence,
   contractContext,
   erc20Abi,
   maybe,
   normalizedAddress,
+  type OnchainAdapterOptions,
   rawState,
   recursiveInput,
   requireChildren,
-  tokenDecimals,
-  type OnchainAdapterOptions
+  tokenDecimals
 } from '../context'
 import { calculatePoolNavPrice } from '../math'
 import type { RecursivePriceAdapter } from '../types'

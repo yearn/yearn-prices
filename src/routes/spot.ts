@@ -1,6 +1,6 @@
 import { CACHE_CONTROL_SPOT } from '../cache'
 import { ApiError, ensure, errorEnvelope, jsonResponse } from '../http'
-import { spotSourceRegistry, SpotSourceRegistry } from '../registries'
+import { type SpotSourceRegistry, spotSourceRegistry } from '../registries'
 import type { SpotPrice } from '../sources'
 import type { Env, SpotRequest, SpotResponseCoin } from '../types'
 import { chainNameToId, parseSpotCoins } from '../utils'

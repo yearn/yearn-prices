@@ -1,4 +1,4 @@
-import { parseAbi, type Address } from 'viem'
+import { type Address, parseAbi } from 'viem'
 import { erc4626Abi } from '../abis'
 import {
   blockEvidence,
@@ -6,10 +6,10 @@ import {
   contractContext,
   erc20Abi,
   normalizedAddress,
+  type OnchainAdapterOptions,
   rawState,
   recursiveInput,
-  tokenDecimals,
-  type OnchainAdapterOptions
+  tokenDecimals
 } from '../context'
 import { calculateWrapperPrice } from '../math'
 import type { RecursivePriceAdapter } from '../types'

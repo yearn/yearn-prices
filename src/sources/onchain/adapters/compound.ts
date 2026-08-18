@@ -5,10 +5,10 @@ import {
   contractContext,
   maybe,
   normalizedAddress,
+  type OnchainAdapterOptions,
   rawState,
   recursiveInput,
-  tokenDecimals,
-  type OnchainAdapterOptions
+  tokenDecimals
 } from '../context'
 import { calculateCompoundTokenPrice } from '../math'
 import type { RecursivePriceAdapter } from '../types'

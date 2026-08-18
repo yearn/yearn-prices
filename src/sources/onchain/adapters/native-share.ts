@@ -2,11 +2,11 @@ import {
   blockEvidence,
   childTarget,
   contractContext,
+  type OnchainAdapterOptions,
   rawState,
   readShareConversion,
   recursiveInput,
-  tokenDecimals,
-  type OnchainAdapterOptions
+  tokenDecimals
 } from '../context'
 import { calculateWrapperPrice } from '../math'
 import { WRAPPED_NATIVE } from '../tokens'

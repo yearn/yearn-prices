@@ -1,3 +1,4 @@
+import { getChainClient } from '../clients/rpc'
 import { ApiError } from '../http/errors'
 import { getChainClient } from '../clients/rpc'
 import { createEnsoSpotSource } from '../sources'
