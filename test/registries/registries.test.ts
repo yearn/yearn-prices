@@ -1,10 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../../src/http'
 import {
-  getHistoricalSourceRegistry,
-  getSpotSourceRegistry,
+  historicalSourceRegistry,
   HistoricalSourceRegistry,
-  resetSourceRegistries,
+  spotSourceRegistry,
   SpotSourceRegistry,
 } from '../../src/registries'
 import type {
@@ -175,32 +174,20 @@ describe('HistoricalSourceRegistry', () => {
   })
 })
 
-describe('Registry singletons', () => {
-  beforeEach(() => {
-    resetSourceRegistries()
-  })
-
-  it('reuses the same SpotSourceRegistry instance', () => {
+describe('Per-request registries', () => {
+  it('builds a fresh SpotSourceRegistry per request', () => {
     const env = { ENSO_API_KEY: 'test-key', DATABASE_URL: 'postgres://x' }
-    const r1 = getSpotSourceRegistry(env)
-    const r2 = getSpotSourceRegistry()
+    const r1 = spotSourceRegistry(env)
+    const r2 = spotSourceRegistry(env)
     expect(r1).toBeInstanceOf(SpotSourceRegistry)
-    expect(r1).toBe(r2)
+    expect(r1).not.toBe(r2)
   })
 
-  it('reuses the same HistoricalSourceRegistry instance', () => {
+  it('builds a fresh HistoricalSourceRegistry per request', () => {
     const env = { DATABASE_URL: 'postgres://x' }
-    const r1 = getHistoricalSourceRegistry(env)
-    const r2 = getHistoricalSourceRegistry()
+    const r1 = historicalSourceRegistry(env)
+    const r2 = historicalSourceRegistry(env)
     expect(r1).toBeInstanceOf(HistoricalSourceRegistry)
-    expect(r1).toBe(r2)
-  })
-
-  it('resets instances when resetSourceRegistries is called', () => {
-    const env = { ENSO_API_KEY: 'test-key', DATABASE_URL: 'postgres://x' }
-    const r1 = getSpotSourceRegistry(env)
-    resetSourceRegistries()
-    const r2 = getSpotSourceRegistry(env)
     expect(r1).not.toBe(r2)
   })
 })

@@ -11,18 +11,19 @@ export function scaledRaw(raw: bigint, decimals: number): number {
   return value
 }
 
+/** Generic ratio x price: `(numerator / denominator) * assetPrice`. */
 export function calculateWrapperPrice(
-  convertedAssetsRaw: bigint,
-  underlyingDecimals: number,
-  oneShareRaw: bigint,
-  shareDecimals: number,
-  underlyingPrice: number,
+  numeratorRaw: bigint,
+  numeratorDecimals: number,
+  denominatorRaw: bigint,
+  denominatorDecimals: number,
+  assetPrice: number,
 ): number {
-  const shares = scaledRaw(oneShareRaw, shareDecimals)
-  if (shares <= 0) {
-    throw new InvalidPricingError('Wrapper share amount must be positive')
+  const denominator = scaledRaw(denominatorRaw, denominatorDecimals)
+  if (denominator <= 0) {
+    throw new InvalidPricingError('Wrapper denominator amount must be positive')
   }
-  const price = (scaledRaw(convertedAssetsRaw, underlyingDecimals) / shares) * underlyingPrice
+  const price = (scaledRaw(numeratorRaw, numeratorDecimals) / denominator) * assetPrice
   if (!Number.isFinite(price) || price <= 0) {
     throw new InvalidPricingError('Wrapper produced an invalid price')
   }
@@ -53,15 +54,19 @@ export interface PoolNavInput {
   priceUsd: number
 }
 
+/** NAV of `assets` per unit of `denominatorSupplyRaw` (a supply, or a basket). */
 export function calculatePoolNavPrice(
   assets: PoolNavInput[],
-  totalSupplyRaw: bigint,
-  poolDecimals: number,
+  denominatorSupplyRaw: bigint,
+  denominatorDecimals: number,
   excludedPoolBalanceRaw = 0n,
 ): number {
-  const circulatingSupply = scaledRaw(totalSupplyRaw - excludedPoolBalanceRaw, poolDecimals)
+  const circulatingSupply = scaledRaw(
+    denominatorSupplyRaw - excludedPoolBalanceRaw,
+    denominatorDecimals,
+  )
   if (circulatingSupply <= 0) {
-    throw new InvalidPricingError('Pool token has no circulating supply')
+    throw new InvalidPricingError('Pool NAV denominator must be positive')
   }
   if (assets.length === 0) {
     throw new InvalidPricingError('Pool has no priced constituents')

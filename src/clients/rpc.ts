@@ -6,10 +6,11 @@ const SHARE_PRICE_ABI_V3 = parseAbi(['function convertToAssets(uint256) view ret
 
 const MAX_BLOCK_CACHE = 512
 const MAX_SAMPLES_PER_CHAIN = 64
+const MAX_CLIENT_CACHE = 64
 
 const blockCache = new Map<string, bigint>()
 const blockSamples = new Map<number, Array<{ number: bigint; timestamp: number }>>()
-const clientCache = new Map<number, PublicClient>()
+const clientCache = new Map<string, PublicClient>()
 
 function setCapped<K, V>(map: Map<K, V>, key: K, value: V, max: number): void {
   if (map.has(key)) {
@@ -40,7 +41,9 @@ function seedBounds(
 ): { low: bigint; high: bigint; best: bigint } {
   let low = 0n
   let high = latest
-  let best = latest
+  // Genesis, not latest: a timestamp older than the whole chain must not fall
+  // back to the head block.
+  let best = 0n
   for (const sample of blockSamples.get(chainId) ?? []) {
     if (sample.timestamp === timestamp) {
       return { low: sample.number, high: sample.number, best: sample.number }
@@ -110,10 +113,6 @@ function createChainClient(chainId: number, rpcUrl: string): PublicClient {
   })
 }
 
-/**
- * Returns a memoized client for `chainId`, or null when no `RPC_URL_<chainId>`
- * is configured. Callers decide how to surface the missing-RPC gap.
- */
 function rpcUrlForChain(
   chainId: number,
   env?: Record<string, string | undefined>,
@@ -129,22 +128,29 @@ function rpcUrlForChain(
   return process.env[`RPC_URL_${chainId}`]
 }
 
+/**
+ * Returns a memoized client for `chainId`, or null when no `RPC_URL_<chainId>`
+ * is configured. Callers decide how to surface the missing-RPC gap.
+ */
 export function getChainClient(
   chainId: number,
   env?: Record<string, string | undefined>,
 ): PublicClient | null {
-  const cached = clientCache.get(chainId)
-  if (cached) {
-    return cached
-  }
-
   const rpcUrl = rpcUrlForChain(chainId, env)
   if (!rpcUrl) {
     return null
   }
 
+  // Keyed by URL as well as chain: one isolate serves many envs, and keying by
+  // chain alone hands the first caller's RPC to every later one.
+  const cacheKey = `${chainId}:${rpcUrl}`
+  const cached = clientCache.get(cacheKey)
+  if (cached) {
+    return cached
+  }
+
   const client = createChainClient(chainId, rpcUrl)
-  clientCache.set(chainId, client)
+  setCapped(clientCache, cacheKey, client, MAX_CLIENT_CACHE)
   return client
 }
 
@@ -164,7 +170,6 @@ export async function estimateBlockByTimestamp(
   const latestTimestamp = Number(latestBlock.timestamp)
   rememberSample(chainId, latestBlock.number, latestTimestamp)
   if (latestTimestamp <= timestamp) {
-    setCapped(blockCache, cacheKey, latestBlock.number, MAX_BLOCK_CACHE)
     return latestBlock.number
   }
 

@@ -6,6 +6,7 @@ export type ErrorCode =
   | 'NOT_FOUND'
   | 'RATE_LIMITED'
   | 'INTERNAL_ERROR'
+  | 'UNAVAILABLE'
 
 const ERROR_STATUS: Record<ErrorCode, number> = {
   INVALID_INPUT: 400,
@@ -13,6 +14,7 @@ const ERROR_STATUS: Record<ErrorCode, number> = {
   NOT_FOUND: 404,
   RATE_LIMITED: 429,
   INTERNAL_ERROR: 500,
+  UNAVAILABLE: 503,
 }
 
 export class ApiError extends Error {

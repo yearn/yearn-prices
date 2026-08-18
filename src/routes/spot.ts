@@ -1,6 +1,6 @@
 import { CACHE_CONTROL_SPOT } from '../cache'
 import { ApiError, ensure, errorEnvelope, jsonResponse } from '../http'
-import { getSpotSourceRegistry, SpotSourceRegistry } from '../registries'
+import { spotSourceRegistry, SpotSourceRegistry } from '../registries'
 import type { SpotPrice } from '../sources'
 import type { Env, SpotRequest, SpotResponseCoin } from '../types'
 import { chainNameToId, parseSpotCoins } from '../utils'
@@ -11,7 +11,7 @@ import { chainNameToId, parseSpotCoins } from '../utils'
 export async function handleSpot(
   request: Request,
   env: Env,
-  registry: SpotSourceRegistry = getSpotSourceRegistry(env),
+  registry: SpotSourceRegistry = spotSourceRegistry(env),
 ): Promise<Response> {
   const requests = parseSpotCoins(new URL(request.url).searchParams.get('coins'))
 
