@@ -20,22 +20,19 @@ export type StampedPrice = PriceFields & { source: string }
  * NOT_FOUND and null fall through. Other errors are remembered and rethrown
  * only if no later source produces a price.
  */
-export class SourceRegistry<
-  TSource extends NamedSource,
-  TArgs extends unknown[] = [],
-> {
+export class SourceRegistry<TSource extends NamedSource, TArgs extends unknown[] = []> {
   private readonly sources: TSource[]
 
   constructor(
     sources: TSource[],
-    private readonly kind: string,
+    kind: string,
     private readonly fetchPrice: (
       source: TSource,
       chainId: number,
       token: string,
       ...args: TArgs
     ) => Promise<PriceFields | null>,
-    private readonly notFoundMessage: string,
+    private readonly notFoundMessage: string
   ) {
     const names = new Set<string>()
     for (const source of sources) {

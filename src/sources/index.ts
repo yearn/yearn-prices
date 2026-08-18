@@ -5,5 +5,5 @@ export type {
   HistoricalPrice,
   HistoricalPriceSource,
   SpotPrice,
-  SpotPriceSource,
+  SpotPriceSource
 } from './types'

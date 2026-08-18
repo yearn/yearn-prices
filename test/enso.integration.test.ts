@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest'
 import { getAddress } from 'viem'
+import { describe, expect, it } from 'vitest'
 import { EnsoClient } from '../src/clients'
 import { handleSpot } from '../src/routes/spot'
-import type { Env } from '../src/types'
+import type { Env, SpotResponseCoin } from '../src/types'
 import { toUnixSeconds } from '../src/utils'
 
 // Real key, loaded from .env via dotenv (vitest setupFiles). These tests hit the live Enso API,
@@ -29,7 +29,7 @@ describe.skipIf(!ENSO_API_KEY)('Enso integration (live API)', () => {
       expect(seconds).toBeGreaterThan(1_000_000_000) // after 2001
       expect(seconds).toBeLessThan(100_000_000_000) // before year ~5138 (i.e. not still in ms)
     },
-    NETWORK_TIMEOUT,
+    NETWORK_TIMEOUT
   )
 
   it(
@@ -38,14 +38,14 @@ describe.skipIf(!ENSO_API_KEY)('Enso integration (live API)', () => {
       const env: Env = { DATABASE_URL: 'postgres://unused', ENSO_API_KEY }
 
       const coinKey = `ethereum:${WETH}`
-      const request = new Request(
-        `https://svc/api/prices/spot?coins=${encodeURIComponent(JSON.stringify([coinKey]))}`,
-      )
+      const request = new Request(`https://svc/api/prices/spot?coins=${encodeURIComponent(JSON.stringify([coinKey]))}`)
       const response = await handleSpot(request, env)
 
       expect(response.status).toBe(200)
-      const body = (await response.json()) as any
-      const price = body.coins[coinKey].prices[0]
+      const body = (await response.json()) as { coins: Record<string, SpotResponseCoin> }
+      const coin = body.coins[coinKey]
+      if (!('prices' in coin)) throw new Error('expected a priced coin')
+      const price = coin.prices[0]
       expect(price.price).toBeGreaterThan(0)
       expect(price.source).toBe('enso')
       // Live spot timestamp: Enso ms converted to seconds, near now (not normalized to a day-end).
@@ -53,6 +53,6 @@ describe.skipIf(!ENSO_API_KEY)('Enso integration (live API)', () => {
       expect(price.timestamp).toBeGreaterThan(1_700_000_000)
       expect(price.timestamp).toBeLessThanOrEqual(Math.floor(Date.now() / 1000) + 60)
     },
-    NETWORK_TIMEOUT,
+    NETWORK_TIMEOUT
   )
 })

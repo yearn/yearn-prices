@@ -7,5 +7,5 @@ export {
   estimateBlockByTimestamp,
   getChainClient,
   isV3Vault,
-  readVaultSharePrice,
+  readVaultSharePrice
 } from './rpc'
