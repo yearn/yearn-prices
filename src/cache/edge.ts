@@ -1,5 +1,5 @@
-import { captureError } from './observability'
-import type { Env } from './types'
+import { captureError } from '../observability'
+import type { Env } from '../types'
 
 // Cloudflare edge caching via the Cache API.
 //
@@ -33,6 +33,7 @@ function canonicalizeCoins(raw: string): string {
   } catch {
     return raw // not JSON — leave untouched; the handler will reject it.
   }
+
   // The spot payload is a top-level array of token-key strings — order is irrelevant,
   // so sort it. Batch/range payloads are objects keyed by token; their array *values*
   // (timestamp sets / [start, end]) are positional, so nested arrays are never reordered

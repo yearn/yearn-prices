@@ -1,5 +1,5 @@
-import type { ParsedTokenKey } from './types'
 import { getAddress } from 'viem'
+import type { ParsedTokenKey } from '../types'
 
 export const CHAIN_ID_TO_NAME = {
   1: 'ethereum',

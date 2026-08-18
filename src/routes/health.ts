@@ -1,5 +1,5 @@
 import { jsonResponse } from '../http'
-import { nowUnix } from '../time'
+import { nowUnix } from '../utils'
 
 export function handleHealth(): Response {
   return jsonResponse({

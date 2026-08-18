@@ -1,7 +1,7 @@
-import { ApiError } from './errors'
+import { ApiError } from '../http/errors'
 
 function sleep(milliseconds: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, milliseconds))
+  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
 export class SlidingWindowRateLimiter {
@@ -47,7 +47,7 @@ export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig
     await config.rateLimiter.waitTurn()
     const response = await fetch(url, config.headers ? { headers: config.headers } : undefined)
     if (response.ok) {
-      return await response.json() as T
+      return (await response.json()) as T
     }
 
     if (config.notFoundAsError && response.status === 404) {

@@ -1,13 +1,20 @@
-import { authenticateRequest } from './auth'
-import { CACHE_CONTROL_NO_STORE } from './cache'
+import { CACHE_CONTROL_NO_STORE, readEdgeCache, writeEdgeCache } from './cache'
 import { createPool } from './db'
-import { readEdgeCache, writeEdgeCache } from './edge-cache'
-import { ApiError, jsonError } from './errors'
-import { optionsResponse, withCors } from './http'
+import {
+  ApiError,
+  authenticateRequest,
+  jsonError,
+  notFoundErrorHeaders,
+  optionsResponse,
+  withCors,
+} from './http'
 import { renderLandingPage } from './lander'
 import { captureError } from './observability'
 import { handleHealth } from './routes/health'
-import { handleBatchHistorical, handleHistorical, handleRangeHistorical, handleSpot, notFoundErrorHeaders } from './routes/prices'
+import { handleBatchHistorical } from './routes/historical/batch'
+import { handleHistorical } from './routes/historical/exact'
+import { handleRangeHistorical } from './routes/historical/range'
+import { handleSpot } from './routes/spot'
 import type { Env } from './types'
 
 function logRequest(request: Request, clientId: string | null, extra?: Record<string, unknown>): void {

@@ -1,3 +1,5 @@
+import { CACHE_CONTROL_NOT_FOUND } from '../cache'
+
 const CORS_HEADERS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET,OPTIONS',
@@ -24,4 +26,8 @@ export function optionsResponse(): Response {
     status: 204,
     headers: withCors(),
   })
+}
+
+export function notFoundErrorHeaders(): HeadersInit {
+  return { 'cache-control': CACHE_CONTROL_NOT_FOUND }
 }
