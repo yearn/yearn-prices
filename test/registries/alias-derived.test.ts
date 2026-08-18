@@ -12,16 +12,16 @@ const TIMESTAMP = 1_700_000_000
 
 const reads = {
   [VAULT]: { asset: OPTIMISM_DAI, decimals: 18, convertToAssets: 2n * 10n ** 18n },
-  [OPTIMISM_DAI]: { decimals: 18 },
+  [OPTIMISM_DAI]: { decimals: 18 }
 }
 
 function aliasSources() {
   const defiLlama = {
     getHistorical: vi.fn(async () => ({
       coins: {
-        'coingecko:dai': { price: 1, timestamp: TIMESTAMP, symbol: 'DAI', confidence: 0.99 },
-      },
-    })),
+        'coingecko:dai': { price: 1, timestamp: TIMESTAMP, symbol: 'DAI', confidence: 0.99 }
+      }
+    }))
   } as unknown as DefiLlamaClient & { getHistorical: ReturnType<typeof vi.fn> }
 
   return { defiLlama, sources: [createDefiLlamaAliasHistoricalSource(defiLlama)] }
@@ -35,9 +35,9 @@ describe('the alias source inside the recursive price path', () => {
       marketPrice: createMarketPriceResolver(
         sources,
         (chainId, token, timestamp) => registry.resolve(chainId, token, timestamp as number),
-        { requireTimestamp: true },
+        { requireTimestamp: true }
       ),
-      clientForChain: () => fakeClient(reads),
+      clientForChain: () => fakeClient(reads)
     })
 
     const price = await derived.getHistoricalPrice(10, VAULT, TIMESTAMP)
@@ -53,9 +53,9 @@ describe('the alias source inside the recursive price path', () => {
       marketPrice: createMarketPriceResolver(
         sources,
         (chainId, token, timestamp) => registry.resolve(chainId, token, timestamp as number),
-        { requireTimestamp: true },
+        { requireTimestamp: true }
       ),
-      clientForChain: () => fakeClient(reads),
+      clientForChain: () => fakeClient(reads)
     })
 
     await expect(derived.getHistoricalPrice(1, VAULT, TIMESTAMP)).resolves.toBeNull()

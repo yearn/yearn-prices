@@ -16,11 +16,7 @@ export class DefiLlamaHistoricalSource extends HistoricalPriceSourceBase {
     return chainIdToName(chainId) !== undefined
   }
 
-  async getHistoricalPrice(
-    chainId: number,
-    token: string,
-    timestamp: number,
-  ): Promise<HistoricalPriceResult | null> {
+  async getHistoricalPrice(chainId: number, token: string, timestamp: number): Promise<HistoricalPriceResult | null> {
     const chain = chainIdToName(chainId)
     if (!chain) {
       return null
@@ -29,14 +25,10 @@ export class DefiLlamaHistoricalSource extends HistoricalPriceSourceBase {
     const coinKey = `${chain}:${token.toLowerCase()}`
     const response = await this.client.getHistorical(timestamp, [coinKey])
 
-    return toHistoricalPrice(response.coins?.[coinKey], (price, time) =>
-      this.isUsablePrice(price, time),
-    )
+    return toHistoricalPrice(response.coins?.[coinKey], (price, time) => this.isUsablePrice(price, time))
   }
 }
 
-export function createDefiLlamaHistoricalSource(
-  client?: DefiLlamaClient,
-): DefiLlamaHistoricalSource {
+export function createDefiLlamaHistoricalSource(client?: DefiLlamaClient): DefiLlamaHistoricalSource {
   return new DefiLlamaHistoricalSource(client)
 }

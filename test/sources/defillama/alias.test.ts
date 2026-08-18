@@ -14,7 +14,7 @@ const AFTER_MULTICHAIN = 1_689_000_000
 
 function client(coins: Record<string, unknown>) {
   return {
-    getHistorical: vi.fn(async () => ({ coins })),
+    getHistorical: vi.fn(async () => ({ coins }))
   } as unknown as DefiLlamaClient & { getHistorical: ReturnType<typeof vi.fn> }
 }
 
@@ -35,7 +35,7 @@ describe('createDefiLlamaAliasHistoricalSource', () => {
     for (const [chainId, name] of [
       [10, 'optimism'],
       [250, 'fantom'],
-      [1, 'ethereum'],
+      [1, 'ethereum']
     ] as const) {
       expect(source.supports(chainId)).toBe(DEFI_LLAMA_ALIAS_CHAINS.has(name))
     }
@@ -43,7 +43,7 @@ describe('createDefiLlamaAliasHistoricalSource', () => {
 
   it('prices an aliased token through its CoinGecko market', async () => {
     const defiLlama = client({
-      'coingecko:dai': { price: 1.001, timestamp: TIMESTAMP, symbol: 'DAI', confidence: 0.99 },
+      'coingecko:dai': { price: 1.001, timestamp: TIMESTAMP, symbol: 'DAI', confidence: 0.99 }
     })
     const source = createDefiLlamaAliasHistoricalSource(defiLlama)
 
@@ -53,7 +53,7 @@ describe('createDefiLlamaAliasHistoricalSource', () => {
       price: 1.001,
       timestamp: TIMESTAMP,
       symbol: 'DAI',
-      confidence: 0.99,
+      confidence: 0.99
     })
     expect(defiLlama.getHistorical).toHaveBeenCalledWith(TIMESTAMP, ['coingecko:dai'], '6h')
   })
@@ -67,8 +67,8 @@ describe('createDefiLlamaAliasHistoricalSource', () => {
   it('prices a bridged token before its bridge was impaired', async () => {
     const source = createDefiLlamaAliasHistoricalSource(
       client({
-        'coingecko:usd-coin': { price: 1, timestamp: BEFORE_MULTICHAIN, symbol: 'USDC' },
-      }),
+        'coingecko:usd-coin': { price: 1, timestamp: BEFORE_MULTICHAIN, symbol: 'USDC' }
+      })
     )
 
     const price = await source.getHistoricalPrice(250, FANTOM_USDC, BEFORE_MULTICHAIN)
@@ -79,20 +79,18 @@ describe('createDefiLlamaAliasHistoricalSource', () => {
   it('refuses a bridged token after its bridge was impaired', async () => {
     const source = createDefiLlamaAliasHistoricalSource(
       client({
-        'coingecko:usd-coin': { price: 1, timestamp: AFTER_MULTICHAIN, symbol: 'USDC' },
-      }),
+        'coingecko:usd-coin': { price: 1, timestamp: AFTER_MULTICHAIN, symbol: 'USDC' }
+      })
     )
 
-    await expect(
-      source.getHistoricalPrice(250, FANTOM_USDC, AFTER_MULTICHAIN),
-    ).resolves.toBeNull()
+    await expect(source.getHistoricalPrice(250, FANTOM_USDC, AFTER_MULTICHAIN)).resolves.toBeNull()
   })
 
   it('rejects an observation outside the search window', async () => {
     const source = createDefiLlamaAliasHistoricalSource(
       client({
-        'coingecko:dai': { price: 1, timestamp: TIMESTAMP - 86_400, symbol: 'DAI' },
-      }),
+        'coingecko:dai': { price: 1, timestamp: TIMESTAMP - 86_400, symbol: 'DAI' }
+      })
     )
 
     await expect(source.getHistoricalPrice(10, OPTIMISM_DAI, TIMESTAMP)).resolves.toBeNull()
@@ -105,9 +103,7 @@ describe('createDefiLlamaAliasHistoricalSource', () => {
   })
 
   it('returns null for a non-positive price', async () => {
-    const source = createDefiLlamaAliasHistoricalSource(
-      client({ 'coingecko:dai': { price: 0, timestamp: TIMESTAMP } }),
-    )
+    const source = createDefiLlamaAliasHistoricalSource(client({ 'coingecko:dai': { price: 0, timestamp: TIMESTAMP } }))
 
     await expect(source.getHistoricalPrice(10, OPTIMISM_DAI, TIMESTAMP)).resolves.toBeNull()
   })
@@ -116,8 +112,8 @@ describe('createDefiLlamaAliasHistoricalSource', () => {
     const validUntil = 1_688_667_035
     const source = createDefiLlamaAliasHistoricalSource(
       client({
-        'coingecko:usd-coin': { price: 1, timestamp: validUntil, symbol: 'USDC' },
-      }),
+        'coingecko:usd-coin': { price: 1, timestamp: validUntil, symbol: 'USDC' }
+      })
     )
 
     await expect(source.getHistoricalPrice(250, FANTOM_USDC, validUntil)).resolves.toBeNull()
@@ -127,8 +123,8 @@ describe('createDefiLlamaAliasHistoricalSource', () => {
     const validUntil = 1_688_667_035
     const source = createDefiLlamaAliasHistoricalSource(
       client({
-        'coingecko:usd-coin': { price: 1, timestamp: validUntil - 1, symbol: 'USDC' },
-      }),
+        'coingecko:usd-coin': { price: 1, timestamp: validUntil - 1, symbol: 'USDC' }
+      })
     )
 
     const price = await source.getHistoricalPrice(250, FANTOM_USDC, validUntil - 1)
@@ -142,8 +138,8 @@ describe('createDefiLlamaAliasHistoricalSource', () => {
     const requested = validUntil - 60
     const source = createDefiLlamaAliasHistoricalSource(
       client({
-        'coingecko:usd-coin': { price: 1, timestamp: validUntil + 3600, symbol: 'USDC' },
-      }),
+        'coingecko:usd-coin': { price: 1, timestamp: validUntil + 3600, symbol: 'USDC' }
+      })
     )
 
     await expect(source.getHistoricalPrice(250, FANTOM_USDC, requested)).resolves.toBeNull()
@@ -154,8 +150,8 @@ describe('createDefiLlamaAliasHistoricalSource', () => {
     const requested = validUntil - 60
     const source = createDefiLlamaAliasHistoricalSource(
       client({
-        'coingecko:usd-coin': { price: 1, timestamp: validUntil - 3600, symbol: 'USDC' },
-      }),
+        'coingecko:usd-coin': { price: 1, timestamp: validUntil - 3600, symbol: 'USDC' }
+      })
     )
 
     const price = await source.getHistoricalPrice(250, FANTOM_USDC, requested)
@@ -168,20 +164,18 @@ describe('createDefiLlamaAliasHistoricalSource', () => {
     const defiLlama = {
       getHistorical: vi.fn(async () => {
         throw new ApiError('INTERNAL_ERROR', 'llama down')
-      }),
+      })
     } as unknown as DefiLlamaClient
 
     const source = createDefiLlamaAliasHistoricalSource(defiLlama)
 
     await expect(source.getHistoricalPrice(10, OPTIMISM_DAI, TIMESTAMP)).rejects.toMatchObject({
       name: 'ApiError',
-      code: 'INTERNAL_ERROR',
+      code: 'INTERNAL_ERROR'
     })
   })
 
   it('throws when searchWidth cannot be parsed', () => {
-    expect(() => createDefiLlamaAliasHistoricalSource(client({}), 'nope')).toThrow(
-      /Invalid DeFiLlama searchWidth/,
-    )
+    expect(() => createDefiLlamaAliasHistoricalSource(client({}), 'nope')).toThrow(/Invalid DeFiLlama searchWidth/)
   })
 })

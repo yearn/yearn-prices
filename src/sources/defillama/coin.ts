@@ -13,7 +13,7 @@ interface DefiLlamaCoin {
  */
 export function toHistoricalPrice(
   coin: DefiLlamaCoin | undefined,
-  isUsable: (price: unknown, timestamp: unknown) => boolean,
+  isUsable: (price: unknown, timestamp: unknown) => boolean
 ): HistoricalPriceResult | null {
   if (!coin || !isUsable(coin.price, coin.timestamp)) {
     return null
@@ -23,6 +23,6 @@ export function toHistoricalPrice(
     price: coin.price as number,
     timestamp: coin.timestamp as number,
     symbol: coin.symbol ?? null,
-    confidence: coin.confidence ?? null,
+    confidence: coin.confidence ?? null
   }
 }

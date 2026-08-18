@@ -2,11 +2,7 @@ import { DefiLlamaClient } from '../../clients/defillama'
 import { chainIdToName } from '../../utils/chains'
 import { HistoricalPriceSourceBase } from '../base'
 import type { HistoricalPriceResult } from '../types'
-import {
-  DEFI_LLAMA_ALIAS_CHAINS,
-  getDefiLlamaCoinGeckoAlias,
-  isDefiLlamaAliasValidAt,
-} from './aliases'
+import { DEFI_LLAMA_ALIAS_CHAINS, getDefiLlamaCoinGeckoAlias, isDefiLlamaAliasValidAt } from './aliases'
 import { toHistoricalPrice } from './coin'
 
 const SEARCH_WIDTH_PATTERN = /^(\d+)(s|m|h|d)$/
@@ -36,7 +32,7 @@ export class DefiLlamaAliasHistoricalSource extends HistoricalPriceSourceBase {
 
   constructor(
     private readonly client: DefiLlamaClient = new DefiLlamaClient(),
-    private readonly searchWidth = '6h',
+    private readonly searchWidth = '6h'
   ) {
     super()
     const widthSeconds = searchWidthSeconds(searchWidth)
@@ -51,11 +47,7 @@ export class DefiLlamaAliasHistoricalSource extends HistoricalPriceSourceBase {
     return chain !== undefined && DEFI_LLAMA_ALIAS_CHAINS.has(chain)
   }
 
-  async getHistoricalPrice(
-    chainId: number,
-    token: string,
-    timestamp: number,
-  ): Promise<HistoricalPriceResult | null> {
+  async getHistoricalPrice(chainId: number, token: string, timestamp: number): Promise<HistoricalPriceResult | null> {
     const chain = chainIdToName(chainId)
     if (!chain) {
       return null
@@ -66,13 +58,9 @@ export class DefiLlamaAliasHistoricalSource extends HistoricalPriceSourceBase {
       return null
     }
 
-    const response = await this.client.getHistorical(
-      timestamp,
-      [alias.identifier],
-      this.searchWidth,
-    )
+    const response = await this.client.getHistorical(timestamp, [alias.identifier], this.searchWidth)
     const coin = Object.entries(response.coins ?? {}).find(
-      ([key]) => key.toLowerCase() === alias.identifier.toLowerCase(),
+      ([key]) => key.toLowerCase() === alias.identifier.toLowerCase()
     )?.[1]
 
     const price = toHistoricalPrice(coin, (value, time) => this.isUsablePrice(value, time))
@@ -95,7 +83,7 @@ export class DefiLlamaAliasHistoricalSource extends HistoricalPriceSourceBase {
 
 export function createDefiLlamaAliasHistoricalSource(
   client?: DefiLlamaClient,
-  searchWidth?: string,
+  searchWidth?: string
 ): DefiLlamaAliasHistoricalSource {
   return new DefiLlamaAliasHistoricalSource(client, searchWidth)
 }

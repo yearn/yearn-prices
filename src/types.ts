@@ -5,7 +5,7 @@ export const SOURCE_PRIORITY = [
   'curve',
   'derived',
   'defillama-alias',
-  'enso',
+  'enso'
 ] as const
 
 export type PriceSource = (typeof SOURCE_PRIORITY)[number]
