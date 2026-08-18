@@ -24,9 +24,9 @@ export async function handleSpot(
 
       return {
         req,
-        spot,
+        spot
       }
-    }),
+    })
   )
 
   const coins: Record<string, SpotResponseCoin> = {}
@@ -40,8 +40,8 @@ export async function handleSpot(
         JSON.stringify({
           message: 'spot-error',
           token_key: tokenKey,
-          error: reason instanceof Error ? reason.message : String(reason),
-        }),
+          error: reason instanceof Error ? reason.message : String(reason)
+        })
       )
       // Same envelope as jsonError: { error: { code, message } }.
       // NOT_FOUND = no price (permanent); anything else is retryable.
@@ -60,9 +60,9 @@ export async function handleSpot(
           timestamp: spot.timestamp,
           price: spot.price,
           confidence: spot.confidence,
-          source: spot.source,
-        },
-      ],
+          source: spot.source
+        }
+      ]
     }
   }
 
@@ -70,8 +70,8 @@ export async function handleSpot(
     { coins },
     {
       headers: {
-        'cache-control': CACHE_CONTROL_SPOT,
-      },
-    },
+        'cache-control': CACHE_CONTROL_SPOT
+      }
+    }
   )
 }

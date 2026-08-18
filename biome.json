@@ -1,0 +1,15 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.4/schema.json",
+  "extends": ["yearn-configs/biome.json"],
+  "overrides": [
+    {
+      "includes": ["migrations/**"],
+      "linter": {
+        "rules": {
+          "complexity": { "useArrowFunction": "off" },
+          "correctness": { "noUnusedVariables": "off" }
+        }
+      }
+    }
+  ]
+}

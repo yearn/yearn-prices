@@ -9,7 +9,7 @@ const OK_BODY = {
   chainId: 1,
   symbol: 'WBTC',
   timestamp: 1695197412,
-  confidence: 0.99,
+  confidence: 0.99
 }
 
 function res(status: number, body?: unknown) {

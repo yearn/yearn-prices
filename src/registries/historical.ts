@@ -41,25 +41,17 @@ export function createHistoricalSources(env?: Env): HistoricalPriceSource[] {
   ]
 }
 
-export class HistoricalSourceRegistry extends SourceRegistry<
-  HistoricalPriceSource,
-  [timestamp: number]
-> {
+export class HistoricalSourceRegistry extends SourceRegistry<HistoricalPriceSource, [timestamp: number]> {
   constructor(sources: HistoricalPriceSource[]) {
     super(
       sources,
       'historical',
-      (source, chainId, token, timestamp) =>
-        source.getHistoricalPrice(chainId, token, timestamp),
-      'No historical price available for this token',
+      (source, chainId, token, timestamp) => source.getHistoricalPrice(chainId, token, timestamp),
+      'No historical price available for this token'
     )
   }
 
-  override resolve(
-    chainId: number,
-    token: string,
-    timestamp: number,
-  ): Promise<HistoricalPrice> {
+  override resolve(chainId: number, token: string, timestamp: number): Promise<HistoricalPrice> {
     return super.resolve(chainId, token, timestamp)
   }
 }

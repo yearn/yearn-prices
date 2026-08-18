@@ -1,9 +1,5 @@
 import type { Pool } from '@neondatabase/serverless'
-import {
-  CACHE_CONTROL_PARTIAL,
-  CACHE_CONTROL_TODAY,
-  cacheControlForHistorical,
-} from '../../cache'
+import { CACHE_CONTROL_PARTIAL, CACHE_CONTROL_TODAY, cacheControlForHistorical } from '../../cache'
 import { getExactHistoricalPrice } from '../../db'
 import { ApiError, jsonResponse } from '../../http'
 import { historicalSourceRegistry, HistoricalSourceRegistry } from '../../registries'
@@ -13,7 +9,7 @@ import {
   isTodayNormalized,
   parseOptionalSource,
   parseTimestampSegment,
-  parseTokenKey,
+  parseTokenKey
 } from '../../utils'
 
 export async function handleHistorical(
@@ -43,17 +39,15 @@ export async function handleHistorical(
                 symbol: historical.symbol,
                 timestamp,
                 confidence: historical.confidence,
-                source: historical.source,
-              },
-            },
+                source: historical.source
+              }
+            }
           },
           {
             headers: {
-              'cache-control': isTodayNormalized(timestamp)
-                ? CACHE_CONTROL_TODAY
-                : CACHE_CONTROL_PARTIAL,
-            },
-          },
+              'cache-control': isTodayNormalized(timestamp) ? CACHE_CONTROL_TODAY : CACHE_CONTROL_PARTIAL
+            }
+          }
         )
       } catch (error) {
         if (!(error instanceof ApiError && error.code === 'NOT_FOUND')) {
@@ -64,10 +58,7 @@ export async function handleHistorical(
   }
 
   if (!record) {
-    throw new ApiError(
-      'NOT_FOUND',
-      `No historical price found for ${tokenKey} at ${timestamp}`,
-    )
+    throw new ApiError('NOT_FOUND', `No historical price found for ${tokenKey} at ${timestamp}`)
   }
 
   return jsonResponse(
@@ -78,14 +69,14 @@ export async function handleHistorical(
           symbol: record.symbol,
           timestamp: record.timestamp,
           confidence: record.confidence,
-          source: record.source,
-        },
-      },
+          source: record.source
+        }
+      }
     },
     {
       headers: {
-        'cache-control': cacheControlForHistorical(record.timestamp),
-      },
-    },
+        'cache-control': cacheControlForHistorical(record.timestamp)
+      }
+    }
   )
 }

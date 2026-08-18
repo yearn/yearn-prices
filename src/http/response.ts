@@ -3,7 +3,7 @@ import { CACHE_CONTROL_NOT_FOUND } from '../cache'
 const CORS_HEADERS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET,OPTIONS',
-  'access-control-allow-headers': 'authorization,content-type,x-api-key',
+  'access-control-allow-headers': 'authorization,content-type,x-api-key'
 }
 
 export function withCors(headers?: HeadersInit): Headers {
@@ -17,14 +17,14 @@ export function withCors(headers?: HeadersInit): Headers {
 export function jsonResponse(body: unknown, init?: ResponseInit): Response {
   return Response.json(body, {
     ...init,
-    headers: withCors(init?.headers),
+    headers: withCors(init?.headers)
   })
 }
 
 export function optionsResponse(): Response {
   return new Response(null, {
     status: 204,
-    headers: withCors(),
+    headers: withCors()
   })
 }
 
