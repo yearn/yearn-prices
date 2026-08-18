@@ -1,6 +1,11 @@
 import { ApiError } from '../../http/errors'
 import { normalizeTokenAddress } from '../../utils/chains'
-import { InvalidPricingError, RecursiveDependencyError, isRetryablePricingError } from './errors'
+import {
+  InvalidPricingError,
+  isRetryablePricingError,
+  ReadBudgetExceededError,
+  RecursiveDependencyError
+} from './errors'
 import type {
   MarketPriceResolver,
   PriceInputEvidence,
@@ -71,6 +76,7 @@ function errorMessage(error: unknown): string {
 
 function classifyError(error: unknown): PriceResolutionFailureReason {
   if (error instanceof RecursiveDependencyError) return error.failure.reason
+  if (error instanceof ReadBudgetExceededError) return 'budget'
   if (error instanceof ApiError) return 'retryable'
   if (error instanceof InvalidPricingError) return 'invalid'
   if (isRetryablePricingError(error)) return 'retryable'

@@ -1,8 +1,8 @@
-import { parseAbi, type Address, type PublicClient } from 'viem'
+import { type Address, type PublicClient, parseAbi } from 'viem'
 import { estimateBlockByTimestamp } from '../../clients/rpc'
 import { normalizeTokenAddress } from '../../utils/chains'
 import { erc4626Abi } from './abis'
-import { InvalidPricingError, RetryablePricingError, isRetryablePricingError } from './errors'
+import { InvalidPricingError, isRetryablePricingError, ReadBudgetExceededError, RetryablePricingError } from './errors'
 import type { RecursivePriceContext, RecursivePriceInput, RecursivePriceTarget, ResolvedPricePath } from './types'
 
 export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
@@ -55,6 +55,11 @@ export async function maybe<T>(read: () => Promise<T>): Promise<T | null> {
   try {
     return await read()
   } catch (error) {
+    // A spent budget is a resource cutoff, not a missing function: swallowing
+    // it here would report an unread token as unpriceable.
+    if (error instanceof ReadBudgetExceededError) {
+      throw error
+    }
     if (isRetryablePricingError(error)) {
       throw new RetryablePricingError(transientReadMessage(error), { cause: error })
     }
