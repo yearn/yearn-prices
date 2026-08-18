@@ -9,7 +9,7 @@ import {
   rawState,
   recursiveInput,
   tokenDecimals,
-  type OnchainAdapterOptions,
+  type OnchainAdapterOptions
 } from '../context'
 import { calculateWrapperPrice } from '../math'
 import type { RecursivePriceAdapter } from '../types'
@@ -17,7 +17,7 @@ import type { RecursivePriceAdapter } from '../types'
 const REDEMPTION_FACILITY = '0xba18d0df75a3ff58ef40a8fc0d3e4db74a0e681d' as Address
 const LIQUID_LOCKERS = new Map<string, bigint>([
   ['0x95710bde45c8d384a976cc58cc7a7e489576b098', 1n],
-  ['0xff71841eefca78a64421db28060855036765c248', 2n],
+  ['0xff71841eefca78a64421db28060855036765c248', 2n]
 ])
 const WAD = 10n ** 18n
 
@@ -28,7 +28,7 @@ const facilityAbi = parseAbi([
   'function scales(uint256 index) view returns (uint256)',
   'function capacities(uint256 index) view returns (uint256)',
   'function enabled(uint256 index) view returns (bool)',
-  'function used(uint256 index) view returns (uint256)',
+  'function used(uint256 index) view returns (uint256)'
 ])
 
 /**
@@ -53,42 +53,27 @@ export function yip88LiquidLockerAdapter(options: OnchainAdapterOptions): Recurs
       const facility = {
         address: REDEMPTION_FACILITY,
         abi: facilityAbi,
-        blockNumber: state.blockNumber,
+        blockNumber: state.blockNumber
       } as const
-      const [
-        yfiRaw,
-        feeRaw,
-        facilityTokenRaw,
-        scaleRaw,
-        capacityRaw,
-        enabled,
-        usedRaw,
-        targetDecimalsRaw,
-      ] = await Promise.all([
-        state.client.readContract({ ...facility, functionName: 'yfi' }),
-        state.client.readContract({ ...facility, functionName: 'fee' }),
-        state.client.readContract({ ...facility, functionName: 'tokens', args: [index] }),
-        state.client.readContract({ ...facility, functionName: 'scales', args: [index] }),
-        state.client.readContract({ ...facility, functionName: 'capacities', args: [index] }),
-        state.client.readContract({ ...facility, functionName: 'enabled', args: [index] }),
-        state.client.readContract({ ...facility, functionName: 'used', args: [index] }),
-        state.client.readContract({
-          address: state.address,
-          abi: erc20Abi,
-          functionName: 'decimals',
-          blockNumber: state.blockNumber,
-        }),
-      ])
+      const [yfiRaw, feeRaw, facilityTokenRaw, scaleRaw, capacityRaw, enabled, usedRaw, targetDecimalsRaw] =
+        await Promise.all([
+          state.client.readContract({ ...facility, functionName: 'yfi' }),
+          state.client.readContract({ ...facility, functionName: 'fee' }),
+          state.client.readContract({ ...facility, functionName: 'tokens', args: [index] }),
+          state.client.readContract({ ...facility, functionName: 'scales', args: [index] }),
+          state.client.readContract({ ...facility, functionName: 'capacities', args: [index] }),
+          state.client.readContract({ ...facility, functionName: 'enabled', args: [index] }),
+          state.client.readContract({ ...facility, functionName: 'used', args: [index] }),
+          state.client.readContract({
+            address: state.address,
+            abi: erc20Abi,
+            functionName: 'decimals',
+            blockNumber: state.blockNumber
+          })
+        ])
       const yfi = normalizedAddress(yfiRaw)
       const facilityToken = normalizedAddress(facilityTokenRaw)
-      if (
-        !yfi ||
-        !facilityToken ||
-        !enabled ||
-        feeRaw >= WAD ||
-        scaleRaw === 0n ||
-        usedRaw > capacityRaw
-      ) {
+      if (!yfi || !facilityToken || !enabled || feeRaw >= WAD || scaleRaw === 0n || usedRaw > capacityRaw) {
         return null
       }
 
@@ -104,22 +89,22 @@ export function yip88LiquidLockerAdapter(options: OnchainAdapterOptions): Recurs
             address: facilityToken,
             abi: erc4626Abi,
             functionName: 'asset',
-            blockNumber: state.blockNumber,
+            blockNumber: state.blockNumber
           }),
           state.client.readContract({
             address: facilityToken,
             abi: erc4626Abi,
             functionName: 'maxDeposit',
             args: [REDEMPTION_FACILITY],
-            blockNumber: state.blockNumber,
+            blockNumber: state.blockNumber
           }),
           state.client.readContract({
             address: facilityToken,
             abi: erc4626Abi,
             functionName: 'convertToShares',
             args: [oneTargetRaw],
-            blockNumber: state.blockNumber,
-          }),
+            blockNumber: state.blockNumber
+          })
         ])
         const asset = normalizedAddress(assetRaw)
         if (
@@ -135,7 +120,7 @@ export function yip88LiquidLockerAdapter(options: OnchainAdapterOptions): Recurs
           address: facilityToken,
           asset,
           maxDepositRaw: rawState(maxDepositRaw),
-          convertedSharesRaw: rawState(convertedSharesRaw),
+          convertedSharesRaw: rawState(convertedSharesRaw)
         }
       }
 
@@ -153,8 +138,8 @@ export function yip88LiquidLockerAdapter(options: OnchainAdapterOptions): Recurs
           abi: erc20Abi,
           functionName: 'balanceOf',
           args: [REDEMPTION_FACILITY],
-          blockNumber: state.blockNumber,
-        }),
+          blockNumber: state.blockNumber
+        })
       ])
       if (yfiLiquidityRaw < netYfiRaw) {
         return null
@@ -181,24 +166,15 @@ export function yip88LiquidLockerAdapter(options: OnchainAdapterOptions): Recurs
         usedRaw: rawState(usedRaw),
         remainingCapacityRaw: rawState(remainingCapacityRaw),
         yfiLiquidityRaw: rawState(yfiLiquidityRaw),
-        references: ['https://docs.yearn.fi/contributing/governance/yips/yip-88'],
+        references: ['https://docs.yearn.fi/contributing/governance/yips/yip-88']
       }
-      const input = await context.require(
-        childTarget(target, yfi, state.numericBlockNumber),
-        'YIP-88 redemption YFI',
-      )
+      const input = await context.require(childTarget(target, yfi, state.numericBlockNumber), 'YIP-88 redemption YFI')
       return {
-        priceUsd: calculateWrapperPrice(
-          netYfiRaw,
-          yfiDecimals,
-          oneTargetRaw,
-          targetDecimals,
-          input.priceUsd,
-        ),
+        priceUsd: calculateWrapperPrice(netYfiRaw, yfiDecimals, oneTargetRaw, targetDecimals, input.priceUsd),
         blockNumber: state.numericBlockNumber,
         inputs: [recursiveInput(input, conversion)],
-        metadata: conversion,
+        metadata: conversion
       }
-    },
+    }
   }
 }

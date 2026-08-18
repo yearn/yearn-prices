@@ -9,7 +9,7 @@ describe('erc4626Adapter', () => {
   it('prices a share from convertToAssets and the underlying price', async () => {
     const options = adapterOptions({
       [VAULT]: { asset: UNDERLYING, decimals: 18, convertToAssets: 1_100_000n },
-      [UNDERLYING]: { decimals: 6 },
+      [UNDERLYING]: { decimals: 6 }
     })
 
     const result = await priceWith(erc4626Adapter(options), { [UNDERLYING]: 2 }, VAULT)
@@ -21,7 +21,7 @@ describe('erc4626Adapter', () => {
   it('falls back to previewRedeem when convertToAssets reverts', async () => {
     const options = adapterOptions({
       [VAULT]: { asset: UNDERLYING, decimals: 18, previewRedeem: 2n * 10n ** 6n },
-      [UNDERLYING]: { decimals: 6 },
+      [UNDERLYING]: { decimals: 6 }
     })
 
     const result = await priceWith(erc4626Adapter(options), { [UNDERLYING]: 3 }, VAULT)
@@ -49,7 +49,7 @@ describe('erc4626Adapter', () => {
   it('rejects a zero share conversion as invalid', async () => {
     const options = adapterOptions({
       [VAULT]: { asset: UNDERLYING, decimals: 18, convertToAssets: 0n },
-      [UNDERLYING]: { decimals: 18 },
+      [UNDERLYING]: { decimals: 18 }
     })
 
     const result = await priceWith(erc4626Adapter(options), { [UNDERLYING]: 1 }, VAULT)
@@ -61,7 +61,7 @@ describe('erc4626Adapter', () => {
   it('fails when the underlying has no price', async () => {
     const options = adapterOptions({
       [VAULT]: { asset: UNDERLYING, decimals: 18, convertToAssets: 10n ** 18n },
-      [UNDERLYING]: { decimals: 18 },
+      [UNDERLYING]: { decimals: 18 }
     })
 
     const result = await priceWith(erc4626Adapter(options), {}, VAULT)

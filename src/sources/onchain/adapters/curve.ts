@@ -10,7 +10,7 @@ import {
   requireChildren,
   tokenDecimals,
   type ContractContext,
-  type OnchainAdapterOptions,
+  type OnchainAdapterOptions
 } from '../context'
 import { InvalidPricingError } from '../errors'
 import { calculatePoolNavPrice } from '../math'
@@ -25,22 +25,22 @@ const MAX_COINS = 8
 const minterAbi = parseAbi(['function minter() view returns (address)'])
 const poolLpTokenAbi = parseAbi([
   'function token() view returns (address)',
-  'function lp_token() view returns (address)',
+  'function lp_token() view returns (address)'
 ])
 const providerAbi = parseAbi(['function get_address(uint256) view returns (address)'])
 const registryAbi = parseAbi([
   'function get_pool_from_lp_token(address) view returns (address)',
-  'function get_n_coins(address) view returns (uint256[2])',
+  'function get_n_coins(address) view returns (uint256[2])'
 ])
 const metaRegistryAbi = parseAbi(['function get_n_coins(address) view returns (uint256)'])
 const poolCoinCountAbi = parseAbi(['function N_COINS() view returns (uint256)'])
 const coinUintAbi = parseAbi([
   'function coins(uint256) view returns (address)',
-  'function balances(uint256) view returns (uint256)',
+  'function balances(uint256) view returns (uint256)'
 ])
 const coinIntAbi = parseAbi([
   'function coins(int128) view returns (address)',
-  'function balances(int128) view returns (uint256)',
+  'function balances(int128) view returns (uint256)'
 ])
 
 interface CurveCoin {
@@ -65,9 +65,7 @@ type RegistryWalk = <T>(visit: (registry: Address) => Promise<T | null>) => Prom
 function registryWalk(client: PublicClient, blockNumber: bigint): RegistryWalk {
   const seen = new Map<number, Address | null>()
 
-  return async function forEachRegistry<T>(
-    visit: (registry: Address) => Promise<T | null>,
-  ): Promise<T | null> {
+  return async function forEachRegistry<T>(visit: (registry: Address) => Promise<T | null>): Promise<T | null> {
     for (let registryId = 0; registryId <= MAX_REGISTRY_ID; registryId += 1) {
       let registry = seen.get(registryId)
       if (registry === undefined) {
@@ -77,8 +75,8 @@ function registryWalk(client: PublicClient, blockNumber: bigint): RegistryWalk {
             abi: providerAbi,
             functionName: 'get_address',
             args: [BigInt(registryId)],
-            blockNumber,
-          }),
+            blockNumber
+          })
         )
         registry = (registryRaw ? normalizedAddress(registryRaw) : null) as Address | null
         seen.set(registryId, registry)
@@ -99,7 +97,7 @@ async function poolFromRegistry(
   client: PublicClient,
   lpToken: Address,
   blockNumber: bigint,
-  forEachRegistry: RegistryWalk,
+  forEachRegistry: RegistryWalk
 ): Promise<string | null> {
   return forEachRegistry(async (registry) => {
     const poolRaw = await maybe(() =>
@@ -108,8 +106,8 @@ async function poolFromRegistry(
         abi: registryAbi,
         functionName: 'get_pool_from_lp_token',
         args: [lpToken],
-        blockNumber,
-      }),
+        blockNumber
+      })
     )
     return poolRaw ? normalizedAddress(poolRaw) : null
   })
@@ -119,7 +117,7 @@ async function readCoinAddress(
   client: PublicClient,
   poolAddress: Address,
   index: number,
-  blockNumber: bigint,
+  blockNumber: bigint
 ): Promise<{ address: string; indexType: 'uint256' | 'int128' } | null> {
   const uintAddress = await maybe(() =>
     client.readContract({
@@ -127,8 +125,8 @@ async function readCoinAddress(
       abi: coinUintAbi,
       functionName: 'coins',
       args: [BigInt(index)],
-      blockNumber,
-    }),
+      blockNumber
+    })
   )
   if (uintAddress) {
     const address = normalizedAddress(uintAddress)
@@ -142,8 +140,8 @@ async function readCoinAddress(
       abi: coinIntAbi,
       functionName: 'coins',
       args: [BigInt(index)],
-      blockNumber,
-    }),
+      blockNumber
+    })
   )
   if (!intAddress) {
     return null
@@ -165,15 +163,15 @@ async function readCoinCount(
   client: PublicClient,
   poolAddress: Address,
   blockNumber: bigint,
-  forEachRegistry: RegistryWalk,
+  forEachRegistry: RegistryWalk
 ): Promise<CurveCoinCount | null> {
   const direct = await maybe(() =>
     client.readContract({
       address: poolAddress,
       abi: poolCoinCountAbi,
       functionName: 'N_COINS',
-      blockNumber,
-    }),
+      blockNumber
+    })
   )
   const directCount = direct == null ? null : validCoinCount(direct)
   if (directCount != null) {
@@ -187,8 +185,8 @@ async function readCoinCount(
         abi: registryAbi,
         functionName: 'get_n_coins',
         args: [poolAddress],
-        blockNumber,
-      }),
+        blockNumber
+      })
     )
     const registryCount = registryCounts == null ? null : validCoinCount(registryCounts[0])
     if (registryCount != null) {
@@ -201,11 +199,10 @@ async function readCoinCount(
         abi: metaRegistryAbi,
         functionName: 'get_n_coins',
         args: [poolAddress],
-        blockNumber,
-      }),
+        blockNumber
+      })
     )
-    const metaRegistryCount =
-      metaRegistryCountRaw == null ? null : validCoinCount(metaRegistryCountRaw)
+    const metaRegistryCount = metaRegistryCountRaw == null ? null : validCoinCount(metaRegistryCountRaw)
     return metaRegistryCount == null
       ? null
       : ({ count: metaRegistryCount, source: 'curve-metaregistry' } satisfies CurveCoinCount)
@@ -221,11 +218,11 @@ async function poolClaimsLpToken(
   client: PublicClient,
   pool: Address,
   lpToken: string,
-  blockNumber: bigint,
+  blockNumber: bigint
 ): Promise<boolean> {
   for (const functionName of ['token', 'lp_token'] as const) {
     const claimed = await maybe(() =>
-      client.readContract({ address: pool, abi: poolLpTokenAbi, functionName, blockNumber }),
+      client.readContract({ address: pool, abi: poolLpTokenAbi, functionName, blockNumber })
     )
     if (claimed && claimed.toLowerCase() === lpToken.toLowerCase()) {
       return true
@@ -237,22 +234,19 @@ async function poolClaimsLpToken(
 async function resolvePool(
   target: RecursivePriceTarget,
   state: ContractContext,
-  forEachRegistry: RegistryWalk,
+  forEachRegistry: RegistryWalk
 ): Promise<string | null> {
   const minterRaw = await maybe(() =>
     state.client.readContract({
       address: state.address,
       abi: minterAbi,
       functionName: 'minter',
-      blockNumber: state.blockNumber,
-    }),
+      blockNumber: state.blockNumber
+    })
   )
   if (minterRaw) {
     const minter = normalizedAddress(minterRaw)
-    if (
-      minter &&
-      (await poolClaimsLpToken(state.client, minter as Address, target.token, state.blockNumber))
-    ) {
+    if (minter && (await poolClaimsLpToken(state.client, minter as Address, target.token, state.blockNumber))) {
       return minter
     }
   }
@@ -272,45 +266,31 @@ export function curveAdapter(options: OnchainAdapterOptions): RecursivePriceAdap
       if (!poolAddress) {
         return null
       }
-      const coinCount = await readCoinCount(
-        state.client,
-        poolAddress as Address,
-        state.blockNumber,
-        forEachRegistry,
-      )
+      const coinCount = await readCoinCount(state.client, poolAddress as Address, state.blockNumber, forEachRegistry)
       if (!coinCount) {
         return null
       }
 
       const coins: CurveCoin[] = []
       for (let index = 0; index < coinCount.count; index += 1) {
-        const coin = await readCoinAddress(
-          state.client,
-          poolAddress as Address,
-          index,
-          state.blockNumber,
-        )
+        const coin = await readCoinAddress(state.client, poolAddress as Address, index, state.blockNumber)
         if (!coin) {
           throw new InvalidPricingError(
-            `Curve coin ${index} is unavailable despite authoritative count ${coinCount.count}`,
+            `Curve coin ${index} is unavailable despite authoritative count ${coinCount.count}`
           )
         }
         const isNative = coin.address.toLowerCase() === CURVE_NATIVE_TOKEN
         const pricingAddress = isNative ? WRAPPED_NATIVE[state.chainId] : coin.address
         if (!pricingAddress) {
-          throw new Error(
-            `No wrapped native asset is configured for Curve on chain ${state.chainId}`,
-          )
+          throw new Error(`No wrapped native asset is configured for Curve on chain ${state.chainId}`)
         }
-        const decimals = isNative
-          ? 18
-          : await tokenDecimals(state.client, coin.address, state.blockNumber)
+        const decimals = isNative ? 18 : await tokenDecimals(state.client, coin.address, state.blockNumber)
         const balanceRaw = await state.client.readContract({
           address: poolAddress as Address,
           abi: coin.indexType === 'uint256' ? coinUintAbi : coinIntAbi,
           functionName: 'balances',
           args: [BigInt(index)],
-          blockNumber: state.blockNumber,
+          blockNumber: state.blockNumber
         })
         coins.push({ address: pricingAddress, onchainAddress: coin.address, decimals, balanceRaw })
       }
@@ -324,15 +304,15 @@ export function curveAdapter(options: OnchainAdapterOptions): RecursivePriceAdap
           address: state.address,
           abi: erc20Abi,
           functionName: 'totalSupply',
-          blockNumber: state.blockNumber,
+          blockNumber: state.blockNumber
         }),
         requireChildren(
           context,
           target,
           coins.map((coin) => coin.address),
           state.numericBlockNumber,
-          'Curve constituent',
-        ),
+          'Curve constituent'
+        )
       ])
       const metadata = {
         ...blockEvidence(state, target),
@@ -346,25 +326,25 @@ export function curveAdapter(options: OnchainAdapterOptions): RecursivePriceAdap
           address: coin.address,
           onchainAddress: coin.onchainAddress,
           decimals: coin.decimals,
-          balanceRaw: rawState(coin.balanceRaw),
-        })),
+          balanceRaw: rawState(coin.balanceRaw)
+        }))
       }
       return {
         priceUsd: calculatePoolNavPrice(
           coins.map((coin, index) => ({ ...coin, priceUsd: inputs[index].priceUsd })),
           totalSupplyRaw,
-          poolDecimals,
+          poolDecimals
         ),
         blockNumber: state.numericBlockNumber,
         inputs: inputs.map((path, index) =>
           recursiveInput(path, {
             method: 'curve-reserve-nav',
             balanceRaw: rawState(coins[index].balanceRaw),
-            decimals: coins[index].decimals,
-          }),
+            decimals: coins[index].decimals
+          })
         ),
-        metadata,
+        metadata
       }
-    },
+    }
   }
 }

@@ -9,7 +9,7 @@ import {
   recursiveInput,
   requireChildren,
   tokenDecimals,
-  type OnchainAdapterOptions,
+  type OnchainAdapterOptions
 } from '../context'
 import { calculatePoolNavPrice } from '../math'
 import type { RecursivePriceAdapter } from '../types'
@@ -17,7 +17,7 @@ import type { RecursivePriceAdapter } from '../types'
 const pairAbi = parseAbi([
   'function token0() view returns (address)',
   'function token1() view returns (address)',
-  'function getReserves() view returns (uint256 reserve0, uint256 reserve1, uint256 blockTimestampLast)',
+  'function getReserves() view returns (uint256 reserve0, uint256 reserve1, uint256 blockTimestampLast)'
 ])
 
 /** Prices an LP token at the NAV of its reserves, so every leg must be priced. */
@@ -32,49 +32,43 @@ export function pairAdapter(options: OnchainAdapterOptions): RecursivePriceAdapt
             address: state.address,
             abi: pairAbi,
             functionName: 'token0',
-            blockNumber: state.blockNumber,
-          }),
+            blockNumber: state.blockNumber
+          })
         ),
         maybe(() =>
           state.client.readContract({
             address: state.address,
             abi: pairAbi,
             functionName: 'token1',
-            blockNumber: state.blockNumber,
-          }),
+            blockNumber: state.blockNumber
+          })
         ),
         maybe(() =>
           state.client.readContract({
             address: state.address,
             abi: pairAbi,
             functionName: 'getReserves',
-            blockNumber: state.blockNumber,
-          }),
+            blockNumber: state.blockNumber
+          })
         ),
         maybe(() =>
           state.client.readContract({
             address: state.address,
             abi: erc20Abi,
             functionName: 'totalSupply',
-            blockNumber: state.blockNumber,
-          }),
+            blockNumber: state.blockNumber
+          })
         ),
         maybe(() =>
           state.client.readContract({
             address: state.address,
             abi: erc20Abi,
             functionName: 'decimals',
-            blockNumber: state.blockNumber,
-          }),
-        ),
+            blockNumber: state.blockNumber
+          })
+        )
       ])
-      if (
-        !token0Raw ||
-        !token1Raw ||
-        !reserves ||
-        totalSupplyRaw == null ||
-        poolDecimalsRaw == null
-      ) {
+      if (!token0Raw || !token1Raw || !reserves || totalSupplyRaw == null || poolDecimalsRaw == null) {
         return null
       }
       const token0 = normalizedAddress(token0Raw)
@@ -86,13 +80,7 @@ export function pairAdapter(options: OnchainAdapterOptions): RecursivePriceAdapt
       const [token0Decimals, token1Decimals, inputs] = await Promise.all([
         tokenDecimals(state.client, token0, state.blockNumber),
         tokenDecimals(state.client, token1, state.blockNumber),
-        requireChildren(
-          context,
-          target,
-          [token0, token1],
-          state.numericBlockNumber,
-          'AMM constituent',
-        ),
+        requireChildren(context, target, [token0, token1], state.numericBlockNumber, 'AMM constituent')
       ])
       const decimals = [token0Decimals, token1Decimals]
       const balances = [reserves[0], reserves[1]]
@@ -104,8 +92,8 @@ export function pairAdapter(options: OnchainAdapterOptions): RecursivePriceAdapt
         poolDecimals,
         reserves: [
           { address: token0, decimals: token0Decimals, balanceRaw: rawState(reserves[0]) },
-          { address: token1, decimals: token1Decimals, balanceRaw: rawState(reserves[1]) },
-        ],
+          { address: token1, decimals: token1Decimals, balanceRaw: rawState(reserves[1]) }
+        ]
       }
       return {
         priceUsd: calculatePoolNavPrice(
@@ -114,28 +102,28 @@ export function pairAdapter(options: OnchainAdapterOptions): RecursivePriceAdapt
               address: token0,
               balanceRaw: reserves[0],
               decimals: token0Decimals,
-              priceUsd: inputs[0].priceUsd,
+              priceUsd: inputs[0].priceUsd
             },
             {
               address: token1,
               balanceRaw: reserves[1],
               decimals: token1Decimals,
-              priceUsd: inputs[1].priceUsd,
-            },
+              priceUsd: inputs[1].priceUsd
+            }
           ],
           totalSupplyRaw,
-          poolDecimals,
+          poolDecimals
         ),
         blockNumber: state.numericBlockNumber,
         inputs: inputs.map((path, index) =>
           recursiveInput(path, {
             method: 'pool-reserve-nav',
             balanceRaw: rawState(balances[index]),
-            decimals: decimals[index],
-          }),
+            decimals: decimals[index]
+          })
         ),
-        metadata,
+        metadata
       }
-    },
+    }
   }
 }

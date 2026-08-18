@@ -8,7 +8,7 @@ import {
   recursiveInput,
   requireChildren,
   tokenDecimals,
-  type OnchainAdapterOptions,
+  type OnchainAdapterOptions
 } from '../context'
 import { calculatePoolNavPrice } from '../math'
 import type { RecursivePriceAdapter } from '../types'
@@ -17,22 +17,22 @@ const RESERVE_RTOKENS: Record<number, ReadonlySet<string>> = {
   1: new Set([
     '0x78da5799cf427fee11e9996982f4150ece7a99a7',
     '0xacdf0dba4b9839b96221a8487e9ca660a48212be',
-    '0xfc0b1eef20e4c68b3dcf36c4537cfa7ce46ca70b',
-  ]),
+    '0xfc0b1eef20e4c68b3dcf36c4537cfa7ce46ca70b'
+  ])
 }
 
 const reserveRTokenAbi = parseAbi([
   'function main() view returns (address)',
   'function basketsNeeded() view returns (uint192)',
-  'function redemptionAvailable() view returns (uint256)',
+  'function redemptionAvailable() view returns (uint256)'
 ])
 const reserveMainAbi = parseAbi([
   'function basketHandler() view returns (address)',
-  'function frozen() view returns (bool)',
+  'function frozen() view returns (bool)'
 ])
 const reserveBasketHandlerAbi = parseAbi([
   'function fullyCollateralized() view returns (bool)',
-  'function quote(uint192 amount, uint8 rounding) view returns (address[] erc20s, uint256[] quantities)',
+  'function quote(uint192 amount, uint8 rounding) view returns (address[] erc20s, uint256[] quantities)'
 ])
 
 /**
@@ -49,39 +49,38 @@ export function reserveRTokenAdapter(options: OnchainAdapterOptions): RecursiveP
       }
 
       const state = await contractContext(target, options)
-      const [mainRaw, tokenDecimalsRaw, totalSupplyRaw, basketsNeededRaw, redemptionAvailableRaw] =
-        await Promise.all([
-          state.client.readContract({
-            address: state.address,
-            abi: reserveRTokenAbi,
-            functionName: 'main',
-            blockNumber: state.blockNumber,
-          }),
-          state.client.readContract({
-            address: state.address,
-            abi: erc20Abi,
-            functionName: 'decimals',
-            blockNumber: state.blockNumber,
-          }),
-          state.client.readContract({
-            address: state.address,
-            abi: erc20Abi,
-            functionName: 'totalSupply',
-            blockNumber: state.blockNumber,
-          }),
-          state.client.readContract({
-            address: state.address,
-            abi: reserveRTokenAbi,
-            functionName: 'basketsNeeded',
-            blockNumber: state.blockNumber,
-          }),
-          state.client.readContract({
-            address: state.address,
-            abi: reserveRTokenAbi,
-            functionName: 'redemptionAvailable',
-            blockNumber: state.blockNumber,
-          }),
-        ])
+      const [mainRaw, tokenDecimalsRaw, totalSupplyRaw, basketsNeededRaw, redemptionAvailableRaw] = await Promise.all([
+        state.client.readContract({
+          address: state.address,
+          abi: reserveRTokenAbi,
+          functionName: 'main',
+          blockNumber: state.blockNumber
+        }),
+        state.client.readContract({
+          address: state.address,
+          abi: erc20Abi,
+          functionName: 'decimals',
+          blockNumber: state.blockNumber
+        }),
+        state.client.readContract({
+          address: state.address,
+          abi: erc20Abi,
+          functionName: 'totalSupply',
+          blockNumber: state.blockNumber
+        }),
+        state.client.readContract({
+          address: state.address,
+          abi: reserveRTokenAbi,
+          functionName: 'basketsNeeded',
+          blockNumber: state.blockNumber
+        }),
+        state.client.readContract({
+          address: state.address,
+          abi: reserveRTokenAbi,
+          functionName: 'redemptionAvailable',
+          blockNumber: state.blockNumber
+        })
+      ])
       const main = normalizedAddress(mainRaw)
       if (!main || totalSupplyRaw === 0n || basketsNeededRaw === 0n) {
         return null
@@ -102,14 +101,14 @@ export function reserveRTokenAdapter(options: OnchainAdapterOptions): RecursiveP
           address: main,
           abi: reserveMainAbi,
           functionName: 'basketHandler',
-          blockNumber: state.blockNumber,
+          blockNumber: state.blockNumber
         }),
         state.client.readContract({
           address: main,
           abi: reserveMainAbi,
           functionName: 'frozen',
-          blockNumber: state.blockNumber,
-        }),
+          blockNumber: state.blockNumber
+        })
       ])
       const basketHandler = normalizedAddress(basketHandlerRaw)
       if (!basketHandler || frozen) {
@@ -120,7 +119,7 @@ export function reserveRTokenAdapter(options: OnchainAdapterOptions): RecursiveP
         address: basketHandler,
         abi: reserveBasketHandlerAbi,
         functionName: 'fullyCollateralized',
-        blockNumber: state.blockNumber,
+        blockNumber: state.blockNumber
       })
       if (!fullyCollateralized) {
         return null
@@ -130,7 +129,7 @@ export function reserveRTokenAdapter(options: OnchainAdapterOptions): RecursiveP
         abi: reserveBasketHandlerAbi,
         functionName: 'quote',
         args: [basketUnitsRaw, 0],
-        blockNumber: state.blockNumber,
+        blockNumber: state.blockNumber
       })
       if (quote[0].length === 0 || quote[0].length !== quote[1].length) {
         return null
@@ -153,16 +152,14 @@ export function reserveRTokenAdapter(options: OnchainAdapterOptions): RecursiveP
       }
 
       const [decimals, inputs] = await Promise.all([
-        Promise.all(
-          constituents.map((asset) => tokenDecimals(state.client, asset.address, state.blockNumber)),
-        ),
+        Promise.all(constituents.map((asset) => tokenDecimals(state.client, asset.address, state.blockNumber))),
         requireChildren(
           context,
           target,
           constituents.map((asset) => asset.address),
           state.numericBlockNumber,
-          'Reserve RToken redemption constituent',
-        ),
+          'Reserve RToken redemption constituent'
+        )
       ])
       const metadata = {
         ...blockEvidence(state, target),
@@ -179,8 +176,8 @@ export function reserveRTokenAdapter(options: OnchainAdapterOptions): RecursiveP
         constituents: constituents.map((asset, index) => ({
           address: asset.address,
           decimals: decimals[index],
-          amountRaw: rawState(asset.amountRaw),
-        })),
+          amountRaw: rawState(asset.amountRaw)
+        }))
       }
       return {
         priceUsd: calculatePoolNavPrice(
@@ -188,21 +185,21 @@ export function reserveRTokenAdapter(options: OnchainAdapterOptions): RecursiveP
             address: asset.address,
             balanceRaw: asset.amountRaw,
             decimals: decimals[index],
-            priceUsd: inputs[index].priceUsd,
+            priceUsd: inputs[index].priceUsd
           })),
           oneTokenRaw,
-          rTokenDecimals,
+          rTokenDecimals
         ),
         blockNumber: state.numericBlockNumber,
         inputs: inputs.map((path, index) =>
           recursiveInput(path, {
             method: 'reserve-rtoken-basket-redemption',
             amountRaw: rawState(constituents[index].amountRaw),
-            decimals: decimals[index],
-          }),
+            decimals: decimals[index]
+          })
         ),
-        metadata,
+        metadata
       }
-    },
+    }
   }
 }

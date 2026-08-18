@@ -18,7 +18,7 @@ export {
   OnchainHistoricalSource,
   OnchainSpotSource,
   createOnchainHistoricalSource,
-  createOnchainSpotSource,
+  createOnchainSpotSource
 } from './source'
 export type { OnchainSourceOptions } from './source'
 
@@ -28,7 +28,7 @@ export {
   calculateCompoundTokenPrice,
   calculatePoolNavPrice,
   calculateWrapperPrice,
-  scaledRaw,
+  scaledRaw
 } from './math'
 export { WRAPPED_NATIVE } from './tokens'
 export type { OnchainAdapterOptions } from './context'
@@ -37,5 +37,5 @@ export type {
   RecursivePriceAdapter,
   RecursivePriceContext,
   RecursivePriceTarget,
-  ResolvedPricePath,
+  ResolvedPricePath
 } from './types'

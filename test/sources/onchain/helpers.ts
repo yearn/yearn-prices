@@ -1,11 +1,7 @@
 import type { PublicClient } from 'viem'
 import { RecursivePriceEngine } from '../../../src/sources/onchain/engine'
 import type { OnchainAdapterOptions } from '../../../src/sources/onchain/context'
-import type {
-  MarketPriceResolver,
-  RecursivePriceAdapter,
-  ResolvedPricePath,
-} from '../../../src/sources/onchain/types'
+import type { MarketPriceResolver, RecursivePriceAdapter, ResolvedPricePath } from '../../../src/sources/onchain/types'
 
 export const BLOCK_NUMBER = 19_000_000n
 export const BLOCK_TIMESTAMP = 1_700_000_000
@@ -41,7 +37,7 @@ export function fakeClient(reads: ContractReads): PublicClient {
         throw value
       }
       return value
-    },
+    }
   } as unknown as PublicClient
 }
 
@@ -67,21 +63,16 @@ export function marketFor(prices: Record<string, number>): MarketPriceResolver {
       adapter: 'enso',
       blockNumber: target.blockNumber ?? null,
       inputs: [],
-      metadata: {},
+      metadata: {}
     }
     return path
   }
 }
 
-export function priceWith(
-  adapter: RecursivePriceAdapter,
-  prices: Record<string, number>,
-  token: string,
-  chainId = 1,
-) {
+export function priceWith(adapter: RecursivePriceAdapter, prices: Record<string, number>, token: string, chainId = 1) {
   return new RecursivePriceEngine(marketFor(prices), [adapter]).resolve({
     chainId,
     token,
-    timestamp: null,
+    timestamp: null
   })
 }

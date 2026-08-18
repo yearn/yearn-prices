@@ -8,7 +8,7 @@ const STETH = '0x5555555555555555555555555555555555555555'
 describe('wstEthAdapter', () => {
   it('prices wstETH from stEthPerToken', async () => {
     const options = adapterOptions({
-      [WSTETH]: { stETH: STETH, stEthPerToken: 1_200_000_000_000_000_000n },
+      [WSTETH]: { stETH: STETH, stEthPerToken: 1_200_000_000_000_000_000n }
     })
 
     const result = await priceWith(wstEthAdapter(options), { [STETH]: 2000 }, WSTETH)

@@ -6,5 +6,5 @@ export const erc4626Abi = parseAbi([
   'function convertToAssets(uint256 shares) view returns (uint256)',
   'function convertToShares(uint256 assets) view returns (uint256)',
   'function maxDeposit(address receiver) view returns (uint256)',
-  'function previewRedeem(uint256 shares) view returns (uint256)',
+  'function previewRedeem(uint256 shares) view returns (uint256)'
 ])

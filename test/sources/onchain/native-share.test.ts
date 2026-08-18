@@ -9,7 +9,7 @@ const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
 describe('nativeShareAdapter', () => {
   it('prices an allowlisted native wrapper against wrapped native', async () => {
     const options = adapterOptions({
-      [NATIVE_SHARE]: { decimals: 18, convertToAssets: 2n * 10n ** 18n },
+      [NATIVE_SHARE]: { decimals: 18, convertToAssets: 2n * 10n ** 18n }
     })
 
     const result = await priceWith(nativeShareAdapter(options), { [WETH]: 1500 }, NATIVE_SHARE)
@@ -27,7 +27,7 @@ describe('nativeShareAdapter', () => {
 
   it('rejects a zero share conversion as invalid', async () => {
     const options = adapterOptions({
-      [NATIVE_SHARE]: { decimals: 18, convertToAssets: 0n },
+      [NATIVE_SHARE]: { decimals: 18, convertToAssets: 0n }
     })
 
     const result = await priceWith(nativeShareAdapter(options), { [WETH]: 1500 }, NATIVE_SHARE)
@@ -38,7 +38,7 @@ describe('nativeShareAdapter', () => {
 
   it('ignores chains with no wrapped native asset', async () => {
     const options = adapterOptions({
-      [NATIVE_SHARE]: { decimals: 18, convertToAssets: 10n ** 18n },
+      [NATIVE_SHARE]: { decimals: 18, convertToAssets: 10n ** 18n }
     })
 
     const result = await priceWith(nativeShareAdapter(options), {}, NATIVE_SHARE, 146)

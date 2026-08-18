@@ -22,7 +22,7 @@ interface MarketSource {
 export function createMarketPriceResolver(
   marketSources: MarketSource[],
   resolve: (chainId: number, token: string, timestamp: number | null) => Promise<MarketQuote>,
-  options?: { requireTimestamp?: boolean },
+  options?: { requireTimestamp?: boolean }
 ): MarketPriceResolver {
   return async (target) => {
     if (options?.requireTimestamp && target.timestamp == null) {
@@ -46,7 +46,7 @@ export function createMarketPriceResolver(
         adapter: price.source,
         blockNumber: target.blockNumber ?? null,
         inputs: [],
-        metadata: {},
+        metadata: {}
       }
       return path
     } catch (error) {

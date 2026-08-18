@@ -20,19 +20,15 @@ function reads(overrides: Record<string, unknown> = {}) {
       capacities: 1000n * WAD,
       enabled: true,
       used: 0n,
-      ...overrides,
+      ...overrides
     },
-    [YFI]: { decimals: 18, balanceOf: 1000n * WAD },
+    [YFI]: { decimals: 18, balanceOf: 1000n * WAD }
   }
 }
 
 describe('yip88LiquidLockerAdapter', () => {
   it('prices a locker at its net redemption value', async () => {
-    const result = await priceWith(
-      yip88LiquidLockerAdapter(adapterOptions(reads())),
-      { [YFI]: 1000 },
-      LOCKER,
-    )
+    const result = await priceWith(yip88LiquidLockerAdapter(adapterOptions(reads())), { [YFI]: 1000 }, LOCKER)
 
     expect(result.path?.priceUsd).toBeCloseTo(99)
   })
@@ -40,14 +36,10 @@ describe('yip88LiquidLockerAdapter', () => {
   it('prices through the facility wrapper when it accepts one', async () => {
     const wrapperReads = {
       ...reads({ tokens: WRAPPER }),
-      [WRAPPER]: { asset: LOCKER, maxDeposit: 100n * WAD, convertToShares: WAD / 2n },
+      [WRAPPER]: { asset: LOCKER, maxDeposit: 100n * WAD, convertToShares: WAD / 2n }
     }
 
-    const result = await priceWith(
-      yip88LiquidLockerAdapter(adapterOptions(wrapperReads)),
-      { [YFI]: 1000 },
-      LOCKER,
-    )
+    const result = await priceWith(yip88LiquidLockerAdapter(adapterOptions(wrapperReads)), { [YFI]: 1000 }, LOCKER)
 
     expect(result.path?.priceUsd).toBeCloseTo(49.5)
   })
@@ -56,7 +48,7 @@ describe('yip88LiquidLockerAdapter', () => {
     const result = await priceWith(
       yip88LiquidLockerAdapter(adapterOptions(reads({ enabled: false }))),
       { [YFI]: 1000 },
-      LOCKER,
+      LOCKER
     )
 
     expect(result.path).toBeNull()
@@ -66,7 +58,7 @@ describe('yip88LiquidLockerAdapter', () => {
     const result = await priceWith(
       yip88LiquidLockerAdapter(adapterOptions(reads({ capacities: 1n, used: 1n }))),
       { [YFI]: 1000 },
-      LOCKER,
+      LOCKER
     )
 
     expect(result.path).toBeNull()
@@ -76,21 +68,13 @@ describe('yip88LiquidLockerAdapter', () => {
     const poorFacility = reads()
     poorFacility[YFI] = { decimals: 18, balanceOf: 1n }
 
-    const result = await priceWith(
-      yip88LiquidLockerAdapter(adapterOptions(poorFacility)),
-      { [YFI]: 1000 },
-      LOCKER,
-    )
+    const result = await priceWith(yip88LiquidLockerAdapter(adapterOptions(poorFacility)), { [YFI]: 1000 }, LOCKER)
 
     expect(result.path).toBeNull()
   })
 
   it('ignores tokens outside the locker allowlist', async () => {
-    const result = await priceWith(
-      yip88LiquidLockerAdapter(adapterOptions(reads())),
-      { [YFI]: 1000 },
-      OTHER,
-    )
+    const result = await priceWith(yip88LiquidLockerAdapter(adapterOptions(reads())), { [YFI]: 1000 }, OTHER)
 
     expect(result.path).toBeNull()
   })

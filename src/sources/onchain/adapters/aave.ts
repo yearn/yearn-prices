@@ -6,7 +6,7 @@ import {
   maybe,
   normalizedAddress,
   recursiveInput,
-  type OnchainAdapterOptions,
+  type OnchainAdapterOptions
 } from '../context'
 import type { RecursivePriceAdapter } from '../types'
 
@@ -23,8 +23,8 @@ export function aaveAdapter(options: OnchainAdapterOptions): RecursivePriceAdapt
           address: state.address,
           abi: aaveAbi,
           functionName: 'UNDERLYING_ASSET_ADDRESS',
-          blockNumber: state.blockNumber,
-        }),
+          blockNumber: state.blockNumber
+        })
       )
       if (!underlyingRaw) {
         return null
@@ -35,16 +35,13 @@ export function aaveAdapter(options: OnchainAdapterOptions): RecursivePriceAdapt
       }
 
       const conversion = { ...blockEvidence(state, target), method: 'one-to-one', underlying }
-      const input = await context.require(
-        childTarget(target, underlying, state.numericBlockNumber),
-        'Aave underlying',
-      )
+      const input = await context.require(childTarget(target, underlying, state.numericBlockNumber), 'Aave underlying')
       return {
         priceUsd: input.priceUsd,
         blockNumber: state.numericBlockNumber,
         inputs: [recursiveInput(input, conversion)],
-        metadata: conversion,
+        metadata: conversion
       }
-    },
+    }
   }
 }

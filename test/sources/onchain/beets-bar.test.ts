@@ -10,7 +10,7 @@ describe('beetsBarAdapter', () => {
   it('prices the bar pro rata against its held BPT', async () => {
     const options = adapterOptions({
       [BEETS_BAR]: { vestingToken: BPT, decimals: 18, totalSupply: 100n * 10n ** 18n },
-      [BPT]: { decimals: 18, balanceOf: 200n * 10n ** 18n },
+      [BPT]: { decimals: 18, balanceOf: 200n * 10n ** 18n }
     })
 
     const result = await priceWith(beetsBarAdapter(options), { [BPT]: 5 }, BEETS_BAR, 250)

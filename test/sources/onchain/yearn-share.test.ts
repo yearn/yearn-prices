@@ -9,7 +9,7 @@ describe('yearnShareAdapter', () => {
   it('prices a v2 vault from pricePerShare', async () => {
     const options = adapterOptions({
       [VAULT]: { token: UNDERLYING, pricePerShare: 1_500_000n, decimals: 6 },
-      [UNDERLYING]: { decimals: 6 },
+      [UNDERLYING]: { decimals: 6 }
     })
 
     const result = await priceWith(yearnShareAdapter(options), { [UNDERLYING]: 2 }, VAULT)
@@ -21,7 +21,7 @@ describe('yearnShareAdapter', () => {
   it('scales pricePerShare by vault decimals, not underlying decimals', async () => {
     const options = adapterOptions({
       [VAULT]: { token: UNDERLYING, pricePerShare: 15n * 10n ** 17n, decimals: 18 },
-      [UNDERLYING]: { decimals: 6 },
+      [UNDERLYING]: { decimals: 6 }
     })
 
     const result = await priceWith(yearnShareAdapter(options), { [UNDERLYING]: 2 }, VAULT)
@@ -33,7 +33,7 @@ describe('yearnShareAdapter', () => {
   it('treats getPricePerFullShare as an 18-decimal rate', async () => {
     const options = adapterOptions({
       [VAULT]: { want: UNDERLYING, getPricePerFullShare: 2n * 10n ** 18n, decimals: 6 },
-      [UNDERLYING]: { decimals: 6 },
+      [UNDERLYING]: { decimals: 6 }
     })
 
     const result = await priceWith(yearnShareAdapter(options), { [UNDERLYING]: 1 }, VAULT)
@@ -45,7 +45,7 @@ describe('yearnShareAdapter', () => {
   it('returns no price when no rate method exists', async () => {
     const options = adapterOptions({
       [VAULT]: { token: UNDERLYING, decimals: 6 },
-      [UNDERLYING]: { decimals: 6 },
+      [UNDERLYING]: { decimals: 6 }
     })
 
     const result = await priceWith(yearnShareAdapter(options), { [UNDERLYING]: 2 }, VAULT)

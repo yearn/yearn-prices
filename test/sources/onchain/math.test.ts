@@ -4,7 +4,7 @@ import {
   calculateCompoundTokenPrice,
   calculatePoolNavPrice,
   calculateWrapperPrice,
-  scaledRaw,
+  scaledRaw
 } from '../../../src/sources/onchain/math'
 
 describe('scaledRaw', () => {
@@ -44,7 +44,7 @@ describe('calculateCompoundTokenPrice', () => {
 describe('calculatePoolNavPrice', () => {
   const assets = [
     { address: '0xa', balanceRaw: 100n * 10n ** 6n, decimals: 6, priceUsd: 1 },
-    { address: '0xb', balanceRaw: 100n * 10n ** 18n, decimals: 18, priceUsd: 1 },
+    { address: '0xb', balanceRaw: 100n * 10n ** 18n, decimals: 18, priceUsd: 1 }
   ]
 
   it('divides NAV by circulating supply', () => {
@@ -64,8 +64,6 @@ describe('calculatePoolNavPrice', () => {
   })
 
   it('rejects an unpriced constituent', () => {
-    expect(() =>
-      calculatePoolNavPrice([{ ...assets[0], priceUsd: 0 }], 10n ** 18n, 18),
-    ).toThrow(InvalidPricingError)
+    expect(() => calculatePoolNavPrice([{ ...assets[0], priceUsd: 0 }], 10n ** 18n, 18)).toThrow(InvalidPricingError)
   })
 })

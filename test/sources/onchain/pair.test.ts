@@ -13,19 +13,15 @@ const reads = {
     token1: TOKEN_B,
     getReserves: [100n * 10n ** 6n, 50n * 10n ** 18n, 0n],
     totalSupply: 100n * 10n ** 18n,
-    decimals: 18,
+    decimals: 18
   },
   [TOKEN_A]: { decimals: 6 },
-  [TOKEN_B]: { decimals: 18 },
+  [TOKEN_B]: { decimals: 18 }
 }
 
 describe('pairAdapter', () => {
   it('prices an LP token at reserve NAV', async () => {
-    const result = await priceWith(
-      pairAdapter(adapterOptions(reads)),
-      { [TOKEN_A]: 1, [TOKEN_B]: 2 },
-      LP,
-    )
+    const result = await priceWith(pairAdapter(adapterOptions(reads)), { [TOKEN_A]: 1, [TOKEN_B]: 2 }, LP)
 
     expect(result.path?.priceUsd).toBeCloseTo(2)
     expect(result.path?.inputs).toHaveLength(2)
@@ -41,11 +37,7 @@ describe('pairAdapter', () => {
   it('reports a transient leg failure as retryable', async () => {
     const flaky = { ...reads, [TOKEN_B]: { decimals: new RetryablePricingError('rpc down') } }
 
-    const result = await priceWith(
-      pairAdapter(adapterOptions(flaky)),
-      { [TOKEN_A]: 1, [TOKEN_B]: 2 },
-      LP,
-    )
+    const result = await priceWith(pairAdapter(adapterOptions(flaky)), { [TOKEN_A]: 1, [TOKEN_B]: 2 }, LP)
 
     expect(result.failure?.reason).toBe('retryable')
   })

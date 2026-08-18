@@ -7,11 +7,7 @@ import type { ClientForChain } from './context'
 import { RecursivePriceEngine } from './engine'
 import { RecursiveDependencyError } from './errors'
 import { DEFAULT_MAX_DEPTH, type OnchainSourceOptions } from './options'
-import type {
-  PriceResolutionFailure,
-  RecursivePriceResult,
-  RecursivePriceTarget,
-} from './types'
+import type { PriceResolutionFailure, RecursivePriceResult, RecursivePriceTarget } from './types'
 
 /**
  * Digs out the error that actually failed, so an upstream ApiError reaches the
@@ -49,21 +45,20 @@ export class OnchainPricer {
   private readonly engine: RecursivePriceEngine
 
   constructor(options: OnchainSourceOptions) {
-    this.clientForChain =
-      options.clientForChain ?? ((chainId) => getChainClient(chainId, options.env))
+    this.clientForChain = options.clientForChain ?? ((chainId) => getChainClient(chainId, options.env))
     const adapters = createOnchainPriceAdapters({
       clientForChain: this.clientForChain,
       blockForTarget: options.blockForTarget,
       blockTimestampForTarget: options.blockTimestampForTarget,
       pendleTwapSeconds: options.pendleTwapSeconds,
-      blockContextCache: new Map(),
+      blockContextCache: new Map()
     })
     this.engine = new RecursivePriceEngine(
       options.marketPrice,
       adapters,
       options.maxDepth ?? DEFAULT_MAX_DEPTH,
       adapterHints,
-      options.resolutionBudget,
+      options.resolutionBudget
     )
   }
 
@@ -82,7 +77,7 @@ export class OnchainPricer {
       if (result.failure.reason === 'budget') {
         throw new ApiError(
           'UNAVAILABLE',
-          `On-chain pricing exhausted its resolution budget for ${result.failure.token}`,
+          `On-chain pricing exhausted its resolution budget for ${result.failure.token}`
         )
       }
       if (result.failure.reason === 'retryable') {
@@ -92,10 +87,7 @@ export class OnchainPricer {
         }
         // An ApiError, not a bare Error: the historical route rethrows anything
         // it does not recognise and the worker turns that into a 500.
-        throw new ApiError(
-          'UNAVAILABLE',
-          `On-chain pricing failed transiently for ${result.failure.token}`,
-        )
+        throw new ApiError('UNAVAILABLE', `On-chain pricing failed transiently for ${result.failure.token}`)
       }
       return null
     }
@@ -103,7 +95,7 @@ export class OnchainPricer {
       price: result.path.priceUsd,
       timestamp: result.path.observedTimestamp,
       symbol: result.path.symbol,
-      confidence: result.path.confidence,
+      confidence: result.path.confidence
     }
   }
 }

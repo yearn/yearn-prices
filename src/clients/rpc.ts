@@ -34,11 +34,7 @@ function rememberSample(chainId: number, number: bigint, timestamp: number): voi
   blockSamples.set(chainId, samples)
 }
 
-function seedBounds(
-  chainId: number,
-  timestamp: number,
-  latest: bigint,
-): { low: bigint; high: bigint; best: bigint } {
+function seedBounds(chainId: number, timestamp: number, latest: bigint): { low: bigint; high: bigint; best: bigint } {
   let low = 0n
   let high = latest
   // Genesis, not latest: a timestamp older than the whole chain must not fall
@@ -113,10 +109,7 @@ function createChainClient(chainId: number, rpcUrl: string): PublicClient {
   })
 }
 
-function rpcUrlForChain(
-  chainId: number,
-  env?: Record<string, string | undefined>,
-): string | undefined {
+function rpcUrlForChain(chainId: number, env?: Record<string, string | undefined>): string | undefined {
   if (env) {
     return env[`RPC_URL_${chainId}`]
   }
@@ -132,10 +125,7 @@ function rpcUrlForChain(
  * Returns a memoized client for `chainId`, or null when no `RPC_URL_<chainId>`
  * is configured. Callers decide how to surface the missing-RPC gap.
  */
-export function getChainClient(
-  chainId: number,
-  env?: Record<string, string | undefined>,
-): PublicClient | null {
+export function getChainClient(chainId: number, env?: Record<string, string | undefined>): PublicClient | null {
   const rpcUrl = rpcUrlForChain(chainId, env)
   if (!rpcUrl) {
     return null

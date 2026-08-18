@@ -9,7 +9,7 @@ const quote = {
   timestamp: 1_700_000_000,
   symbol: 'TKN',
   confidence: 0.9,
-  source: 'enso',
+  source: 'enso'
 }
 
 const mainnetOnly = [{ supports: (chainId: number) => chainId === 1 }]
@@ -31,7 +31,7 @@ describe('createMarketPriceResolver', () => {
       source: 'enso',
       adapter: 'enso',
       blockNumber: 42,
-      inputs: [],
+      inputs: []
     })
   })
 
@@ -57,7 +57,7 @@ describe('createMarketPriceResolver', () => {
     })
 
     await expect(resolve({ chainId: 1, token: TOKEN, timestamp: null })).rejects.toMatchObject({
-      code: 'INTERNAL_ERROR',
+      code: 'INTERNAL_ERROR'
     })
   })
 

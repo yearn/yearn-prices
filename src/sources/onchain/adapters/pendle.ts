@@ -7,7 +7,7 @@ import {
   normalizedAddress,
   rawState,
   recursiveInput,
-  type OnchainAdapterOptions,
+  type OnchainAdapterOptions
 } from '../context'
 import { calculateWrapperPrice } from '../math'
 import type { RecursivePriceAdapter } from '../types'
@@ -17,21 +17,12 @@ const MAX_UINT32 = 4_294_967_295
 
 export const DEFAULT_PENDLE_TWAP_SECONDS = 900
 
-const marketAbi = parseAbi([
-  'function readTokens() view returns (address sy, address pt, address yt)',
-])
-const syAbi = parseAbi([
-  'function assetInfo() view returns (uint8 assetType, address asset, uint8 assetDecimals)',
-])
-const oracleAbi = parseAbi([
-  'function getLpToAssetRate(address market, uint32 duration) view returns (uint256)',
-])
+const marketAbi = parseAbi(['function readTokens() view returns (address sy, address pt, address yt)'])
+const syAbi = parseAbi(['function assetInfo() view returns (uint8 assetType, address asset, uint8 assetDecimals)'])
+const oracleAbi = parseAbi(['function getLpToAssetRate(address market, uint32 duration) view returns (uint256)'])
 
 /** Prices a Pendle LP against its SY asset using the oracle's TWAP rate. */
-export function pendleAdapter(
-  options: OnchainAdapterOptions,
-  twapSeconds: number,
-): RecursivePriceAdapter {
+export function pendleAdapter(options: OnchainAdapterOptions, twapSeconds: number): RecursivePriceAdapter {
   if (!Number.isInteger(twapSeconds) || twapSeconds < 1 || twapSeconds > MAX_UINT32) {
     throw new Error('Pendle TWAP seconds must fit uint32 and be positive')
   }
@@ -45,8 +36,8 @@ export function pendleAdapter(
           address: state.address,
           abi: marketAbi,
           functionName: 'readTokens',
-          blockNumber: state.blockNumber,
-        }),
+          blockNumber: state.blockNumber
+        })
       )
       if (!tokens) {
         return null
@@ -56,8 +47,8 @@ export function pendleAdapter(
           address: tokens[0],
           abi: syAbi,
           functionName: 'assetInfo',
-          blockNumber: state.blockNumber,
-        }),
+          blockNumber: state.blockNumber
+        })
       )
       if (!assetInfo) {
         return null
@@ -72,7 +63,7 @@ export function pendleAdapter(
         abi: oracleAbi,
         functionName: 'getLpToAssetRate',
         args: [state.address, twapSeconds],
-        blockNumber: state.blockNumber,
+        blockNumber: state.blockNumber
       })
       const conversion = {
         ...blockEvidence(state, target),
@@ -86,18 +77,15 @@ export function pendleAdapter(
         assetType: Number(assetInfo[0]),
         assetDecimals: Number(assetInfo[2]),
         rateDecimals: 18,
-        lpToAssetRateRaw: rawState(rateRaw),
+        lpToAssetRateRaw: rawState(rateRaw)
       }
-      const input = await context.require(
-        childTarget(target, asset, state.numericBlockNumber),
-        'Pendle SY asset',
-      )
+      const input = await context.require(childTarget(target, asset, state.numericBlockNumber), 'Pendle SY asset')
       return {
         priceUsd: calculateWrapperPrice(rateRaw, 18, 10n ** 18n, 18, input.priceUsd),
         blockNumber: state.numericBlockNumber,
         inputs: [recursiveInput(input, conversion)],
-        metadata: conversion,
+        metadata: conversion
       }
-    },
+    }
   }
 }

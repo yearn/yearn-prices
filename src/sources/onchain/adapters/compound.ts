@@ -8,14 +8,14 @@ import {
   rawState,
   recursiveInput,
   tokenDecimals,
-  type OnchainAdapterOptions,
+  type OnchainAdapterOptions
 } from '../context'
 import { calculateCompoundTokenPrice } from '../math'
 import type { RecursivePriceAdapter } from '../types'
 
 const compoundAbi = parseAbi([
   'function underlying() view returns (address)',
-  'function exchangeRateStored() view returns (uint256)',
+  'function exchangeRateStored() view returns (uint256)'
 ])
 
 export function compoundAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
@@ -29,17 +29,17 @@ export function compoundAdapter(options: OnchainAdapterOptions): RecursivePriceA
             address: state.address,
             abi: compoundAbi,
             functionName: 'underlying',
-            blockNumber: state.blockNumber,
-          }),
+            blockNumber: state.blockNumber
+          })
         ),
         maybe(() =>
           state.client.readContract({
             address: state.address,
             abi: compoundAbi,
             functionName: 'exchangeRateStored',
-            blockNumber: state.blockNumber,
-          }),
-        ),
+            blockNumber: state.blockNumber
+          })
+        )
       ])
       if (!underlyingRaw || exchangeRateRaw == null) {
         return null
@@ -51,7 +51,7 @@ export function compoundAdapter(options: OnchainAdapterOptions): RecursivePriceA
 
       const [shareDecimals, underlyingDecimals] = await Promise.all([
         tokenDecimals(state.client, target.token, state.blockNumber),
-        tokenDecimals(state.client, underlying, state.blockNumber),
+        tokenDecimals(state.client, underlying, state.blockNumber)
       ])
       const conversion = {
         ...blockEvidence(state, target),
@@ -59,23 +59,18 @@ export function compoundAdapter(options: OnchainAdapterOptions): RecursivePriceA
         underlying,
         exchangeRateRaw: rawState(exchangeRateRaw),
         shareDecimals,
-        underlyingDecimals,
+        underlyingDecimals
       }
       const input = await context.require(
         childTarget(target, underlying, state.numericBlockNumber),
-        'Compound underlying',
+        'Compound underlying'
       )
       return {
-        priceUsd: calculateCompoundTokenPrice(
-          exchangeRateRaw,
-          shareDecimals,
-          underlyingDecimals,
-          input.priceUsd,
-        ),
+        priceUsd: calculateCompoundTokenPrice(exchangeRateRaw, shareDecimals, underlyingDecimals, input.priceUsd),
         blockNumber: state.numericBlockNumber,
         inputs: [recursiveInput(input, conversion)],
-        metadata: conversion,
+        metadata: conversion
       }
-    },
+    }
   }
 }

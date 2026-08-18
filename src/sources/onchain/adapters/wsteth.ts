@@ -7,14 +7,14 @@ import {
   normalizedAddress,
   rawState,
   recursiveInput,
-  type OnchainAdapterOptions,
+  type OnchainAdapterOptions
 } from '../context'
 import { calculateWrapperPrice } from '../math'
 import type { RecursivePriceAdapter } from '../types'
 
 const wstEthAbi = parseAbi([
   'function stETH() view returns (address)',
-  'function stEthPerToken() view returns (uint256)',
+  'function stEthPerToken() view returns (uint256)'
 ])
 
 export function wstEthAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
@@ -28,17 +28,17 @@ export function wstEthAdapter(options: OnchainAdapterOptions): RecursivePriceAda
             address: state.address,
             abi: wstEthAbi,
             functionName: 'stETH',
-            blockNumber: state.blockNumber,
-          }),
+            blockNumber: state.blockNumber
+          })
         ),
         maybe(() =>
           state.client.readContract({
             address: state.address,
             abi: wstEthAbi,
             functionName: 'stEthPerToken',
-            blockNumber: state.blockNumber,
-          }),
-        ),
+            blockNumber: state.blockNumber
+          })
+        )
       ])
       if (!underlyingRaw || rateRaw == null) {
         return null
@@ -53,18 +53,18 @@ export function wstEthAdapter(options: OnchainAdapterOptions): RecursivePriceAda
         method: 'stEthPerToken',
         underlying,
         rateRaw: rawState(rateRaw),
-        rateDecimals: 18,
+        rateDecimals: 18
       }
       const input = await context.require(
         childTarget(target, underlying, state.numericBlockNumber),
-        'wstETH underlying',
+        'wstETH underlying'
       )
       return {
         priceUsd: calculateWrapperPrice(rateRaw, 18, 10n ** 18n, 18, input.priceUsd),
         blockNumber: state.numericBlockNumber,
         inputs: [recursiveInput(input, conversion)],
-        metadata: conversion,
+        metadata: conversion
       }
-    },
+    }
   }
 }
