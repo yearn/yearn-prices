@@ -39,40 +39,52 @@ interface HistoricalPriceSource {
 
 ### 1. Create the source file
 
-Add `src/sources/<name>.ts`. Implement `SpotPriceSource` and/or `HistoricalPriceSource`.
+Add `src/sources/<name>/`. Every source is a folder: the implementation in its own file, and an `index.ts` that exports everything the source makes public. A source with several files (a client wrapper, a lookup table, more than one variant) keeps them together in that folder.
+
+A source is a class extending `SpotPriceSourceBase` or `HistoricalPriceSourceBase`, exported next to a `create<Name>Source()` factory. The base declares the contract, so a missing or mistyped member fails at the class rather than at the registry, and it carries `isUsablePrice`, the finite-positive-price-at-a-real-time rule every source has to apply to a provider payload.
 
 The source owns its config: API keys from `Env`, base URLs, rate limiters. Nothing leaks into the registry or routes.
 
 **Example: minimal spot source**
 
 ```ts
-import type { SpotPriceSource } from './types'
+import { SpotPriceSourceBase } from '../base'
+import type { SpotPriceResult } from '../types'
 
-export function create<YourName>SpotSource(): SpotPriceSource {
-  return {
-    name: 'my-source',
-    priority: 20,
-    supports: (chainId: number) => chainId === 1,  // only Ethereum
-    async getSpotPrice(chainId: number, token: string) {
-      const response = await fetch(`https://api.example.com/price/${token}`)
-      if (!response.ok) {
-        return null
-      }
-      const data = await response.json()
-      return {
-        price: data.price,
-        timestamp: Math.floor(Date.now() / 1000),
-        symbol: data.symbol ?? null,
-        confidence: null,
-      }
-    },
+export class MySpotSource extends SpotPriceSourceBase {
+  readonly name = 'my-source'
+  readonly priority = 20
+
+  supports(chainId: number): boolean {
+    return chainId === 1  // only Ethereum
   }
+
+  async getSpotPrice(chainId: number, token: string): Promise<SpotPriceResult | null> {
+    const response = await fetch(`https://api.example.com/price/${token}`)
+    if (!response.ok) {
+      return null
+    }
+    const data = await response.json()
+    if (!this.isUsablePrice(data.price, data.timestamp)) {
+      return null
+    }
+    return {
+      price: data.price,
+      timestamp: data.timestamp,
+      symbol: data.symbol ?? null,
+      confidence: null,
+    }
+  }
+}
+
+export function createMySpotSource(): MySpotSource {
+  return new MySpotSource()
 }
 ```
 
 ### 2. Register the source
 
-Export your source factory in `src/sources/index.ts`, and register it by adding one line in `src/registries/spot.ts` (`createSpotSources`) or `src/registries/historical.ts` (`createHistoricalSources`). Specify the priority explicitly.
+Export your source factory from `src/sources/<name>/index.ts` and from `src/sources/index.ts`, then register it by adding one line in `src/registries/spot.ts` (`createSpotSources`) or `src/registries/historical.ts` (`createHistoricalSources`). Specify the priority explicitly.
 
 ```ts
 // src/registries/spot.ts
@@ -92,13 +104,13 @@ If callers must be able to filter on your source with `?source=<name>`, or its r
 
 ### 3. Add tests
 
-Create `test/sources/<name>.test.ts` covering:
+Create `test/sources/<name>/<file>.test.ts` covering:
 - ✓ valid response mapping
 - ✓ `null` return when price is missing
 - ✓ transient-error behavior (thrown error gets rethrown if no fallback succeeds)
 - ✓ `supports()` boundaries (one or two supported chains, one unsupported)
 
-Use vitest + fetch-mock (see `test/sources/enso.test.ts` for the pattern).
+Use vitest + fetch-mock (see `test/sources/enso/spot.test.ts` for the pattern).
 
 ## Rules
 
@@ -107,4 +119,4 @@ Use vitest + fetch-mock (see `test/sources/enso.test.ts` for the pattern).
 - **Do not include `source` in your return object.** The registry stamps it.
 - Return `null` or throw `ApiError('NOT_FOUND', …)` for "I have no price for this token" — not a 404 from a downstream service.
 
-Three files — plus one line in `SOURCE_PRIORITY` if callers need to filter on your source by name.
+One folder plus one registry line — plus one line in `SOURCE_PRIORITY` if callers need to filter on your source by name.

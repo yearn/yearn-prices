@@ -1,4 +1,4 @@
-export { createDefiLlamaHistoricalSource } from './defillama'
+export { createDefiLlamaAliasHistoricalSource, createDefiLlamaHistoricalSource } from './defillama'
 export { createEnsoSpotSource } from './enso'
 export { createOnchainHistoricalSource, createOnchainSpotSource } from './onchain'
 export type {
