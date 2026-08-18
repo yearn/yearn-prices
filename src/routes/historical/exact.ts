@@ -2,7 +2,7 @@ import type { Pool } from '@neondatabase/serverless'
 import { CACHE_CONTROL_PARTIAL, CACHE_CONTROL_TODAY, cacheControlForHistorical } from '../../cache'
 import { getExactHistoricalPrice } from '../../db'
 import { ApiError, jsonResponse } from '../../http'
-import { getHistoricalSourceRegistry, type HistoricalSourceRegistry } from '../../registries'
+import { type HistoricalSourceRegistry, historicalSourceRegistry } from '../../registries'
 import type { Env } from '../../types'
 import {
   chainNameToId,
@@ -18,7 +18,7 @@ export async function handleHistorical(
   pool: Pool,
   timestampSegment: string,
   tokenKeySegment: string,
-  registry: HistoricalSourceRegistry = getHistoricalSourceRegistry(env)
+  registry: HistoricalSourceRegistry = historicalSourceRegistry(env)
 ): Promise<Response> {
   const timestamp = parseTimestampSegment(timestampSegment)
   const { chain, token, tokenKey } = parseTokenKey(tokenKeySegment)

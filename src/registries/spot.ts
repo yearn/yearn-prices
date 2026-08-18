@@ -1,15 +1,37 @@
+import { getChainClient } from '../clients/rpc'
 import { ApiError } from '../http/errors'
 import { createEnsoSpotSource } from '../sources'
+import { createOnchainSpotSource } from '../sources/onchain'
 import type { SpotPrice, SpotPriceSource } from '../sources/types'
 import type { Env } from '../types'
 
+import { createMarketPriceResolver } from './market-price'
 import { SourceRegistry } from './source-registry'
+
+/**
+ * Prices an on-chain adapter's child tokens with the market sources only. It
+ * never sees the on-chain source, so recursion cannot loop back into itself.
+ */
+function marketPriceResolver(marketSources: SpotPriceSource[]) {
+  const registry = new SpotSourceRegistry(marketSources)
+  return createMarketPriceResolver(marketSources, (chainId, token) => registry.resolve(chainId, token))
+}
 
 export function createSpotSources(env: Env): SpotPriceSource[] {
   if (!env.ENSO_API_KEY) {
     throw new ApiError('INTERNAL_ERROR', 'ENSO_API_KEY is not configured')
   }
-  return [createEnsoSpotSource(env.ENSO_API_KEY)]
+
+  const marketSources = [createEnsoSpotSource(env.ENSO_API_KEY)]
+
+  return [
+    ...marketSources,
+    createOnchainSpotSource({
+      marketPrice: marketPriceResolver(marketSources),
+      env,
+      clientForChain: (chainId) => getChainClient(chainId, env)
+    })
+  ]
 }
 
 export class SpotSourceRegistry extends SourceRegistry<SpotPriceSource> {
@@ -25,20 +47,4 @@ export class SpotSourceRegistry extends SourceRegistry<SpotPriceSource> {
   override resolve(chainId: number, token: string): Promise<SpotPrice> {
     return super.resolve(chainId, token)
   }
-}
-
-let spotRegistryInstance: SpotSourceRegistry | null = null
-
-export function getSpotSourceRegistry(env?: Env): SpotSourceRegistry {
-  if (!spotRegistryInstance) {
-    if (!env) {
-      throw new Error('Env is required to initialize SpotSourceRegistry')
-    }
-    spotRegistryInstance = new SpotSourceRegistry(createSpotSources(env))
-  }
-  return spotRegistryInstance
-}
-
-export function resetSpotSourceRegistry(): void {
-  spotRegistryInstance = null
 }

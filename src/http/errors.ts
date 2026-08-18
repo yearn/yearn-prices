@@ -1,13 +1,20 @@
 import type { ErrorBody } from '../types'
 
-export type ErrorCode = 'INVALID_INPUT' | 'UNAUTHORIZED' | 'NOT_FOUND' | 'RATE_LIMITED' | 'INTERNAL_ERROR'
+export type ErrorCode =
+  | 'INVALID_INPUT'
+  | 'UNAUTHORIZED'
+  | 'NOT_FOUND'
+  | 'RATE_LIMITED'
+  | 'INTERNAL_ERROR'
+  | 'UNAVAILABLE'
 
 const ERROR_STATUS: Record<ErrorCode, number> = {
   INVALID_INPUT: 400,
   UNAUTHORIZED: 401,
   NOT_FOUND: 404,
   RATE_LIMITED: 429,
-  INTERNAL_ERROR: 500
+  INTERNAL_ERROR: 500,
+  UNAVAILABLE: 503
 }
 
 export class ApiError extends Error {

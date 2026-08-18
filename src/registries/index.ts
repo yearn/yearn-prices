@@ -1,18 +1,20 @@
-import { getHistoricalSourceRegistry, HistoricalSourceRegistry, resetHistoricalSourceRegistry } from './historical'
-import { getSpotSourceRegistry, resetSpotSourceRegistry, SpotSourceRegistry } from './spot'
+import type { Env } from '../types'
+import { createHistoricalSources, HistoricalSourceRegistry } from './historical'
+import { createSpotSources, SpotSourceRegistry } from './spot'
 
-export function resetSourceRegistries(): void {
-  resetSpotSourceRegistry()
-  resetHistoricalSourceRegistry()
+/**
+ * One registry per request. The on-chain source hangs a single engine, block
+ * cache and resolution budget off it, so every token in a request shares them
+ * and nothing leaks into the next request.
+ */
+export function spotSourceRegistry(env: Env): SpotSourceRegistry {
+  return new SpotSourceRegistry(createSpotSources(env))
+}
+
+export function historicalSourceRegistry(env?: Env): HistoricalSourceRegistry {
+  return new HistoricalSourceRegistry(createHistoricalSources(env))
 }
 
 export type { NamedSource, PriceFields, StampedPrice } from './source-registry'
 export { SourceRegistry } from './source-registry'
-export {
-  getHistoricalSourceRegistry,
-  getSpotSourceRegistry,
-  HistoricalSourceRegistry,
-  resetHistoricalSourceRegistry,
-  resetSpotSourceRegistry,
-  SpotSourceRegistry
-}
+export { createHistoricalSources, createSpotSources, HistoricalSourceRegistry, SpotSourceRegistry }
