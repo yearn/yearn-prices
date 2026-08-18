@@ -38,6 +38,11 @@ jobs:
           RPC_URL_42161: op://webops-prod/yearn-price/RPC_URL_42161
           RPC_URL_80094: op://webops-prod/yearn-price/RPC_URL_80094
           RPC_URL_747474: op://webops-prod/yearn-price/RPC_URL_747474
+          OTEL_EXPORTER_OTLP_ENDPOINT: op://webops-prod/yearn-price/OTEL_EXPORTER_OTLP_ENDPOINT
+          OTEL_EXPORTER_OTLP_HEADERS: op://webops-prod/yearn-price/OTEL_EXPORTER_OTLP_HEADERS
+          OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: op://webops-prod/yearn-price/OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+          OTEL_EXPORTER_OTLP_LOGS_HEADERS: op://webops-prod/yearn-price/OTEL_EXPORTER_OTLP_LOGS_HEADERS
+          OTEL_SERVICE_NAME: op://webops-prod/yearn-price/OTEL_SERVICE_NAME
       - name: Upload secrets to Cloudflare
         run: |
           jq -n '{
@@ -58,7 +63,12 @@ jobs:
             RPC_URL_8453: env.RPC_URL_8453,
             RPC_URL_42161: env.RPC_URL_42161,
             RPC_URL_80094: env.RPC_URL_80094,
-            RPC_URL_747474: env.RPC_URL_747474
+            RPC_URL_747474: env.RPC_URL_747474,
+            OTEL_EXPORTER_OTLP_ENDPOINT: env.OTEL_EXPORTER_OTLP_ENDPOINT,
+            OTEL_EXPORTER_OTLP_HEADERS: env.OTEL_EXPORTER_OTLP_HEADERS,
+            OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT,
+            OTEL_EXPORTER_OTLP_LOGS_HEADERS: env.OTEL_EXPORTER_OTLP_LOGS_HEADERS,
+            OTEL_SERVICE_NAME: env.OTEL_SERVICE_NAME
           }' | bunx wrangler secret bulk
       - name: Run migrations
         run: bun run migrate
