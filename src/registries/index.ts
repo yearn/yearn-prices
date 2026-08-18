@@ -1,6 +1,6 @@
+import type { Env } from '../types'
 import { createHistoricalSources, HistoricalSourceRegistry } from './historical'
 import { createSpotSources, SpotSourceRegistry } from './spot'
-import type { Env } from '../types'
 
 /**
  * One registry per request. The on-chain source hangs a single engine, block
@@ -15,6 +15,6 @@ export function historicalSourceRegistry(env?: Env): HistoricalSourceRegistry {
   return new HistoricalSourceRegistry(createHistoricalSources(env))
 }
 
-export { createHistoricalSources, createSpotSources, HistoricalSourceRegistry, SpotSourceRegistry }
-export { SourceRegistry } from './source-registry'
 export type { NamedSource, PriceFields, StampedPrice } from './source-registry'
+export { SourceRegistry } from './source-registry'
+export { createHistoricalSources, createSpotSources, HistoricalSourceRegistry, SpotSourceRegistry }

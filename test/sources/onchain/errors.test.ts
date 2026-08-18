@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { RetryablePricingError, isRetryablePricingError } from '../../../src/sources/onchain/errors'
+import { isRetryablePricingError, RetryablePricingError } from '../../../src/sources/onchain/errors'
 
 function named(name: string, message: string): Error {
   return Object.assign(new Error(message), { name })

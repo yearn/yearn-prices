@@ -4,11 +4,11 @@ import {
   contractContext,
   erc20Abi,
   normalizedAddress,
+  type OnchainAdapterOptions,
   rawState,
   recursiveInput,
   requireChildren,
-  tokenDecimals,
-  type OnchainAdapterOptions
+  tokenDecimals
 } from '../context'
 import { calculatePoolNavPrice } from '../math'
 import type { RecursivePriceAdapter } from '../types'

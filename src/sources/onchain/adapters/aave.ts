@@ -5,8 +5,8 @@ import {
   contractContext,
   maybe,
   normalizedAddress,
-  recursiveInput,
-  type OnchainAdapterOptions
+  type OnchainAdapterOptions,
+  recursiveInput
 } from '../context'
 import type { RecursivePriceAdapter } from '../types'
 

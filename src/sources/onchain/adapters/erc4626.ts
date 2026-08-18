@@ -6,11 +6,11 @@ import {
   erc20Abi,
   maybe,
   normalizedAddress,
+  type OnchainAdapterOptions,
   rawState,
   readShareConversion,
   recursiveInput,
-  tokenDecimals,
-  type OnchainAdapterOptions
+  tokenDecimals
 } from '../context'
 import { calculateWrapperPrice } from '../math'
 import type { RecursivePriceAdapter } from '../types'

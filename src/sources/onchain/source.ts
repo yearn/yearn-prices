@@ -3,8 +3,8 @@ import type { HistoricalPriceResult, SpotPriceResult } from '../types'
 import { DEFAULT_PRIORITY, ONCHAIN_SOURCE_NAME, type OnchainSourceOptions } from './options'
 import { OnchainPricer } from './pricer'
 
-export { ONCHAIN_SOURCE_NAME } from './options'
 export type { OnchainSourceOptions } from './options'
+export { ONCHAIN_SOURCE_NAME } from './options'
 
 export class OnchainSpotSource extends SpotPriceSourceBase {
   readonly name = ONCHAIN_SOURCE_NAME

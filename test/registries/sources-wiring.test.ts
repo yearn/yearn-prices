@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import * as marketPriceModule from '../../src/registries/market-price'
 import { createHistoricalSources } from '../../src/registries/historical'
+import * as marketPriceModule from '../../src/registries/market-price'
 import { createSpotSources } from '../../src/registries/spot'
 import type { Env } from '../../src/types'
 
