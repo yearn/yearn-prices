@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { DefiLlamaClient } from '../../src/clients/defillama'
-import { createMarketPriceResolver } from '../../src/registries/market-price'
 import { HistoricalSourceRegistry } from '../../src/registries/historical'
+import { createMarketPriceResolver } from '../../src/registries/market-price'
 import { createDefiLlamaAliasHistoricalSource } from '../../src/sources/defillama/alias'
 import { createOnchainHistoricalSource } from '../../src/sources/onchain'
 import { fakeClient } from '../sources/onchain/helpers'

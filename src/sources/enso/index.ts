@@ -1,1 +1,1 @@
-export { EnsoSpotSource, createEnsoSpotSource } from './spot'
+export { createEnsoSpotSource, EnsoSpotSource } from './spot'

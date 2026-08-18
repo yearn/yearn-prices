@@ -1,6 +1,5 @@
 import { getChainClient } from '../clients/rpc'
 import { ApiError } from '../http/errors'
-import { getChainClient } from '../clients/rpc'
 import { createEnsoSpotSource } from '../sources'
 import { createOnchainSpotSource } from '../sources/onchain'
 import type { SpotPrice, SpotPriceSource } from '../sources/types'
