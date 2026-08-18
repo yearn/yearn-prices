@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../../../src/http/errors'
 import { RetryablePricingError } from '../../../src/sources/onchain/errors'
 import {
@@ -6,7 +6,7 @@ import {
   createOnchainSpotSource,
 } from '../../../src/sources/onchain/source'
 import type { MarketPriceResolver } from '../../../src/sources/onchain/types'
-import { fakeClient } from './helpers'
+import { fakeClient, marketFor } from './helpers'
 
 const TOKEN = '0x1111111111111111111111111111111111111111'
 
@@ -123,6 +123,70 @@ describe('createOnchainSpotSource', () => {
       name: 'ApiError',
       code: 'INTERNAL_ERROR',
     })
+  })
+})
+
+describe('one source, one request', () => {
+  const VAULT_A = '0x3333333333333333333333333333333333333333'
+  const VAULT_B = '0x4444444444444444444444444444444444444444'
+  const UNDERLYING = '0x2222222222222222222222222222222222222222'
+
+  function sharedUnderlyingReads() {
+    return {
+      [VAULT_A]: { asset: UNDERLYING, decimals: 18, convertToAssets: 10n ** 18n },
+      [VAULT_B]: { asset: UNDERLYING, decimals: 18, convertToAssets: 10n ** 18n },
+      [UNDERLYING]: { decimals: 18 },
+    }
+  }
+
+  it('prices a shared underlying once for two parents in the same request', async () => {
+    const marketPrice = vi.fn(marketFor({ [UNDERLYING]: 2 }))
+    const source = createOnchainSpotSource({
+      marketPrice,
+      clientForChain: () => fakeClient(sharedUnderlyingReads()),
+    })
+
+    const [a, b] = await Promise.all([
+      source.getSpotPrice(1, VAULT_A),
+      source.getSpotPrice(1, VAULT_B),
+    ])
+
+    expect(a?.price).toBe(2)
+    expect(b?.price).toBe(2)
+    expect(
+      marketPrice.mock.calls.filter(([target]) => target.token.toLowerCase() === UNDERLYING),
+    ).toHaveLength(1)
+  })
+
+  it('spends one shared budget across every token in the request', async () => {
+    const reads = sharedUnderlyingReads()
+    let contractReads = 0
+    const source = createOnchainSpotSource({
+      marketPrice: noMarket,
+      clientForChain: () => {
+        const client = fakeClient(reads)
+        const readContract = client.readContract.bind(client)
+        return {
+          ...client,
+          readContract: (args: Parameters<typeof readContract>[0]) => {
+            contractReads += 1
+            return readContract(args)
+          },
+        } as unknown as ReturnType<typeof fakeClient>
+      },
+      resolutionBudget: 4,
+    })
+
+    const settled = await Promise.allSettled(
+      Array.from({ length: 50 }, (_, index) =>
+        source.getSpotPrice(1, `0x${(index + 16).toString(16).padStart(40, '0')}`),
+      ),
+    )
+
+    expect(settled.filter((outcome) => outcome.status === 'rejected').length).toBeGreaterThan(0)
+    // Four resolutions of budget, thirteen adapters, a handful of reads each:
+    // without the shared budget this is fifty independent walks.
+    expect(contractReads).toBeLessThan(200)
   })
 })
 

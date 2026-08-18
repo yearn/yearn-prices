@@ -1,5 +1,5 @@
 import type { PublicClient } from 'viem'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { estimateBlockByTimestamp, getChainClient } from '../../src/clients/rpc'
 
 const GENESIS = 1_600_000_000
@@ -22,7 +22,28 @@ function fakeChain(): PublicClient {
   } as unknown as PublicClient
 }
 
+// The binary search sleeps between steps; drive the fake clock until it settles.
+async function drain<T>(work: Promise<T>): Promise<T> {
+  let done = false
+  void work.then(
+    () => {
+      done = true
+    },
+    () => {
+      done = true
+    },
+  )
+  while (!done) {
+    await vi.advanceTimersByTimeAsync(10)
+  }
+  return work
+}
+
 describe('estimateBlockByTimestamp', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('returns the block minted at the exact timestamp', async () => {
     const block = await estimateBlockByTimestamp(fakeChain(), 910_001, timestampOf(500n))
 
@@ -110,27 +131,49 @@ describe('estimateBlockByTimestamp', () => {
   })
 
   it('evicts the oldest block-cache entry once the cap is passed', async () => {
+    // Fake timers: the search paces itself with a real 10ms sleep per step.
+    vi.useFakeTimers()
+    // Short chain, wide blocks: 600 settled timestamps cost a 3-read search each.
+    const SPARSE_LATEST = 8n
+    const SPARSE_BLOCK_TIME = 10_000
     let reads = 0
     const client = {
       async getBlock(args?: { blockNumber?: bigint }) {
         reads += 1
-        const number = args?.blockNumber ?? LATEST
+        const number = args?.blockNumber ?? SPARSE_LATEST
+        return { number, timestamp: BigInt(GENESIS + Number(number) * SPARSE_BLOCK_TIME) }
+      },
+    } as unknown as PublicClient
+    const oldest = GENESIS
+    const fill = (async () => {
+      for (let index = 0; index < 600; index += 1) {
+        await estimateBlockByTimestamp(client, 910_300, oldest + index)
+      }
+    })()
+    await drain(fill)
+
+    const readsBefore = reads
+    await estimateBlockByTimestamp(client, 910_300, oldest + 599)
+    expect(reads).toBe(readsBefore)
+
+    await drain(estimateBlockByTimestamp(client, 910_300, oldest))
+    expect(reads).toBeGreaterThan(readsBefore)
+  })
+
+  it('never caches a head-block answer, so a later request sees the advanced chain', async () => {
+    let head = LATEST
+    const client = {
+      async getBlock(args?: { blockNumber?: bigint }) {
+        const number = args?.blockNumber ?? head
         return { number, timestamp: BigInt(timestampOf(number)) }
       },
     } as unknown as PublicClient
-    // Future timestamps short-circuit to the head block, so each insert is one
-    // read and the cap is reached without running 600 binary searches.
-    const first = timestampOf(LATEST) + 1
-    for (let index = 0; index < 600; index += 1) {
-      await estimateBlockByTimestamp(client, 910_300, first + index)
-    }
+    // End of the current day: ahead of the head block before and after it advances.
+    const today = timestampOf(LATEST) + 86_400
 
-    const readsBefore = reads
-    await estimateBlockByTimestamp(client, 910_300, first + 599)
-    expect(reads).toBe(readsBefore)
-
-    await estimateBlockByTimestamp(client, 910_300, first)
-    expect(reads).toBe(readsBefore + 1)
+    expect(await estimateBlockByTimestamp(client, 910_400, today)).toBe(LATEST)
+    head = LATEST + 10n
+    expect(await estimateBlockByTimestamp(client, 910_400, today)).toBe(LATEST + 10n)
   })
 })
 

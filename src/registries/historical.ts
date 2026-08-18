@@ -56,16 +56,3 @@ export class HistoricalSourceRegistry extends SourceRegistry<
     return super.resolve(chainId, token, timestamp)
   }
 }
-
-let historicalRegistryInstance: HistoricalSourceRegistry | null = null
-
-export function getHistoricalSourceRegistry(env?: Env): HistoricalSourceRegistry {
-  if (!historicalRegistryInstance) {
-    historicalRegistryInstance = new HistoricalSourceRegistry(createHistoricalSources(env))
-  }
-  return historicalRegistryInstance
-}
-
-export function resetHistoricalSourceRegistry(): void {
-  historicalRegistryInstance = null
-}

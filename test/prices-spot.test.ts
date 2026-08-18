@@ -39,13 +39,11 @@ function spotRequest(coins: unknown) {
   return new Request(`https://svc/api/prices/spot?coins=${encodeURIComponent(JSON.stringify(coins))}`)
 }
 
-import { resetSpotSourceRegistry } from '../src/registries'
 
 describe('handleSpot', () => {
   let fetchMock: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
-    resetSpotSourceRegistry()
     fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
   })

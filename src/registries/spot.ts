@@ -50,19 +50,3 @@ export class SpotSourceRegistry extends SourceRegistry<SpotPriceSource> {
     return super.resolve(chainId, token)
   }
 }
-
-let spotRegistryInstance: SpotSourceRegistry | null = null
-
-export function getSpotSourceRegistry(env?: Env): SpotSourceRegistry {
-  if (!spotRegistryInstance) {
-    if (!env) {
-      throw new Error('Env is required to initialize SpotSourceRegistry')
-    }
-    spotRegistryInstance = new SpotSourceRegistry(createSpotSources(env))
-  }
-  return spotRegistryInstance
-}
-
-export function resetSpotSourceRegistry(): void {
-  spotRegistryInstance = null
-}

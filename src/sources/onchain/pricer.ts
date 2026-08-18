@@ -3,12 +3,11 @@ import { ApiError } from '../../http/errors'
 import { chainIdToName } from '../../utils/chains'
 import type { SpotPriceResult } from '../types'
 import { createOnchainPriceAdapters } from './adapters'
-import type { ClientForChain, OnchainAdapterOptions } from './context'
+import type { ClientForChain } from './context'
 import { RecursivePriceEngine } from './engine'
 import { RecursiveDependencyError } from './errors'
 import { DEFAULT_MAX_DEPTH, type OnchainSourceOptions } from './options'
 import type {
-  MarketPriceResolver,
   PriceResolutionFailure,
   RecursivePriceResult,
   RecursivePriceTarget,
@@ -34,32 +33,38 @@ function transientCause(failure: PriceResolutionFailure): unknown {
   return undefined
 }
 
+// Shared across requests: which adapter last priced a token. Prices are never
+// shared - each pricer owns one engine and its resolution cache.
+const adapterHints = new Map<string, string>()
+
 /**
  * The adapter set and chain clients behind both on-chain sources. Spot and
  * historical differ only in the target they ask for, so they share this.
+ *
+ * One pricer serves one request: its engine, block-context cache and
+ * resolution budget are shared by every token in that request and die with it.
  */
 export class OnchainPricer {
   private readonly clientForChain: ClientForChain
-  private readonly adapterOptions: OnchainAdapterOptions
-  private readonly marketPrice: MarketPriceResolver
-  private readonly maxDepth: number
-  private readonly resolutionBudget: number | undefined
-  // Shared across requests: which adapter last priced a token. Prices are not
-  // shared - a fresh engine per request keeps its own resolution cache.
-  private readonly adapterHints = new Map<string, string>()
+  private readonly engine: RecursivePriceEngine
 
   constructor(options: OnchainSourceOptions) {
     this.clientForChain =
       options.clientForChain ?? ((chainId) => getChainClient(chainId, options.env))
-    this.marketPrice = options.marketPrice
-    this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH
-    this.resolutionBudget = options.resolutionBudget
-    this.adapterOptions = {
+    const adapters = createOnchainPriceAdapters({
       clientForChain: this.clientForChain,
       blockForTarget: options.blockForTarget,
       blockTimestampForTarget: options.blockTimestampForTarget,
       pendleTwapSeconds: options.pendleTwapSeconds,
-    }
+      blockContextCache: new Map(),
+    })
+    this.engine = new RecursivePriceEngine(
+      options.marketPrice,
+      adapters,
+      options.maxDepth ?? DEFAULT_MAX_DEPTH,
+      adapterHints,
+      options.resolutionBudget,
+    )
   }
 
   supports(chainId: number): boolean {
@@ -67,18 +72,7 @@ export class OnchainPricer {
   }
 
   async price(target: RecursivePriceTarget): Promise<SpotPriceResult | null> {
-    const adapters = createOnchainPriceAdapters({
-      ...this.adapterOptions,
-      blockContextCache: new Map(),
-    })
-    const engine = new RecursivePriceEngine(
-      this.marketPrice,
-      adapters,
-      this.maxDepth,
-      this.adapterHints,
-      this.resolutionBudget,
-    )
-    return this.toResult(await engine.resolve(target))
+    return this.toResult(await this.engine.resolve(target))
   }
 
   private toResult(result: RecursivePriceResult): SpotPriceResult | null {

@@ -170,7 +170,6 @@ export async function estimateBlockByTimestamp(
   const latestTimestamp = Number(latestBlock.timestamp)
   rememberSample(chainId, latestBlock.number, latestTimestamp)
   if (latestTimestamp <= timestamp) {
-    setCapped(blockCache, cacheKey, latestBlock.number, MAX_BLOCK_CACHE)
     return latestBlock.number
   }
 
