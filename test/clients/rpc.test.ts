@@ -18,7 +18,7 @@ function fakeChain(): PublicClient {
     async getBlock(args?: { blockNumber?: bigint }) {
       const number = args?.blockNumber ?? LATEST
       return { number, timestamp: BigInt(timestampOf(number)) }
-    },
+    }
   } as unknown as PublicClient
 }
 
@@ -31,7 +31,7 @@ async function drain<T>(work: Promise<T>): Promise<T> {
     },
     () => {
       done = true
-    },
+    }
   )
   while (!done) {
     await vi.advanceTimersByTimeAsync(10)
@@ -81,7 +81,7 @@ describe('estimateBlockByTimestamp', () => {
         reads += 1
         const number = args?.blockNumber ?? LATEST
         return { number, timestamp: BigInt(timestampOf(number)) }
-      },
+      }
     } as unknown as PublicClient
 
     const first = await estimateBlockByTimestamp(client, 910_006, timestampOf(300n) + 1)
@@ -109,7 +109,7 @@ describe('estimateBlockByTimestamp', () => {
         async getBlock(args?: { blockNumber?: bigint }) {
           const number = args?.blockNumber ?? LATEST
           return { number, timestamp: BigInt(timestamps[Number(number)]) }
-        },
+        }
       }) as unknown as PublicClient
     const scan = (timestamp: number): bigint => {
       let best = 0n
@@ -122,9 +122,7 @@ describe('estimateBlockByTimestamp', () => {
     const targets = [timestamps[137] + 1, timestamps[42], timestamps[900] - 2, timestamps[7] + 5]
     const warmClient = irregularChain()
     for (const target of targets) {
-      expect(await estimateBlockByTimestamp(irregularChain(), 910_100 + target, target)).toBe(
-        scan(target),
-      )
+      expect(await estimateBlockByTimestamp(irregularChain(), 910_100 + target, target)).toBe(scan(target))
       // Same chain id throughout: every later lookup runs off warmed samples.
       expect(await estimateBlockByTimestamp(warmClient, 910_200, target)).toBe(scan(target))
     }
@@ -142,7 +140,7 @@ describe('estimateBlockByTimestamp', () => {
         reads += 1
         const number = args?.blockNumber ?? SPARSE_LATEST
         return { number, timestamp: BigInt(GENESIS + Number(number) * SPARSE_BLOCK_TIME) }
-      },
+      }
     } as unknown as PublicClient
     const oldest = GENESIS
     const fill = (async () => {
@@ -166,7 +164,7 @@ describe('estimateBlockByTimestamp', () => {
       async getBlock(args?: { blockNumber?: bigint }) {
         const number = args?.blockNumber ?? head
         return { number, timestamp: BigInt(timestampOf(number)) }
-      },
+      }
     } as unknown as PublicClient
     // End of the current day: ahead of the head block before and after it advances.
     const today = timestampOf(LATEST) + 86_400

@@ -18,7 +18,7 @@ export async function handleHistorical(
   pool: Pool,
   timestampSegment: string,
   tokenKeySegment: string,
-  registry: HistoricalSourceRegistry = historicalSourceRegistry(env),
+  registry: HistoricalSourceRegistry = historicalSourceRegistry(env)
 ): Promise<Response> {
   const timestamp = parseTimestampSegment(timestampSegment)
   const { chain, token, tokenKey } = parseTokenKey(tokenKeySegment)

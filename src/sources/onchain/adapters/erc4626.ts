@@ -10,7 +10,7 @@ import {
   readShareConversion,
   recursiveInput,
   tokenDecimals,
-  type OnchainAdapterOptions,
+  type OnchainAdapterOptions
 } from '../context'
 import { calculateWrapperPrice } from '../math'
 import type { RecursivePriceAdapter } from '../types'
@@ -26,17 +26,17 @@ export function erc4626Adapter(options: OnchainAdapterOptions): RecursivePriceAd
             address: state.address,
             abi: erc4626Abi,
             functionName: 'asset',
-            blockNumber: state.blockNumber,
-          }),
+            blockNumber: state.blockNumber
+          })
         ),
         maybe(() =>
           state.client.readContract({
             address: state.address,
             abi: erc20Abi,
             functionName: 'decimals',
-            blockNumber: state.blockNumber,
-          }),
-        ),
+            blockNumber: state.blockNumber
+          })
+        )
       ])
       if (!underlyingRaw || shareDecimalsRaw == null) {
         return null
@@ -48,12 +48,7 @@ export function erc4626Adapter(options: OnchainAdapterOptions): RecursivePriceAd
 
       const shareDecimals = Number(shareDecimalsRaw)
       const oneShareRaw = 10n ** BigInt(shareDecimals)
-      const conversionRaw = await readShareConversion(
-        state.client,
-        state.address,
-        state.blockNumber,
-        oneShareRaw,
-      )
+      const conversionRaw = await readShareConversion(state.client, state.address, state.blockNumber, oneShareRaw)
       if (!conversionRaw) {
         return null
       }
@@ -67,11 +62,11 @@ export function erc4626Adapter(options: OnchainAdapterOptions): RecursivePriceAd
         shareDecimals,
         underlyingDecimals,
         oneShareRaw: rawState(oneShareRaw),
-        convertedAssetsRaw: rawState(convertedAssetsRaw),
+        convertedAssetsRaw: rawState(convertedAssetsRaw)
       }
       const input = await context.require(
         childTarget(target, underlying, state.numericBlockNumber),
-        'ERC-4626 underlying',
+        'ERC-4626 underlying'
       )
       return {
         priceUsd: calculateWrapperPrice(
@@ -79,12 +74,12 @@ export function erc4626Adapter(options: OnchainAdapterOptions): RecursivePriceAd
           underlyingDecimals,
           oneShareRaw,
           shareDecimals,
-          input.priceUsd,
+          input.priceUsd
         ),
         blockNumber: state.numericBlockNumber,
         inputs: [recursiveInput(input, conversion)],
-        metadata: conversion,
+        metadata: conversion
       }
-    },
+    }
   }
 }

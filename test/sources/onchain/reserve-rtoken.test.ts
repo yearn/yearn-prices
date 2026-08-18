@@ -17,18 +17,18 @@ function reserveReads(overrides: Record<string, unknown> = {}) {
       totalSupply: 100n * 10n ** 18n,
       basketsNeeded: 100n * 10n ** 18n,
       redemptionAvailable: 1000n * 10n ** 18n,
-      ...overrides,
+      ...overrides
     },
     [MAIN]: { basketHandler: BASKET_HANDLER, frozen: false },
     [BASKET_HANDLER]: {
       fullyCollateralized: true,
       quote: [
         [USDC, DAI],
-        [500_000n, 5n * 10n ** 17n],
-      ],
+        [500_000n, 5n * 10n ** 17n]
+      ]
     },
     [USDC]: { decimals: 6 },
-    [DAI]: { decimals: 18 },
+    [DAI]: { decimals: 18 }
   }
 }
 
@@ -45,11 +45,7 @@ describe('reserveRTokenAdapter', () => {
     const reads = reserveReads()
     reads[MAIN] = { basketHandler: BASKET_HANDLER, frozen: true }
 
-    const result = await priceWith(
-      reserveRTokenAdapter(adapterOptions(reads)),
-      { [USDC]: 1, [DAI]: 1 },
-      RTOKEN,
-    )
+    const result = await priceWith(reserveRTokenAdapter(adapterOptions(reads)), { [USDC]: 1, [DAI]: 1 }, RTOKEN)
 
     expect(result.path).toBeNull()
   })
@@ -58,11 +54,7 @@ describe('reserveRTokenAdapter', () => {
     const reads = reserveReads()
     reads[BASKET_HANDLER] = { ...reads[BASKET_HANDLER], fullyCollateralized: false }
 
-    const result = await priceWith(
-      reserveRTokenAdapter(adapterOptions(reads)),
-      { [USDC]: 1, [DAI]: 1 },
-      RTOKEN,
-    )
+    const result = await priceWith(reserveRTokenAdapter(adapterOptions(reads)), { [USDC]: 1, [DAI]: 1 }, RTOKEN)
 
     expect(result.path).toBeNull()
   })

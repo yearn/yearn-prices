@@ -17,7 +17,7 @@ export function calculateWrapperPrice(
   numeratorDecimals: number,
   denominatorRaw: bigint,
   denominatorDecimals: number,
-  assetPrice: number,
+  assetPrice: number
 ): number {
   const denominator = scaledRaw(denominatorRaw, denominatorDecimals)
   if (denominator <= 0) {
@@ -34,7 +34,7 @@ export function calculateCompoundTokenPrice(
   exchangeRateRaw: bigint,
   tokenDecimals: number,
   underlyingDecimals: number,
-  underlyingPrice: number,
+  underlyingPrice: number
 ): number {
   const exponent = 18 + underlyingDecimals - tokenDecimals
   if (exponent < 0 || exponent > 255) {
@@ -59,12 +59,9 @@ export function calculatePoolNavPrice(
   assets: PoolNavInput[],
   denominatorSupplyRaw: bigint,
   denominatorDecimals: number,
-  excludedPoolBalanceRaw = 0n,
+  excludedPoolBalanceRaw = 0n
 ): number {
-  const circulatingSupply = scaledRaw(
-    denominatorSupplyRaw - excludedPoolBalanceRaw,
-    denominatorDecimals,
-  )
+  const circulatingSupply = scaledRaw(denominatorSupplyRaw - excludedPoolBalanceRaw, denominatorDecimals)
   if (circulatingSupply <= 0) {
     throw new InvalidPricingError('Pool NAV denominator must be positive')
   }

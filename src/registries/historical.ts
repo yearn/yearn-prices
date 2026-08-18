@@ -20,7 +20,7 @@ function marketPriceResolver(marketSources: HistoricalPriceSource[]) {
   return createMarketPriceResolver(
     marketSources,
     (chainId, token, timestamp) => registry.resolve(chainId, token, timestamp as number),
-    { requireTimestamp: true },
+    { requireTimestamp: true }
   )
 }
 
@@ -36,8 +36,8 @@ export function createHistoricalSources(env?: Env): HistoricalPriceSource[] {
     createOnchainHistoricalSource({
       marketPrice: marketPriceResolver(marketSources),
       env,
-      clientForChain: (chainId) => getChainClient(chainId, env),
-    }),
+      clientForChain: (chainId) => getChainClient(chainId, env)
+    })
   ]
 }
 

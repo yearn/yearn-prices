@@ -19,7 +19,7 @@ export class InvalidPricingError extends Error {
 export class RecursiveDependencyError extends Error {
   constructor(
     message: string,
-    readonly failure: PriceResolutionFailure,
+    readonly failure: PriceResolutionFailure
   ) {
     super(message)
     this.name = 'RecursiveDependencyError'

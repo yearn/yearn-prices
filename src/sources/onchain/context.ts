@@ -3,31 +3,22 @@ import { estimateBlockByTimestamp } from '../../clients/rpc'
 import { normalizeTokenAddress } from '../../utils/chains'
 import { erc4626Abi } from './abis'
 import { InvalidPricingError, RetryablePricingError, isRetryablePricingError } from './errors'
-import type {
-  RecursivePriceContext,
-  RecursivePriceInput,
-  RecursivePriceTarget,
-  ResolvedPricePath,
-} from './types'
+import type { RecursivePriceContext, RecursivePriceInput, RecursivePriceTarget, ResolvedPricePath } from './types'
 
 export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
 
 export const erc20Abi = parseAbi([
   'function balanceOf(address account) view returns (uint256)',
   'function decimals() view returns (uint8)',
-  'function totalSupply() view returns (uint256)',
+  'function totalSupply() view returns (uint256)'
 ])
 
 export type ClientForChain = (chainId: number) => PublicClient | null
-export type BlockForTarget = (
-  client: PublicClient,
-  chainId: number,
-  target: RecursivePriceTarget,
-) => Promise<bigint>
+export type BlockForTarget = (client: PublicClient, chainId: number, target: RecursivePriceTarget) => Promise<bigint>
 export type BlockTimestampForTarget = (
   client: PublicClient,
   blockNumber: bigint,
-  target: RecursivePriceTarget,
+  target: RecursivePriceTarget
 ) => Promise<number>
 
 export interface OnchainAdapterOptions {
@@ -75,7 +66,7 @@ export async function readShareConversion(
   client: PublicClient,
   address: Address,
   blockNumber: bigint,
-  oneShareRaw: bigint,
+  oneShareRaw: bigint
 ): Promise<{ method: 'convertToAssets' | 'previewRedeem'; convertedAssetsRaw: bigint } | null> {
   let method: 'convertToAssets' | 'previewRedeem' = 'convertToAssets'
   let convertedAssetsRaw = await maybe(() =>
@@ -84,8 +75,8 @@ export async function readShareConversion(
       abi: erc4626Abi,
       functionName: 'convertToAssets',
       args: [oneShareRaw],
-      blockNumber,
-    }),
+      blockNumber
+    })
   )
   if (convertedAssetsRaw == null) {
     method = 'previewRedeem'
@@ -95,8 +86,8 @@ export async function readShareConversion(
         abi: erc4626Abi,
         functionName: 'previewRedeem',
         args: [oneShareRaw],
-        blockNumber,
-      }),
+        blockNumber
+      })
     )
   }
   if (convertedAssetsRaw == null) {
@@ -116,18 +107,15 @@ export function normalizedAddress(address: string): `0x${string}` | null {
 }
 
 function blockContextKey(target: RecursivePriceTarget): string {
-  return [
-    target.chainId,
-    target.token.toLowerCase(),
-    target.timestamp ?? 'latest',
-    target.blockNumber ?? 'none',
-  ].join(':')
+  return [target.chainId, target.token.toLowerCase(), target.timestamp ?? 'latest', target.blockNumber ?? 'none'].join(
+    ':'
+  )
 }
 
 async function defaultBlockForTarget(
   client: PublicClient,
   chainId: number,
-  target: RecursivePriceTarget,
+  target: RecursivePriceTarget
 ): Promise<bigint> {
   if (target.blockNumber != null) {
     return BigInt(target.blockNumber)
@@ -140,7 +128,7 @@ async function defaultBlockForTarget(
 
 async function loadContractContext(
   target: RecursivePriceTarget,
-  options: OnchainAdapterOptions,
+  options: OnchainAdapterOptions
 ): Promise<ContractContext> {
   const client = options.clientForChain(target.chainId)
   if (!client) {
@@ -148,11 +136,7 @@ async function loadContractContext(
     // "this adapter does not apply" so it never masks a working source.
     throw new Error(`RPC_URL_${target.chainId} is not configured`)
   }
-  const blockNumber = await (options.blockForTarget ?? defaultBlockForTarget)(
-    client,
-    target.chainId,
-    target,
-  )
+  const blockNumber = await (options.blockForTarget ?? defaultBlockForTarget)(client, target.chainId, target)
   const numericBlockNumber = Number(blockNumber)
   if (!Number.isSafeInteger(numericBlockNumber) || numericBlockNumber < 0) {
     throw new Error(`Block ${blockNumber} is outside the supported numeric range`)
@@ -172,13 +156,13 @@ async function loadContractContext(
     blockNumber,
     numericBlockNumber,
     blockTimestamp,
-    address: target.token as Address,
+    address: target.token as Address
   }
 }
 
 export async function contractContext(
   target: RecursivePriceTarget,
-  options: OnchainAdapterOptions,
+  options: OnchainAdapterOptions
 ): Promise<ContractContext> {
   const cache = options.blockContextCache
   if (!cache) {
@@ -194,25 +178,18 @@ export async function contractContext(
   return pending
 }
 
-export function blockEvidence(
-  state: ContractContext,
-  target: RecursivePriceTarget,
-): Record<string, unknown> {
+export function blockEvidence(state: ContractContext, target: RecursivePriceTarget): Record<string, unknown> {
   return {
     block: {
       number: state.numericBlockNumber,
       timestamp: state.blockTimestamp,
       requestedTimestamp: target.timestamp,
-      distanceSeconds: target.timestamp == null ? null : target.timestamp - state.blockTimestamp,
-    },
+      distanceSeconds: target.timestamp == null ? null : target.timestamp - state.blockTimestamp
+    }
   }
 }
 
-export function childTarget(
-  parent: RecursivePriceTarget,
-  token: string,
-  blockNumber: number,
-): RecursivePriceTarget {
+export function childTarget(parent: RecursivePriceTarget, token: string, blockNumber: number): RecursivePriceTarget {
   return { ...parent, token: normalizeTokenAddress(token), blockNumber }
 }
 
@@ -220,25 +197,18 @@ export function rawState(value: bigint): string {
   return value.toString()
 }
 
-export async function tokenDecimals(
-  client: PublicClient,
-  address: string,
-  blockNumber: bigint,
-): Promise<number> {
+export async function tokenDecimals(client: PublicClient, address: string, blockNumber: bigint): Promise<number> {
   return Number(
     await client.readContract({
       address: address as Address,
       abi: erc20Abi,
       functionName: 'decimals',
-      blockNumber,
-    }),
+      blockNumber
+    })
   )
 }
 
-export function recursiveInput(
-  path: ResolvedPricePath,
-  conversion: Record<string, unknown>,
-): RecursivePriceInput {
+export function recursiveInput(path: ResolvedPricePath, conversion: Record<string, unknown>): RecursivePriceInput {
   return { path, conversion }
 }
 
@@ -248,9 +218,7 @@ export async function requireChildren(
   parent: RecursivePriceTarget,
   addresses: string[],
   blockNumber: number,
-  label: string,
+  label: string
 ): Promise<ResolvedPricePath[]> {
-  return Promise.all(
-    addresses.map((address) => context.require(childTarget(parent, address, blockNumber), label)),
-  )
+  return Promise.all(addresses.map((address) => context.require(childTarget(parent, address, blockNumber), label)))
 }

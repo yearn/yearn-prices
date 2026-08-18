@@ -12,23 +12,15 @@ const reads = {
   [LP]: { getPoolId: POOL_ID, decimals: 18, totalSupply: 100n * 10n ** 18n },
   [VAULT]: {
     getPool: [LP, 0],
-    getPoolTokens: [
-      [TOKEN_A, TOKEN_B],
-      [100n * 10n ** 6n, 50n * 10n ** 18n],
-      0n,
-    ],
+    getPoolTokens: [[TOKEN_A, TOKEN_B], [100n * 10n ** 6n, 50n * 10n ** 18n], 0n]
   },
   [TOKEN_A]: { decimals: 6 },
-  [TOKEN_B]: { decimals: 18 },
+  [TOKEN_B]: { decimals: 18 }
 }
 
 describe('balancerAdapter', () => {
   it('prices a BPT at vault NAV', async () => {
-    const result = await priceWith(
-      balancerAdapter(adapterOptions(reads)),
-      { [TOKEN_A]: 1, [TOKEN_B]: 2 },
-      LP,
-    )
+    const result = await priceWith(balancerAdapter(adapterOptions(reads)), { [TOKEN_A]: 1, [TOKEN_B]: 2 }, LP)
 
     expect(result.path?.priceUsd).toBeCloseTo(2)
   })
@@ -39,19 +31,11 @@ describe('balancerAdapter', () => {
       [LP]: { getPoolId: POOL_ID, decimals: 18, totalSupply: 200n * 10n ** 18n },
       [VAULT]: {
         getPool: [LP, 0],
-        getPoolTokens: [
-          [LP, TOKEN_A],
-          [100n * 10n ** 18n, 100n * 10n ** 6n],
-          0n,
-        ],
-      },
+        getPoolTokens: [[LP, TOKEN_A], [100n * 10n ** 18n, 100n * 10n ** 6n], 0n]
+      }
     }
 
-    const result = await priceWith(
-      balancerAdapter(adapterOptions(composable)),
-      { [TOKEN_A]: 1 },
-      LP,
-    )
+    const result = await priceWith(balancerAdapter(adapterOptions(composable)), { [TOKEN_A]: 1 }, LP)
 
     expect(result.path?.priceUsd).toBeCloseTo(1)
   })
@@ -62,17 +46,17 @@ describe('balancerAdapter', () => {
     expect(result.path).toBeNull()
   })
 
-  it('refuses a token that reports another pool\'s ID', async () => {
+  it("refuses a token that reports another pool's ID", async () => {
     const counterfeit = '0x4444444444444444444444444444444444444444'
     const result = await priceWith(
       balancerAdapter(
         adapterOptions({
           ...reads,
-          [counterfeit]: { getPoolId: POOL_ID, decimals: 18, totalSupply: 1n },
-        }),
+          [counterfeit]: { getPoolId: POOL_ID, decimals: 18, totalSupply: 1n }
+        })
       ),
       { [TOKEN_A]: 1, [TOKEN_B]: 2 },
-      counterfeit,
+      counterfeit
     )
 
     expect(result.path).toBeNull()

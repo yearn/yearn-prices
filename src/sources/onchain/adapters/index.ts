@@ -18,9 +18,7 @@ import { yip88LiquidLockerAdapter } from './yip88-liquid-locker'
  * Adapters in the order the engine tries them: the most specific token
  * allowlists first, generic interface probes last.
  */
-export function createOnchainPriceAdapters(
-  options: OnchainAdapterOptions,
-): RecursivePriceAdapter[] {
+export function createOnchainPriceAdapters(options: OnchainAdapterOptions): RecursivePriceAdapter[] {
   return [
     yip88LiquidLockerAdapter(options),
     nativeShareAdapter(options),
@@ -34,6 +32,6 @@ export function createOnchainPriceAdapters(
     pairAdapter(options),
     balancerAdapter(options),
     pendleAdapter(options, options.pendleTwapSeconds ?? DEFAULT_PENDLE_TWAP_SECONDS),
-    curveAdapter(options),
+    curveAdapter(options)
   ]
 }

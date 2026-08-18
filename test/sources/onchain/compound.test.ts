@@ -9,7 +9,7 @@ describe('compoundAdapter', () => {
   it('prices a cToken from its stored exchange rate', async () => {
     const options = adapterOptions({
       [CTOKEN]: { underlying: UNDERLYING, exchangeRateStored: 2n * 10n ** 26n, decimals: 8 },
-      [UNDERLYING]: { decimals: 18 },
+      [UNDERLYING]: { decimals: 18 }
     })
 
     const result = await priceWith(compoundAdapter(options), { [UNDERLYING]: 1 }, CTOKEN)

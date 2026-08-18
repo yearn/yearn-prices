@@ -11,7 +11,7 @@ import { chainNameToId, parseSpotCoins } from '../utils'
 export async function handleSpot(
   request: Request,
   env: Env,
-  registry: SpotSourceRegistry = spotSourceRegistry(env),
+  registry: SpotSourceRegistry = spotSourceRegistry(env)
 ): Promise<Response> {
   const requests = parseSpotCoins(new URL(request.url).searchParams.get('coins'))
 

@@ -43,11 +43,7 @@ export class OnchainHistoricalSource extends HistoricalPriceSourceBase {
     return this.pricer.supports(chainId)
   }
 
-  getHistoricalPrice(
-    chainId: number,
-    token: string,
-    timestamp: number,
-  ): Promise<HistoricalPriceResult | null> {
+  getHistoricalPrice(chainId: number, token: string, timestamp: number): Promise<HistoricalPriceResult | null> {
     return this.pricer.price({ chainId, token, timestamp })
   }
 }
@@ -56,8 +52,6 @@ export function createOnchainSpotSource(options: OnchainSourceOptions): OnchainS
   return new OnchainSpotSource(options)
 }
 
-export function createOnchainHistoricalSource(
-  options: OnchainSourceOptions,
-): OnchainHistoricalSource {
+export function createOnchainHistoricalSource(options: OnchainSourceOptions): OnchainHistoricalSource {
   return new OnchainHistoricalSource(options)
 }

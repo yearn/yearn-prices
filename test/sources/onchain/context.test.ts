@@ -10,7 +10,7 @@ describe('contractContext cache', () => {
     const getBlock = vi.spyOn(client, 'getBlock')
     const options = {
       clientForChain: () => client,
-      blockContextCache: new Map(),
+      blockContextCache: new Map()
     }
 
     await contractContext({ chainId: 1, token: TOKEN, timestamp: null }, options)

@@ -13,7 +13,7 @@ import type {
   RecursivePriceInput,
   RecursivePriceResult,
   RecursivePriceTarget,
-  ResolvedPricePath,
+  ResolvedPricePath
 } from './types'
 
 const MAX_ADAPTER_HINTS = 256
@@ -37,16 +37,13 @@ const FAILURE_ORDER: PriceResolutionFailureReason[] = [
   'invalid',
   'cycle',
   'max-depth',
-  'unsupported',
+  'unsupported'
 ]
 
 function targetKey(target: RecursivePriceTarget): string {
-  return [
-    target.chainId,
-    target.token.toLowerCase(),
-    target.timestamp ?? 'latest',
-    target.blockNumber ?? 'none',
-  ].join(':')
+  return [target.chainId, target.token.toLowerCase(), target.timestamp ?? 'latest', target.blockNumber ?? 'none'].join(
+    ':'
+  )
 }
 
 function adapterHintKey(target: RecursivePriceTarget): string {
@@ -54,23 +51,17 @@ function adapterHintKey(target: RecursivePriceTarget): string {
 }
 
 function normalizeTarget(target: RecursivePriceTarget): RecursivePriceTarget {
-  if (
-    target.timestamp != null &&
-    (!Number.isSafeInteger(target.timestamp) || target.timestamp < 0)
-  ) {
+  if (target.timestamp != null && (!Number.isSafeInteger(target.timestamp) || target.timestamp < 0)) {
     throw new InvalidPricingError('timestamp must be a non-negative unix timestamp')
   }
-  if (
-    target.blockNumber != null &&
-    (!Number.isSafeInteger(target.blockNumber) || target.blockNumber < 0)
-  ) {
+  if (target.blockNumber != null && (!Number.isSafeInteger(target.blockNumber) || target.blockNumber < 0)) {
     throw new InvalidPricingError('blockNumber must be a non-negative safe integer')
   }
   return {
     chainId: target.chainId,
     token: normalizeTokenAddress(target.token),
     timestamp: target.timestamp ?? null,
-    blockNumber: target.blockNumber ?? null,
+    blockNumber: target.blockNumber ?? null
   }
 }
 
@@ -87,10 +78,7 @@ function classifyError(error: unknown): PriceResolutionFailureReason {
 }
 
 function selectFailureReason(attempts: PriceResolutionAttempt[]): PriceResolutionFailureReason {
-  return (
-    FAILURE_ORDER.find((reason) => attempts.some((attempt) => attempt.reason === reason)) ??
-    'unsupported'
-  )
+  return FAILURE_ORDER.find((reason) => attempts.some((attempt) => attempt.reason === reason)) ?? 'unsupported'
 }
 
 function toInputEvidence(input: RecursivePriceInput): PriceInputEvidence {
@@ -103,7 +91,7 @@ function toInputEvidence(input: RecursivePriceInput): PriceInputEvidence {
     source: path.source,
     adapter: path.adapter,
     ...(input.conversion ? { conversion: input.conversion } : {}),
-    ...(path.inputs.length > 0 ? { inputs: path.inputs } : {}),
+    ...(path.inputs.length > 0 ? { inputs: path.inputs } : {})
   }
 }
 
@@ -128,7 +116,7 @@ function validatePath(path: ResolvedPricePath, target: RecursivePriceTarget): Re
 function buildAdapterPath(
   target: RecursivePriceTarget,
   adapter: RecursivePriceAdapter,
-  quote: RecursiveAdapterQuote,
+  quote: RecursiveAdapterQuote
 ): ResolvedPricePath {
   const observedTimestamp =
     quote.observedTimestamp ??
@@ -149,9 +137,9 @@ function buildAdapterPath(
       adapter: adapter.name,
       blockNumber: quote.blockNumber ?? target.blockNumber ?? null,
       inputs: quote.inputs.map(toInputEvidence),
-      metadata: quote.metadata,
+      metadata: quote.metadata
     },
-    target,
+    target
   )
 }
 
@@ -174,7 +162,7 @@ export class RecursivePriceEngine {
     private readonly adapters: RecursivePriceAdapter[],
     private readonly maxDepth = 8,
     private readonly adapterHints = new Map<string, string>(),
-    private readonly resolutionBudget = 32,
+    private readonly resolutionBudget = 32
   ) {
     if (!Number.isInteger(maxDepth) || maxDepth < 1) {
       throw new Error('Recursive price depth must be a positive integer')
@@ -188,10 +176,7 @@ export class RecursivePriceEngine {
     return this.resolveAt(normalizeTarget(target), [])
   }
 
-  private async resolveAt(
-    target: RecursivePriceTarget,
-    ancestry: string[],
-  ): Promise<RecursivePriceResult> {
+  private async resolveAt(target: RecursivePriceTarget, ancestry: string[]): Promise<RecursivePriceResult> {
     const key = targetKey(target)
     if (ancestry.includes(key)) {
       return { path: null, failure: { reason: 'cycle', token: target.token, attempts: [] } }
@@ -260,7 +245,7 @@ export class RecursivePriceEngine {
   private async resolveUncached(
     target: RecursivePriceTarget,
     ancestry: string[],
-    key: string,
+    key: string
   ): Promise<RecursivePriceResult> {
     if (this.resolutions >= this.resolutionBudget) {
       const failure = { reason: 'budget' as const, token: target.token, attempts: [] }
@@ -299,21 +284,19 @@ export class RecursivePriceEngine {
         if (result.path) {
           return result.path
         }
-        const nested = result.failure.attempts
-          .map((attempt) => `${attempt.adapter}: ${attempt.error}`)
-          .join('; ')
+        const nested = result.failure.attempts.map((attempt) => `${attempt.adapter}: ${attempt.error}`).join('; ')
         throw new RecursiveDependencyError(
           `${label} ${result.failure.token} is unavailable (${result.failure.reason}${nested ? `; ${nested}` : ''})`,
-          result.failure,
+          result.failure
         )
-      },
+      }
     }
 
     const hint = this.adapterHints.get(adapterHintKey(target))
     const orderedAdapters = hint
       ? [
           ...this.adapters.filter((adapter) => adapter.name === hint),
-          ...this.adapters.filter((adapter) => adapter.name !== hint),
+          ...this.adapters.filter((adapter) => adapter.name !== hint)
         ]
       : this.adapters
 
@@ -332,7 +315,7 @@ export class RecursivePriceEngine {
           adapter: adapter.name,
           reason: classifyError(error),
           error: errorMessage(error),
-          cause: error,
+          cause: error
         })
       }
     }
@@ -340,7 +323,7 @@ export class RecursivePriceEngine {
     const failure = {
       reason: selectFailureReason(attempts),
       token: target.token,
-      attempts,
+      attempts
     }
     // 'cycle' and 'max-depth' depend on where the token sat in this branch, so
     // caching them would refuse it on a shallower branch that could price it.

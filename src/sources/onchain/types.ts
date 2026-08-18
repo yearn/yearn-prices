@@ -38,13 +38,7 @@ export interface PriceInputEvidence {
   inputs?: PriceInputEvidence[]
 }
 
-export type PriceResolutionFailureReason =
-  | 'cycle'
-  | 'max-depth'
-  | 'retryable'
-  | 'budget'
-  | 'unsupported'
-  | 'invalid'
+export type PriceResolutionFailureReason = 'cycle' | 'max-depth' | 'retryable' | 'budget' | 'unsupported' | 'invalid'
 
 export interface PriceResolutionAttempt {
   adapter: string
@@ -89,10 +83,7 @@ export interface RecursivePriceContext {
 
 export interface RecursivePriceAdapter {
   name: string
-  resolve(
-    target: RecursivePriceTarget,
-    context: RecursivePriceContext,
-  ): Promise<RecursiveAdapterQuote | null>
+  resolve(target: RecursivePriceTarget, context: RecursivePriceContext): Promise<RecursiveAdapterQuote | null>
 }
 
 /**
@@ -100,6 +91,4 @@ export interface RecursivePriceAdapter {
  * engine never reaches back into it, and so recursion always terminates at a
  * market price.
  */
-export type MarketPriceResolver = (
-  target: RecursivePriceTarget,
-) => Promise<ResolvedPricePath | null>
+export type MarketPriceResolver = (target: RecursivePriceTarget) => Promise<ResolvedPricePath | null>

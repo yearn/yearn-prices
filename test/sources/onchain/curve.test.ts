@@ -11,7 +11,7 @@ const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
 const reads = {
   [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
   [CURVE_POOL]: { token: LP, N_COINS: 2n, coins: TOKEN_A, balances: 100n * 10n ** 6n },
-  [TOKEN_A]: { decimals: 6 },
+  [TOKEN_A]: { decimals: 6 }
 }
 
 describe('curveAdapter', () => {
@@ -29,15 +29,11 @@ describe('curveAdapter', () => {
         token: LP,
         N_COINS: 1n,
         coins: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
-        balances: 10n * 10n ** 18n,
-      },
+        balances: 10n * 10n ** 18n
+      }
     }
 
-    const result = await priceWith(
-      curveAdapter(adapterOptions(nativeReads)),
-      { [WETH]: 2000 },
-      LP,
-    )
+    const result = await priceWith(curveAdapter(adapterOptions(nativeReads)), { [WETH]: 2000 }, LP)
 
     expect(result.path?.priceUsd).toBeCloseTo(200)
   })
@@ -50,16 +46,12 @@ describe('curveAdapter', () => {
         get_pool_from_lp_token: CURVE_POOL,
         N_COINS: 1n,
         coins: TOKEN_A,
-        balances: 100n * 10n ** 6n,
+        balances: 100n * 10n ** 6n
       },
-      [TOKEN_A]: { decimals: 6 },
+      [TOKEN_A]: { decimals: 6 }
     }
 
-    const result = await priceWith(
-      curveAdapter(adapterOptions(registryReads)),
-      { [TOKEN_A]: 1 },
-      LP,
-    )
+    const result = await priceWith(curveAdapter(adapterOptions(registryReads)), { [TOKEN_A]: 1 }, LP)
 
     expect(result.path?.priceUsd).toBeCloseTo(1)
   })
@@ -72,9 +64,9 @@ describe('curveAdapter', () => {
         get_pool_from_lp_token: CURVE_POOL,
         get_n_coins: [1n, 1n],
         coins: TOKEN_A,
-        balances: 100n * 10n ** 6n,
+        balances: 100n * 10n ** 6n
       },
-      [TOKEN_A]: { decimals: 6 },
+      [TOKEN_A]: { decimals: 6 }
     }
     const client = fakeClient(registryReads)
     let providerReads = 0
@@ -85,14 +77,10 @@ describe('curveAdapter', () => {
           providerReads += 1
         }
         return client.readContract(args as never)
-      },
+      }
     } as unknown as typeof client
 
-    const result = await priceWith(
-      curveAdapter({ clientForChain: () => counting }),
-      { [TOKEN_A]: 1 },
-      LP,
-    )
+    const result = await priceWith(curveAdapter({ clientForChain: () => counting }), { [TOKEN_A]: 1 }, LP)
 
     expect(result.path?.metadata.coinCountSource).toBe('curve-registry')
     expect(providerReads).toBe(1)
@@ -104,11 +92,11 @@ describe('curveAdapter', () => {
       curveAdapter(
         adapterOptions({
           ...reads,
-          [counterfeit]: { minter: CURVE_POOL, decimals: 18, totalSupply: 1n },
-        }),
+          [counterfeit]: { minter: CURVE_POOL, decimals: 18, totalSupply: 1n }
+        })
       ),
       { [TOKEN_A]: 1 },
-      counterfeit,
+      counterfeit
     )
 
     expect(result.path).toBeNull()
@@ -117,22 +105,14 @@ describe('curveAdapter', () => {
   it('refuses to price when a coin is missing from an authoritative count', async () => {
     const brokenReads = { ...reads, [CURVE_POOL]: { token: LP, N_COINS: 2n, balances: 1n } }
 
-    const result = await priceWith(
-      curveAdapter(adapterOptions(brokenReads)),
-      { [TOKEN_A]: 1 },
-      LP,
-    )
+    const result = await priceWith(curveAdapter(adapterOptions(brokenReads)), { [TOKEN_A]: 1 }, LP)
 
     expect(result.path).toBeNull()
     expect(result.failure?.reason).toBe('invalid')
   })
 
   it('returns no price when no coin count is authoritative', async () => {
-    const result = await priceWith(
-      curveAdapter(adapterOptions({ [LP]: { minter: CURVE_POOL, decimals: 18 } })),
-      {},
-      LP,
-    )
+    const result = await priceWith(curveAdapter(adapterOptions({ [LP]: { minter: CURVE_POOL, decimals: 18 } })), {}, LP)
 
     expect(result.path).toBeNull()
   })

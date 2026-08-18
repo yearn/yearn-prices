@@ -14,9 +14,7 @@ import { SourceRegistry } from './source-registry'
  */
 function marketPriceResolver(marketSources: SpotPriceSource[]) {
   const registry = new SpotSourceRegistry(marketSources)
-  return createMarketPriceResolver(marketSources, (chainId, token) =>
-    registry.resolve(chainId, token),
-  )
+  return createMarketPriceResolver(marketSources, (chainId, token) => registry.resolve(chainId, token))
 }
 
 export function createSpotSources(env: Env): SpotPriceSource[] {
@@ -31,8 +29,8 @@ export function createSpotSources(env: Env): SpotPriceSource[] {
     createOnchainSpotSource({
       marketPrice: marketPriceResolver(marketSources),
       env,
-      clientForChain: (chainId) => getChainClient(chainId, env),
-    }),
+      clientForChain: (chainId) => getChainClient(chainId, env)
+    })
   ]
 }
 

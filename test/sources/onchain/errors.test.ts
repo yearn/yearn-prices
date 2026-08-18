@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  RetryablePricingError,
-  isRetryablePricingError,
-} from '../../../src/sources/onchain/errors'
+import { RetryablePricingError, isRetryablePricingError } from '../../../src/sources/onchain/errors'
 
 function named(name: string, message: string): Error {
   return Object.assign(new Error(message), { name })
@@ -10,12 +7,8 @@ function named(name: string, message: string): Error {
 
 describe('isRetryablePricingError', () => {
   it('treats a revert as a permanent answer', () => {
-    expect(
-      isRetryablePricingError(named('ContractFunctionExecutionError', 'execution reverted')),
-    ).toBe(false)
-    expect(isRetryablePricingError(named('ContractFunctionZeroDataError', 'returned no data'))).toBe(
-      false,
-    )
+    expect(isRetryablePricingError(named('ContractFunctionExecutionError', 'execution reverted'))).toBe(false)
+    expect(isRetryablePricingError(named('ContractFunctionZeroDataError', 'returned no data'))).toBe(false)
   })
 
   it('treats transport faults as transient', () => {
@@ -28,7 +21,7 @@ describe('isRetryablePricingError', () => {
       named('SocketError', 'other side closed'),
       new Error('fetch failed'),
       new Error('Status: 429'),
-      new Error('HTTP 503 from upstream'),
+      new Error('HTTP 503 from upstream')
     ]) {
       expect(isRetryablePricingError(error), error.message).toBe(true)
     }
@@ -43,7 +36,7 @@ describe('isRetryablePricingError', () => {
 
   it('finds a transient fault wrapped in a cause chain', () => {
     const wrapped = new Error('adapter failed', {
-      cause: new Error('read failed', { cause: named('TimeoutError', 'timed out') }),
+      cause: new Error('read failed', { cause: named('TimeoutError', 'timed out') })
     })
 
     expect(isRetryablePricingError(wrapped)).toBe(true)
@@ -51,7 +44,7 @@ describe('isRetryablePricingError', () => {
 
   it('lets an outer revert win over a transient cause', () => {
     const reverted = new Error('execution reverted', {
-      cause: named('TimeoutError', 'timed out'),
+      cause: named('TimeoutError', 'timed out')
     })
 
     expect(isRetryablePricingError(reverted)).toBe(false)

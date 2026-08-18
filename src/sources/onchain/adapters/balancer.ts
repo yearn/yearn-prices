@@ -9,7 +9,7 @@ import {
   recursiveInput,
   requireChildren,
   tokenDecimals,
-  type OnchainAdapterOptions,
+  type OnchainAdapterOptions
 } from '../context'
 import { calculatePoolNavPrice } from '../math'
 import type { RecursivePriceAdapter } from '../types'
@@ -21,13 +21,13 @@ const VAULTS: Record<number, string> = {
   100: CANONICAL_VAULT,
   137: CANONICAL_VAULT,
   250: '0x20dd72ed959b6147912c2e529f0a0c651c33c9ce',
-  42161: CANONICAL_VAULT,
+  42161: CANONICAL_VAULT
 }
 
 const poolAbi = parseAbi(['function getPoolId() view returns (bytes32)'])
 const vaultAbi = parseAbi([
   'function getPool(bytes32 poolId) view returns (address pool, uint8 specialization)',
-  'function getPoolTokens(bytes32 poolId) view returns (address[] tokens, uint256[] balances, uint256 lastChangeBlock)',
+  'function getPoolTokens(bytes32 poolId) view returns (address[] tokens, uint256[] balances, uint256 lastChangeBlock)'
 ])
 
 export function balancerAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
@@ -44,8 +44,8 @@ export function balancerAdapter(options: OnchainAdapterOptions): RecursivePriceA
           address: state.address,
           abi: poolAbi,
           functionName: 'getPoolId',
-          blockNumber: state.blockNumber,
-        }),
+          blockNumber: state.blockNumber
+        })
       )
       if (!poolId) {
         return null
@@ -59,8 +59,8 @@ export function balancerAdapter(options: OnchainAdapterOptions): RecursivePriceA
           abi: vaultAbi,
           functionName: 'getPool',
           args: [poolId],
-          blockNumber: state.blockNumber,
-        }),
+          blockNumber: state.blockNumber
+        })
       )
       if (!registeredPool || registeredPool[0].toLowerCase() !== target.token.toLowerCase()) {
         return null
@@ -72,21 +72,21 @@ export function balancerAdapter(options: OnchainAdapterOptions): RecursivePriceA
           abi: vaultAbi,
           functionName: 'getPoolTokens',
           args: [poolId],
-          blockNumber: state.blockNumber,
+          blockNumber: state.blockNumber
         }),
         tokenDecimals(state.client, target.token, state.blockNumber),
         state.client.readContract({
           address: state.address,
           abi: erc20Abi,
           functionName: 'totalSupply',
-          blockNumber: state.blockNumber,
-        }),
+          blockNumber: state.blockNumber
+        })
       ])
 
       const targetAddress = target.token.toLowerCase()
       const assets = poolTokens[0].map((address, index) => ({
         address: normalizedAddress(address) ?? address,
-        balanceRaw: poolTokens[1][index],
+        balanceRaw: poolTokens[1][index]
       }))
       // Composable pools hold their own BPT; that balance is pre-minted supply,
       // not a constituent, so it is excluded from both NAV and supply.
@@ -97,16 +97,14 @@ export function balancerAdapter(options: OnchainAdapterOptions): RecursivePriceA
       }
 
       const [decimals, inputs] = await Promise.all([
-        Promise.all(
-          constituents.map((asset) => tokenDecimals(state.client, asset.address, state.blockNumber)),
-        ),
+        Promise.all(constituents.map((asset) => tokenDecimals(state.client, asset.address, state.blockNumber))),
         requireChildren(
           context,
           target,
           constituents.map((asset) => asset.address),
           state.numericBlockNumber,
-          'Balancer constituent',
-        ),
+          'Balancer constituent'
+        )
       ])
       const selfBalanceRaw = selfAsset?.balanceRaw ?? 0n
       const metadata = {
@@ -121,30 +119,30 @@ export function balancerAdapter(options: OnchainAdapterOptions): RecursivePriceA
         tokens: constituents.map((asset, index) => ({
           address: asset.address,
           decimals: decimals[index],
-          balanceRaw: rawState(asset.balanceRaw),
-        })),
+          balanceRaw: rawState(asset.balanceRaw)
+        }))
       }
       return {
         priceUsd: calculatePoolNavPrice(
           constituents.map((asset, index) => ({
             ...asset,
             decimals: decimals[index],
-            priceUsd: inputs[index].priceUsd,
+            priceUsd: inputs[index].priceUsd
           })),
           totalSupplyRaw,
           poolDecimals,
-          selfBalanceRaw,
+          selfBalanceRaw
         ),
         blockNumber: state.numericBlockNumber,
         inputs: inputs.map((path, index) =>
           recursiveInput(path, {
             method: 'balancer-vault-nav',
             balanceRaw: rawState(constituents[index].balanceRaw),
-            decimals: decimals[index],
-          }),
+            decimals: decimals[index]
+          })
         ),
-        metadata,
+        metadata
       }
-    },
+    }
   }
 }
