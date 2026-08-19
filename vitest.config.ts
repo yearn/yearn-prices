@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['test/**/*.test.ts'],
+    exclude: ['**/node_modules/**', 'test/integration/**'],
     // Loads .env so live-API integration tests can read a real ENSO_API_KEY,
     // then drops the RPC URLs so no unit test can reach a real node.
     setupFiles: ['./test/setup.ts']
