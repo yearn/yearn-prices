@@ -1,6 +1,5 @@
 import { ApiError } from '../http/errors'
-import type { MarketPriceResolver, ResolvedPricePath } from '../sources/onchain/types'
-import type { PriceSource } from '../types'
+import type { MarketPriceResolver, ResolvedPricePath, ResolvedPriceSource } from '../sources/onchain/types'
 
 interface MarketQuote {
   price: number
@@ -42,7 +41,7 @@ export function createMarketPriceResolver(
         priceUsd: price.price,
         symbol: price.symbol,
         confidence: price.confidence,
-        source: price.source as PriceSource,
+        source: price.source as ResolvedPriceSource,
         adapter: price.source,
         blockNumber: target.blockNumber ?? null,
         inputs: [],

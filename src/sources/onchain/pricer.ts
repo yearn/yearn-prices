@@ -81,7 +81,11 @@ export class OnchainPricer {
   }
 
   async price(target: RecursivePriceTarget): Promise<SpotPriceResult | null> {
-    return this.toResult(await this.engine.resolve(target))
+    return this.toResult(await this.resolvePath(target))
+  }
+
+  resolvePath(target: RecursivePriceTarget): Promise<RecursivePriceResult> {
+    return this.engine.resolve(target)
   }
 
   private toResult(result: RecursivePriceResult): SpotPriceResult | null {

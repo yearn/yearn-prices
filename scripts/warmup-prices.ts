@@ -10,9 +10,16 @@ import {
   readVaultSharePrice
 } from '../src/clients'
 import { createPool, getBatchHistoricalPrices, getExistingExactTimestamps, insertTokenPrices } from '../src/db'
+import { marketPriceResolver } from '../src/registries/historical'
+import { createDbHistoricalSource } from '../src/sources/db/historical'
+import { createDefiLlamaAliasHistoricalSource, createDefiLlamaHistoricalSource } from '../src/sources/defillama'
+import { RecursiveDependencyError } from '../src/sources/onchain/errors'
+import { OnchainPricer } from '../src/sources/onchain/pricer'
+import type { PriceInputEvidence, PriceResolutionFailure, ResolvedPricePath } from '../src/sources/onchain/types'
 import type { HistoricalRequestTuple, KongVaultListItem, TokenPriceWrite } from '../src/types'
 import {
   chainIdToName,
+  chainNameToId,
   isTodayNormalized,
   normalizedDaysInRange,
   normalizeToEndOfDay,
@@ -21,24 +28,22 @@ import {
   parseCliDate
 } from '../src/utils'
 
-const databaseUrl = process.env.DATABASE_URL
-if (!databaseUrl) {
-  throw new Error('DATABASE_URL is required')
-}
-
-const pool = createPool(databaseUrl)
 const stats: WarmupStats = {
   cacheHits: 0,
   apiCalls: 0,
   retries: 0,
   failures: 0,
   insertedDirect: 0,
+  insertedOnchain: 0,
   insertedDerived: 0,
-  insertedCurve: 0
+  insertedCurve: 0,
+  onchainRetryable: 0,
+  onchainInvalid: 0,
+  onchainUnsupported: 0,
+  onchainNotFound: 0
 }
-const defiLlama = new DefiLlamaClient(undefined, () => {
-  stats.retries += 1
-})
+let pool: ReturnType<typeof createPool>
+let defiLlama: DefiLlamaClient
 
 const REQUEST_GROUP_SIZE = 5
 const REQUEST_GROUP_DELAY_MS = 200
@@ -61,8 +66,26 @@ interface WarmupStats {
   retries: number
   failures: number
   insertedDirect: number
+  insertedOnchain: number
   insertedDerived: number
   insertedCurve: number
+  onchainRetryable: number
+  onchainInvalid: number
+  onchainUnsupported: number
+  onchainNotFound: number
+}
+
+type ResolvedPathNode = ResolvedPricePath | PriceInputEvidence
+
+export type OnchainFailureCategory = 'retryable' | 'invalid' | 'unsupported' | 'not-found'
+
+export interface OnchainFailureReport {
+  category: OnchainFailureCategory
+  tokenKey: string
+  chain: string
+  timestamp: number
+  missingUnderlying: string
+  attempts: PriceResolutionFailure['attempts']
 }
 
 function sleep(milliseconds: number): Promise<void> {
@@ -166,6 +189,117 @@ function buildDirectRequests(vaults: NormalizedVault[], timestamps: number[]): H
   return requests
 }
 
+export function flattenResolvedPricePath(path: ResolvedPricePath): ResolvedPathNode[] {
+  const nodes: ResolvedPathNode[] = []
+  const visit = (node: PriceInputEvidence): void => {
+    for (const input of node.inputs ?? []) {
+      visit(input)
+    }
+    nodes.push(node)
+  }
+
+  for (const input of path.inputs) {
+    visit(input)
+  }
+  nodes.push(path)
+  return nodes
+}
+
+export function resolvedPathTokenPriceWrites(path: ResolvedPricePath): TokenPriceWrite[] {
+  const writes = new Map<string, TokenPriceWrite>()
+  const timestamp = path.requestedTimestamp ?? path.observedTimestamp
+
+  for (const node of flattenResolvedPricePath(path)) {
+    if (node.source === 'db') {
+      continue
+    }
+    const chain = chainIdToName(node.chainId)
+    if (!chain) {
+      continue
+    }
+    const key = `${chain}:${node.token.toLowerCase()}:${timestamp}`
+    if (writes.has(key)) {
+      continue
+    }
+    writes.set(key, {
+      chain,
+      token: node.token,
+      timestamp,
+      price: node.priceUsd,
+      symbol: 'symbol' in node ? node.symbol : null,
+      confidence: 'confidence' in node ? node.confidence : null,
+      source: node.source
+    })
+  }
+
+  return [...writes.values()]
+}
+
+export function categorizeOnchainFailure(failure: PriceResolutionFailure): OnchainFailureCategory {
+  if (failure.reason === 'retryable' || failure.reason === 'budget') {
+    return 'retryable'
+  }
+  if (failure.reason === 'invalid') {
+    return 'invalid'
+  }
+  if (failure.reason === 'unsupported' && failure.attempts.length === 0) {
+    return 'not-found'
+  }
+  return 'unsupported'
+}
+
+export function missingUnderlyingToken(failure: PriceResolutionFailure): string {
+  for (const attempt of failure.attempts) {
+    if (attempt.cause instanceof RecursiveDependencyError) {
+      return missingUnderlyingToken(attempt.cause.failure)
+    }
+  }
+  return failure.token
+}
+
+function onchainFailureReport(
+  chain: string,
+  token: string,
+  timestamp: number,
+  failure: PriceResolutionFailure
+): OnchainFailureReport {
+  return {
+    category: categorizeOnchainFailure(failure),
+    tokenKey: `${chain}:${token}`,
+    chain,
+    timestamp,
+    missingUnderlying: missingUnderlyingToken(failure),
+    attempts: failure.attempts
+  }
+}
+
+function recordOnchainFailure(stats: WarmupStats, category: OnchainFailureCategory): void {
+  if (category === 'retryable') {
+    stats.onchainRetryable += 1
+  } else if (category === 'invalid') {
+    stats.onchainInvalid += 1
+  } else if (category === 'unsupported') {
+    stats.onchainUnsupported += 1
+  } else {
+    stats.onchainNotFound += 1
+  }
+}
+
+function printOnchainFailureReport(reports: OnchainFailureReport[]): void {
+  if (reports.length === 0) {
+    return
+  }
+  console.warn('On-chain resolution failures:')
+  for (const report of reports) {
+    console.warn(
+      `[${report.category}] token=${report.tokenKey} chain=${report.chain} timestamp=${report.timestamp} missing=${report.missingUnderlying}`
+    )
+    for (const attempt of report.attempts) {
+      console.warn(`  ${attempt.adapter} (${attempt.reason}): ${attempt.error}`)
+    }
+  }
+}
+
 function groupMissingRequests(requests: HistoricalRequestTuple[], existing: Set<string>): Record<string, number[]> {
   const grouped: Record<string, number[]> = {}
 
@@ -258,6 +392,47 @@ async function warmDirectPrices(vaults: NormalizedVault[], timestamps: number[],
       console.error('DeFiLlama batch failed', payload, error)
     }
   })
+}
+
+async function warmOnchainPrices(vaults: NormalizedVault[], timestamps: number[], stats: WarmupStats): Promise<void> {
+  const requests = buildDirectRequests(vaults, timestamps)
+  const existing = await getBatchHistoricalPrices(pool, requests)
+  const existingKeys = new Set(existing.map((price) => `${price.chain}:${price.token}:${price.timestamp}`))
+  const missing = requests.filter((request) => {
+    const key = `${request.chain}:${request.token}:${request.timestamp}`
+    return isTodayNormalized(request.timestamp) || !existingKeys.has(key)
+  })
+  const reports: OnchainFailureReport[] = []
+
+  await runInGroups(missing, async (request) => {
+    const chainId = chainNameToId(request.chain)
+    if (chainId === undefined) {
+      return
+    }
+    const marketSources = [
+      createDbHistoricalSource(pool),
+      createDefiLlamaHistoricalSource(defiLlama),
+      createDefiLlamaAliasHistoricalSource(defiLlama)
+    ]
+    const pricer = new OnchainPricer({
+      marketPrice: marketPriceResolver(marketSources),
+      clientForChain: getChainClient
+    })
+    const result = await pricer.resolvePath({ chainId, token: request.token, timestamp: request.timestamp })
+
+    if (!result.path) {
+      const report = onchainFailureReport(request.chain, request.token, request.timestamp, result.failure)
+      reports.push(report)
+      recordOnchainFailure(stats, report.category)
+      return
+    }
+
+    const writes = resolvedPathTokenPriceWrites(result.path)
+    await insertTokenPrices(pool, writes)
+    stats.insertedOnchain += writes.length
+  })
+
+  printOnchainFailureReport(reports)
 }
 
 async function warmCurveFallbackPrices(
@@ -417,25 +592,41 @@ async function warmDerivedVaultPrices(
   })
 }
 
-try {
-  const { start, end } = parseArgs(process.argv.slice(2))
-  const timestamps = buildDailyTimestamps(start, end)
-  const vaults = await fetchYearnVaults()
+async function main(): Promise<void> {
+  const databaseUrl = process.env.DATABASE_URL
+  if (!databaseUrl) {
+    throw new Error('DATABASE_URL is required')
+  }
+  pool = createPool(databaseUrl)
+  defiLlama = new DefiLlamaClient(undefined, () => {
+    stats.retries += 1
+  })
 
-  console.info(`Warmup start: ${timestamps.length} days, ${vaults.length} vaults`)
-  await warmDirectPrices(vaults, timestamps, stats)
-  await warmCurveFallbackPrices(vaults, timestamps, stats)
-  await warmDerivedVaultPrices(vaults, timestamps, stats)
+  try {
+    const { start, end } = parseArgs(process.argv.slice(2))
+    const timestamps = buildDailyTimestamps(start, end)
+    const vaults = await fetchYearnVaults()
 
-  console.info(
-    JSON.stringify({
-      message: 'warmup-complete',
-      range: { start, end },
-      timestamps: timestamps.length,
-      vaults: vaults.length,
-      ...stats
-    })
-  )
-} finally {
-  await pool.end()
+    console.info(`Warmup start: ${timestamps.length} days, ${vaults.length} vaults`)
+    await warmDirectPrices(vaults, timestamps, stats)
+    await warmOnchainPrices(vaults, timestamps, stats)
+    await warmCurveFallbackPrices(vaults, timestamps, stats)
+    await warmDerivedVaultPrices(vaults, timestamps, stats)
+
+    console.info(
+      JSON.stringify({
+        message: 'warmup-complete',
+        range: { start, end },
+        timestamps: timestamps.length,
+        vaults: vaults.length,
+        ...stats
+      })
+    )
+  } finally {
+    await pool.end()
+  }
+}
+
+if (process.argv[1] === new URL(import.meta.url).pathname) {
+  await main()
 }

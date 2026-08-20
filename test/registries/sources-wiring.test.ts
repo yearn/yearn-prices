@@ -1,3 +1,4 @@
+import type { Pool } from '@neondatabase/serverless'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHistoricalSources } from '../../src/registries/historical'
 import * as marketPriceModule from '../../src/registries/market-price'
@@ -27,5 +28,13 @@ describe('source wiring', () => {
     expect(sources.map((source) => source.name)).toContain('derived')
     expect(spy).toHaveBeenCalledTimes(1)
     expect(spy.mock.calls[0][0].map((source) => source.name)).not.toContain('derived')
+  })
+
+  it('adds the DB only to the historical child resolver when a pool is provided', () => {
+    const sources = createHistoricalSources(env, {} as Pool)
+
+    expect(sources.map((source) => source.name)).not.toContain('db')
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy.mock.calls[0][0].map((source) => source.name)).toEqual(['db', 'defillama', 'defillama-alias'])
   })
 })

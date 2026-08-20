@@ -1,6 +1,8 @@
+import type { Pool } from '@neondatabase/serverless'
 import { DefiLlamaClient } from '../clients/defillama'
 import { getChainClient } from '../clients/rpc'
 import { createDefiLlamaAliasHistoricalSource, createDefiLlamaHistoricalSource } from '../sources'
+import { createDbHistoricalSource } from '../sources/db/historical'
 import { createOnchainHistoricalSource } from '../sources/onchain'
 import type { HistoricalPrice, HistoricalPriceSource } from '../sources/types'
 import type { Env } from '../types'
@@ -12,7 +14,7 @@ import { SourceRegistry } from './source-registry'
  * Prices an on-chain adapter's child tokens with the market sources only. It
  * never sees the on-chain source, so recursion cannot loop back into itself.
  */
-function marketPriceResolver(marketSources: HistoricalPriceSource[]) {
+export function marketPriceResolver(marketSources: HistoricalPriceSource[]) {
   const registry = new HistoricalSourceRegistry(marketSources)
   return createMarketPriceResolver(
     marketSources,
@@ -21,12 +23,13 @@ function marketPriceResolver(marketSources: HistoricalPriceSource[]) {
   )
 }
 
-export function createHistoricalSources(env?: Env): HistoricalPriceSource[] {
+export function createHistoricalSources(env?: Env, pool?: Pool): HistoricalPriceSource[] {
   const client = new DefiLlamaClient()
-  const marketSources = [createDefiLlamaHistoricalSource(client), createDefiLlamaAliasHistoricalSource(client)]
+  const rootMarketSources = [createDefiLlamaHistoricalSource(client), createDefiLlamaAliasHistoricalSource(client)]
+  const marketSources = [...(pool ? [createDbHistoricalSource(pool)] : []), ...rootMarketSources]
 
   return [
-    ...marketSources,
+    ...rootMarketSources,
     createOnchainHistoricalSource({
       marketPrice: marketPriceResolver(marketSources),
       env,

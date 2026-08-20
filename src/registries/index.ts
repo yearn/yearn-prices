@@ -1,3 +1,4 @@
+import type { Pool } from '@neondatabase/serverless'
 import type { Env } from '../types'
 import { createHistoricalSources, HistoricalSourceRegistry } from './historical'
 import { createSpotSources, SpotSourceRegistry } from './spot'
@@ -11,8 +12,8 @@ export function spotSourceRegistry(env: Env): SpotSourceRegistry {
   return new SpotSourceRegistry(createSpotSources(env))
 }
 
-export function historicalSourceRegistry(env?: Env): HistoricalSourceRegistry {
-  return new HistoricalSourceRegistry(createHistoricalSources(env))
+export function historicalSourceRegistry(env?: Env, pool?: Pool): HistoricalSourceRegistry {
+  return new HistoricalSourceRegistry(createHistoricalSources(env, pool))
 }
 
 export type { NamedSource, PriceFields, StampedPrice } from './source-registry'

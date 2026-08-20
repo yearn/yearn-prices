@@ -1,5 +1,7 @@
 import type { PriceSource } from '../../types'
 
+export type ResolvedPriceSource = PriceSource | 'db'
+
 /**
  * A price request the engine resolves. `timestamp` null means "latest";
  * `blockNumber` pins the read so every node of one resolution tree shares
@@ -20,7 +22,7 @@ export interface ResolvedPricePath {
   priceUsd: number
   symbol: string | null
   confidence: number | null
-  source: PriceSource
+  source: ResolvedPriceSource
   adapter: string
   blockNumber: number | null
   inputs: PriceInputEvidence[]
@@ -32,7 +34,7 @@ export interface PriceInputEvidence {
   token: string
   observedTimestamp: number
   priceUsd: number
-  source: PriceSource
+  source: ResolvedPriceSource
   adapter: string
   conversion?: Record<string, unknown>
   inputs?: PriceInputEvidence[]
@@ -70,7 +72,7 @@ export interface RecursiveAdapterQuote {
   observedTimestamp?: number
   symbol?: string | null
   confidence?: number | null
-  source?: PriceSource
+  source?: ResolvedPriceSource
   blockNumber?: number | null
 }
 

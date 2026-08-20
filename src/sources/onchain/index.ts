@@ -35,5 +35,6 @@ export type {
   RecursivePriceAdapter,
   RecursivePriceContext,
   RecursivePriceTarget,
-  ResolvedPricePath
+  ResolvedPricePath,
+  ResolvedPriceSource
 } from './types'
