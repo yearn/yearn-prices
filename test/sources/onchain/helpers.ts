@@ -27,12 +27,29 @@ export function fakeClient(reads: ContractReads): PublicClient {
     async getBlock() {
       return { number: BLOCK_NUMBER, timestamp: BigInt(BLOCK_TIMESTAMP) }
     },
-    async readContract({ address, functionName }: { address: string; functionName: string }) {
+    async readContract({
+      address,
+      functionName,
+      args
+    }: {
+      address: string
+      functionName: string
+      args?: readonly unknown[]
+    }) {
       const contract = reads[address.toLowerCase()]
       if (!contract || !(functionName in contract)) {
         throw new ContractRevert(address, functionName)
       }
-      const value = contract[functionName]
+      let value = contract[functionName]
+      if (
+        Array.isArray(value) &&
+        (functionName === 'coins' || functionName === 'balances' || functionName === 'get_dy')
+      ) {
+        value = value[Number(args?.[0])]
+        if (functionName === 'get_dy' && Array.isArray(value)) {
+          value = value[Number(args?.[1])]
+        }
+      }
       if (value instanceof Error) {
         throw value
       }

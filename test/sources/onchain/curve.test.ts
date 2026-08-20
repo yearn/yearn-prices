@@ -4,6 +4,7 @@ import { adapterOptions, fakeClient, priceWith } from './helpers'
 
 const LP = '0x1111111111111111111111111111111111111111'
 const TOKEN_A = '0x2222222222222222222222222222222222222222'
+const TOKEN_B = '0x3333333333333333333333333333333333333333'
 const CURVE_PROVIDER = '0x0000000022d53366457f9d5e68ec105046fc4383'
 const CURVE_POOL = '0x4444444444444444444444444444444444444444'
 const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
@@ -113,6 +114,98 @@ describe('curveAdapter', () => {
 
   it('returns no price when no coin count is authoritative', async () => {
     const result = await priceWith(curveAdapter(adapterOptions({ [LP]: { minter: CURVE_POOL, decimals: 18 } })), {}, LP)
+
+    expect(result.path).toBeNull()
+  })
+
+  it('derives an unpriced leg from the largest priced reserve with get_dy', async () => {
+    const derivedReads = {
+      [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
+      [CURVE_POOL]: {
+        token: LP,
+        N_COINS: 2n,
+        coins: [TOKEN_A, TOKEN_B],
+        balances: [100n * 10n ** 6n, 200n * 10n ** 18n],
+        get_dy: [
+          [0n, 500_000_000_000_000_000n],
+          [0n, 0n]
+        ]
+      },
+      [TOKEN_A]: { decimals: 6 },
+      [TOKEN_B]: { decimals: 18 }
+    }
+
+    const result = await priceWith(curveAdapter(adapterOptions(derivedReads)), { [TOKEN_B]: 2 }, LP)
+
+    expect(result.path?.priceUsd).toBeCloseTo(5)
+    expect(result.path?.metadata.valuationRule).toBe('get-dy-derived-constituents')
+    expect(result.path?.metadata.derivedCoins).toEqual([
+      {
+        coinIndex: 0,
+        address: TOKEN_A,
+        anchorCoinIndex: 1,
+        anchorAddress: TOKEN_B,
+        dxRaw: '1000000',
+        getDyRaw: '500000000000000000'
+      }
+    ])
+  })
+
+  it('does not price a missing leg when get_dy reverts', async () => {
+    const revertingReads = {
+      [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
+      [CURVE_POOL]: {
+        token: LP,
+        N_COINS: 2n,
+        coins: [TOKEN_A, TOKEN_B],
+        balances: [100n * 10n ** 6n, 200n * 10n ** 18n],
+        get_dy: new Error('execution reverted')
+      },
+      [TOKEN_A]: { decimals: 6 },
+      [TOKEN_B]: { decimals: 18 }
+    }
+
+    const result = await priceWith(curveAdapter(adapterOptions(revertingReads)), { [TOKEN_B]: 2 }, LP)
+
+    expect(result.path).toBeNull()
+  })
+
+  it('does not price a pool when no coin has a market price', async () => {
+    const unpricedReads = {
+      [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
+      [CURVE_POOL]: {
+        token: LP,
+        N_COINS: 2n,
+        coins: [TOKEN_A, TOKEN_B],
+        balances: [100n * 10n ** 6n, 200n * 10n ** 18n]
+      },
+      [TOKEN_A]: { decimals: 6 },
+      [TOKEN_B]: { decimals: 18 }
+    }
+
+    const result = await priceWith(curveAdapter(adapterOptions(unpricedReads)), {}, LP)
+
+    expect(result.path).toBeNull()
+  })
+
+  it('does not price a missing leg when get_dy returns zero', async () => {
+    const zeroReads = {
+      [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
+      [CURVE_POOL]: {
+        token: LP,
+        N_COINS: 2n,
+        coins: [TOKEN_A, TOKEN_B],
+        balances: [100n * 10n ** 6n, 200n * 10n ** 18n],
+        get_dy: [
+          [0n, 0n],
+          [0n, 0n]
+        ]
+      },
+      [TOKEN_A]: { decimals: 6 },
+      [TOKEN_B]: { decimals: 18 }
+    }
+
+    const result = await priceWith(curveAdapter(adapterOptions(zeroReads)), { [TOKEN_B]: 2 }, LP)
 
     expect(result.path).toBeNull()
   })
