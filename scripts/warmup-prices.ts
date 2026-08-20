@@ -2,6 +2,7 @@ import { config as loadEnv } from 'dotenv'
 
 loadEnv()
 
+import { fileURLToPath } from 'node:url'
 import {
   DefiLlamaClient,
   estimateBlockByTimestamp,
@@ -207,7 +208,7 @@ export function flattenResolvedPricePath(path: ResolvedPricePath): ResolvedPathN
 
 export function resolvedPathTokenPriceWrites(path: ResolvedPricePath): TokenPriceWrite[] {
   const writes = new Map<string, TokenPriceWrite>()
-  const timestamp = path.requestedTimestamp ?? path.observedTimestamp
+  const requestedTimestamp = path.requestedTimestamp ?? path.observedTimestamp
 
   for (const node of flattenResolvedPricePath(path)) {
     if (node.source === 'db') {
@@ -217,6 +218,8 @@ export function resolvedPathTokenPriceWrites(path: ResolvedPricePath): TokenPric
     if (!chain) {
       continue
     }
+    const marketSourced = node !== path && node.source !== 'derived'
+    const timestamp = marketSourced ? normalizeToEndOfDay(node.observedTimestamp) : requestedTimestamp
     const key = `${chain}:${node.token.toLowerCase()}:${timestamp}`
     if (writes.has(key)) {
       continue
@@ -235,26 +238,38 @@ export function resolvedPathTokenPriceWrites(path: ResolvedPricePath): TokenPric
   return [...writes.values()]
 }
 
+function failureChain(failure: PriceResolutionFailure): PriceResolutionFailure[] {
+  const chain = [failure]
+  let current = failure
+  while (true) {
+    const nested = current.attempts.find((attempt) => attempt.cause instanceof RecursiveDependencyError)
+    if (!nested) {
+      break
+    }
+    current = (nested.cause as RecursiveDependencyError).failure
+    chain.push(current)
+  }
+  return chain
+}
+
 export function categorizeOnchainFailure(failure: PriceResolutionFailure): OnchainFailureCategory {
-  if (failure.reason === 'retryable' || failure.reason === 'budget') {
+  const chain = failureChain(failure)
+  if (chain.some((link) => link.reason === 'retryable' || link.reason === 'budget')) {
     return 'retryable'
   }
-  if (failure.reason === 'invalid') {
+  if (chain.some((link) => link.reason === 'invalid')) {
     return 'invalid'
   }
-  if (failure.reason === 'unsupported' && failure.attempts.length === 0) {
+  const deepest = chain[chain.length - 1]
+  if (chain.length > 1 && deepest.reason === 'unsupported' && deepest.attempts.length === 0) {
     return 'not-found'
   }
   return 'unsupported'
 }
 
 export function missingUnderlyingToken(failure: PriceResolutionFailure): string {
-  for (const attempt of failure.attempts) {
-    if (attempt.cause instanceof RecursiveDependencyError) {
-      return missingUnderlyingToken(attempt.cause.failure)
-    }
-  }
-  return failure.token
+  const chain = failureChain(failure)
+  return chain[chain.length - 1].token
 }
 
 function onchainFailureReport(
@@ -341,7 +356,12 @@ function buildDefiLlamaPayloads(
   })
 }
 
-async function warmDirectPrices(vaults: NormalizedVault[], timestamps: number[], stats: WarmupStats): Promise<void> {
+async function warmDirectPrices(
+  vaults: NormalizedVault[],
+  timestamps: number[],
+  stats: WarmupStats,
+  transientFailures: Set<string>
+): Promise<void> {
   const requests = buildDirectRequests(vaults, timestamps)
   const existing = await getExistingExactTimestamps(pool, requests, 'defillama')
   stats.cacheHits += [...existing].filter((key) => {
@@ -389,47 +409,83 @@ async function warmDirectPrices(vaults: NormalizedVault[], timestamps: number[],
       stats.insertedDirect += writes.length
     } catch (error) {
       stats.failures += 1
+      for (const [tokenKey, fetchTimestamps] of Object.entries(payload)) {
+        for (const fetchTimestamp of fetchTimestamps) {
+          transientFailures.add(`${tokenKey}:${normalizeToEndOfDay(fetchTimestamp)}`)
+        }
+      }
       console.error('DeFiLlama batch failed', payload, error)
     }
   })
 }
 
-async function warmOnchainPrices(vaults: NormalizedVault[], timestamps: number[], stats: WarmupStats): Promise<void> {
+async function warmOnchainPrices(
+  vaults: NormalizedVault[],
+  timestamps: number[],
+  stats: WarmupStats,
+  transientFailures: Set<string>
+): Promise<void> {
   const requests = buildDirectRequests(vaults, timestamps)
   const existing = await getBatchHistoricalPrices(pool, requests)
   const existingKeys = new Set(existing.map((price) => `${price.chain}:${price.token}:${price.timestamp}`))
-  const missing = requests.filter((request) => {
-    const key = `${request.chain}:${request.token}:${request.timestamp}`
-    return isTodayNormalized(request.timestamp) || !existingKeys.has(key)
-  })
   const reports: OnchainFailureReport[] = []
+  const missing: HistoricalRequestTuple[] = []
+
+  for (const request of requests) {
+    const key = `${request.chain}:${request.token}:${request.timestamp}`
+    if (existingKeys.has(key)) {
+      continue
+    }
+    if (transientFailures.has(key)) {
+      recordOnchainFailure(stats, 'retryable')
+      reports.push({
+        category: 'retryable',
+        tokenKey: `${request.chain}:${request.token}`,
+        chain: request.chain,
+        timestamp: request.timestamp,
+        missingUnderlying: request.token,
+        attempts: []
+      })
+      continue
+    }
+    missing.push(request)
+  }
 
   await runInGroups(missing, async (request) => {
-    const chainId = chainNameToId(request.chain)
-    if (chainId === undefined) {
-      return
-    }
-    const marketSources = [
-      createDbHistoricalSource(pool),
-      createDefiLlamaHistoricalSource(defiLlama),
-      createDefiLlamaAliasHistoricalSource(defiLlama)
-    ]
-    const pricer = new OnchainPricer({
-      marketPrice: marketPriceResolver(marketSources),
-      clientForChain: getChainClient
-    })
-    const result = await pricer.resolvePath({ chainId, token: request.token, timestamp: request.timestamp })
+    try {
+      const chainId = chainNameToId(request.chain)
+      if (chainId === undefined) {
+        return
+      }
+      const marketSources = [
+        createDbHistoricalSource(pool),
+        createDefiLlamaHistoricalSource(defiLlama),
+        createDefiLlamaAliasHistoricalSource(defiLlama)
+      ]
+      const pricer = new OnchainPricer({
+        marketPrice: marketPriceResolver(marketSources),
+        clientForChain: getChainClient
+      })
+      const result = await pricer.resolvePath({ chainId, token: request.token, timestamp: request.timestamp })
 
-    if (!result.path) {
-      const report = onchainFailureReport(request.chain, request.token, request.timestamp, result.failure)
-      reports.push(report)
-      recordOnchainFailure(stats, report.category)
-      return
-    }
+      if (!result.path) {
+        const report = onchainFailureReport(request.chain, request.token, request.timestamp, result.failure)
+        reports.push(report)
+        recordOnchainFailure(stats, report.category)
+        return
+      }
 
-    const writes = resolvedPathTokenPriceWrites(result.path)
-    await insertTokenPrices(pool, writes)
-    stats.insertedOnchain += writes.length
+      const writes = resolvedPathTokenPriceWrites(result.path)
+      await insertTokenPrices(pool, writes)
+      stats.insertedOnchain += writes.length
+    } catch (error) {
+      stats.failures += 1
+      console.error(
+        'On-chain price failed',
+        { token: request.token, timestamp: request.timestamp, chain: request.chain },
+        error
+      )
+    }
   })
 
   printOnchainFailureReport(reports)
@@ -608,8 +664,9 @@ async function main(): Promise<void> {
     const vaults = await fetchYearnVaults()
 
     console.info(`Warmup start: ${timestamps.length} days, ${vaults.length} vaults`)
-    await warmDirectPrices(vaults, timestamps, stats)
-    await warmOnchainPrices(vaults, timestamps, stats)
+    const directTransientFailures = new Set<string>()
+    await warmDirectPrices(vaults, timestamps, stats, directTransientFailures)
+    await warmOnchainPrices(vaults, timestamps, stats, directTransientFailures)
     await warmCurveFallbackPrices(vaults, timestamps, stats)
     await warmDerivedVaultPrices(vaults, timestamps, stats)
 
@@ -627,6 +684,6 @@ async function main(): Promise<void> {
   }
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   await main()
 }
