@@ -7,15 +7,15 @@ import {
   maybe,
   normalizedAddress,
   type OnchainAdapterOptions,
+  optionalChildren,
   rawState,
   recursiveInput,
-  requireChildren,
   tokenDecimals
 } from '../context'
 import { InvalidPricingError } from '../errors'
-import { calculatePoolNavPrice } from '../math'
+import { calculatePoolNavPrice, calculateVirtualPricePegPrice, scaledRaw } from '../math'
 import { WRAPPED_NATIVE } from '../tokens'
-import type { RecursivePriceAdapter, RecursivePriceTarget } from '../types'
+import type { RecursiveAdapterQuote, RecursivePriceAdapter, RecursivePriceTarget, ResolvedPricePath } from '../types'
 
 const CURVE_ADDRESS_PROVIDER = '0x0000000022D53366457F9d5E68Ec105046FC4383' as Address
 const CURVE_NATIVE_TOKEN = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
@@ -34,6 +34,12 @@ const registryAbi = parseAbi([
 ])
 const metaRegistryAbi = parseAbi(['function get_n_coins(address) view returns (uint256)'])
 const poolCoinCountAbi = parseAbi(['function N_COINS() view returns (uint256)'])
+const virtualPriceAbi = parseAbi(['function get_virtual_price() view returns (uint256)'])
+const cryptoPoolAbi = parseAbi(['function gamma() view returns (uint256)'])
+const MAX_PEG_DIVERGENCE = 0.02
+// ponytail: a share floor, not an error bound — a depegged anchor still skews
+// the LP by its own depeg. Drop the fallback if a real reference price appears.
+const MIN_PRICED_POOL_SHARE = 1 / 3
 const coinUintAbi = parseAbi([
   'function coins(uint256) view returns (address)',
   'function balances(uint256) view returns (uint256)'
@@ -256,6 +262,91 @@ async function resolvePool(
   return poolFromRegistry(state.client, state.address, state.blockNumber, forEachRegistry)
 }
 
+/**
+ * Values a pegged pool from its virtual price when a coin has no market price.
+ * `get_virtual_price` is denominated in the pool's own unit, so one priced coin
+ * anchors the LP. Restricted to stableswap pools whose priced coins still agree
+ * on the peg: on a crypto pool, or a broken peg, that anchor is meaningless.
+ */
+async function pegFallback(
+  state: ContractContext,
+  target: RecursivePriceTarget,
+  poolAddress: string,
+  coins: CurveCoin[],
+  inputs: Array<ResolvedPricePath | null>,
+  coinCount: CurveCoinCount,
+  poolDecimals: number,
+  totalSupplyRaw: bigint
+): Promise<RecursiveAdapterQuote | null> {
+  const weighted = coins
+    .map((coin, index) => ({ coin, path: inputs[index], amount: scaledRaw(coin.balanceRaw, coin.decimals) }))
+    .filter((entry): entry is { coin: CurveCoin; path: ResolvedPricePath; amount: number } => entry.path !== null)
+  if (weighted.length === 0) {
+    return null
+  }
+
+  const prices = weighted.map((entry) => entry.path.priceUsd)
+  if (Math.max(...prices) / Math.min(...prices) - 1 > MAX_PEG_DIVERGENCE) {
+    return null
+  }
+
+  // The anchor stands in for every unpriced coin, so it has to be a real part
+  // of the pool. A dust leg says nothing about what the LP is worth.
+  const poolAmount = coins.reduce((total, coin) => total + scaledRaw(coin.balanceRaw, coin.decimals), 0)
+  const pricedAmount = weighted.reduce((total, entry) => total + entry.amount, 0)
+  if (poolAmount <= 0 || pricedAmount / poolAmount < MIN_PRICED_POOL_SHARE) {
+    return null
+  }
+
+  const isCryptoPool = await maybe(() =>
+    state.client.readContract({
+      address: poolAddress as Address,
+      abi: cryptoPoolAbi,
+      functionName: 'gamma',
+      blockNumber: state.blockNumber
+    })
+  )
+  if (isCryptoPool != null) {
+    return null
+  }
+
+  const virtualPriceRaw = await maybe(() =>
+    state.client.readContract({
+      address: poolAddress as Address,
+      abi: virtualPriceAbi,
+      functionName: 'get_virtual_price',
+      blockNumber: state.blockNumber
+    })
+  )
+  if (virtualPriceRaw == null) {
+    return null
+  }
+
+  const anchor = weighted.reduce((largest, entry) => (entry.amount > largest.amount ? entry : largest)).path
+  return {
+    priceUsd: calculateVirtualPricePegPrice(virtualPriceRaw, anchor.priceUsd),
+    blockNumber: state.numericBlockNumber,
+    inputs: [
+      recursiveInput(anchor, {
+        method: 'curve-virtual-price-peg',
+        virtualPriceRaw: rawState(virtualPriceRaw)
+      })
+    ],
+    metadata: {
+      ...blockEvidence(state, target),
+      poolAddress,
+      coinCount: coinCount.count,
+      coinCountSource: coinCount.source,
+      valuationRule: 'virtual-price-peg',
+      totalSupplyRaw: rawState(totalSupplyRaw),
+      poolDecimals,
+      anchorCoin: anchor.token,
+      pricedPoolShare: pricedAmount / poolAmount,
+      unpricedCoins: coins.filter((_, index) => inputs[index] === null).map((coin) => coin.address)
+    }
+  }
+}
+
 export function curveAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
   return {
     name: 'curve-reserve-nav',
@@ -306,14 +397,18 @@ export function curveAdapter(options: OnchainAdapterOptions): RecursivePriceAdap
           functionName: 'totalSupply',
           blockNumber: state.blockNumber
         }),
-        requireChildren(
+        optionalChildren(
           context,
           target,
           coins.map((coin) => coin.address),
-          state.numericBlockNumber,
-          'Curve constituent'
+          state.numericBlockNumber
         )
       ])
+
+      if (inputs.some((path) => path === null)) {
+        return pegFallback(state, target, poolAddress, coins, inputs, coinCount, poolDecimals, totalSupplyRaw)
+      }
+      const pricedInputs = inputs as ResolvedPricePath[]
       const metadata = {
         ...blockEvidence(state, target),
         poolAddress,
@@ -331,12 +426,12 @@ export function curveAdapter(options: OnchainAdapterOptions): RecursivePriceAdap
       }
       return {
         priceUsd: calculatePoolNavPrice(
-          coins.map((coin, index) => ({ ...coin, priceUsd: inputs[index].priceUsd })),
+          coins.map((coin, index) => ({ ...coin, priceUsd: pricedInputs[index].priceUsd })),
           totalSupplyRaw,
           poolDecimals
         ),
         blockNumber: state.numericBlockNumber,
-        inputs: inputs.map((path, index) =>
+        inputs: pricedInputs.map((path, index) =>
           recursiveInput(path, {
             method: 'curve-reserve-nav',
             balanceRaw: rawState(coins[index].balanceRaw),

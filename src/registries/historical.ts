@@ -21,8 +21,10 @@ function marketPriceResolver(marketSources: HistoricalPriceSource[]) {
   )
 }
 
-export function createHistoricalSources(env?: Env): HistoricalPriceSource[] {
-  const client = new DefiLlamaClient()
+export function createHistoricalSources(
+  env?: Env,
+  client: DefiLlamaClient = new DefiLlamaClient()
+): HistoricalPriceSource[] {
   const marketSources = [createDefiLlamaHistoricalSource(client), createDefiLlamaAliasHistoricalSource(client)]
 
   return [

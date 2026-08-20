@@ -15,6 +15,19 @@ class ContractRevert extends Error {
   }
 }
 
+/** Answers per call index, so one pool can hold distinct coins. */
+class IndexedReads {
+  constructor(private readonly values: unknown[]) {}
+
+  at(index: unknown): unknown {
+    return typeof index === 'bigint' ? this.values[Number(index)] : undefined
+  }
+}
+
+export function byIndex(values: unknown[]): unknown {
+  return new IndexedReads(values)
+}
+
 /**
  * Fake client keyed by lowercase address then function name. A missing entry
  * reverts, which is how an adapter learns a contract lacks an interface.
@@ -27,12 +40,24 @@ export function fakeClient(reads: ContractReads): PublicClient {
     async getBlock() {
       return { number: BLOCK_NUMBER, timestamp: BigInt(BLOCK_TIMESTAMP) }
     },
-    async readContract({ address, functionName }: { address: string; functionName: string }) {
+    async readContract({
+      address,
+      functionName,
+      args
+    }: {
+      address: string
+      functionName: string
+      args?: readonly unknown[]
+    }) {
       const contract = reads[address.toLowerCase()]
       if (!contract || !(functionName in contract)) {
         throw new ContractRevert(address, functionName)
       }
-      const value = contract[functionName]
+      const entry = contract[functionName]
+      const value = entry instanceof IndexedReads ? entry.at(args?.[0]) : entry
+      if (value === undefined) {
+        throw new ContractRevert(address, functionName)
+      }
       if (value instanceof Error) {
         throw value
       }

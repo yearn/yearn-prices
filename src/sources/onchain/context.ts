@@ -217,6 +217,19 @@ export function recursiveInput(path: ResolvedPricePath, conversion: Record<strin
   return { path, conversion }
 }
 
+/** Prices what it can, leaving a null where a constituent has no price. */
+export async function optionalChildren(
+  context: RecursivePriceContext,
+  parent: RecursivePriceTarget,
+  addresses: string[],
+  blockNumber: number
+): Promise<Array<ResolvedPricePath | null>> {
+  const results = await Promise.all(
+    addresses.map((address) => context.resolve(childTarget(parent, address, blockNumber)))
+  )
+  return results.map((result) => result.path ?? null)
+}
+
 /** Prices every constituent of a basket, failing the basket if any is missing. */
 export async function requireChildren(
   context: RecursivePriceContext,

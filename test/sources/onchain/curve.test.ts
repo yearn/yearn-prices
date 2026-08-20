@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { curveAdapter } from '../../../src/sources/onchain/adapters/curve'
-import { adapterOptions, fakeClient, priceWith } from './helpers'
+import { adapterOptions, byIndex, fakeClient, priceWith } from './helpers'
 
 const LP = '0x1111111111111111111111111111111111111111'
 const TOKEN_A = '0x2222222222222222222222222222222222222222'
 const CURVE_PROVIDER = '0x0000000022d53366457f9d5e68ec105046fc4383'
 const CURVE_POOL = '0x4444444444444444444444444444444444444444'
+const TOKEN_B = '0x3333333333333333333333333333333333333333'
 const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
 
 const reads = {
@@ -84,6 +85,70 @@ describe('curveAdapter', () => {
 
     expect(result.path?.metadata.coinCountSource).toBe('curve-registry')
     expect(providerReads).toBe(1)
+  })
+
+  it('prices a pegged pool from its virtual price when a coin has no market price', async () => {
+    const pegReads = {
+      [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
+      [CURVE_POOL]: {
+        token: LP,
+        N_COINS: 2n,
+        coins: byIndex([TOKEN_A, TOKEN_B]),
+        balances: byIndex([100n * 10n ** 6n, 100n * 10n ** 18n]),
+        get_virtual_price: 1_020_000_000_000_000_000n
+      },
+      [TOKEN_A]: { decimals: 6 },
+      [TOKEN_B]: { decimals: 18 }
+    }
+
+    const anchored = await priceWith(curveAdapter(adapterOptions(pegReads)), { [TOKEN_A]: 2 }, LP)
+
+    expect(anchored.path?.priceUsd).toBeCloseTo(2.04)
+    expect(anchored.path?.metadata.valuationRule).toBe('virtual-price-peg')
+    expect(anchored.path?.metadata.unpricedCoins).toEqual([TOKEN_B])
+
+    const unanchored = await priceWith(curveAdapter(adapterOptions(pegReads)), {}, LP)
+
+    expect(unanchored.path).toBeNull()
+  })
+
+  it('cannot anchor the virtual price on a dust leg', async () => {
+    const dustReads = {
+      [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
+      [CURVE_POOL]: {
+        token: LP,
+        N_COINS: 2n,
+        coins: byIndex([TOKEN_A, TOKEN_B]),
+        balances: byIndex([1n * 10n ** 6n, 100_000n * 10n ** 18n]),
+        get_virtual_price: 1_020_000_000_000_000_000n
+      },
+      [TOKEN_A]: { decimals: 6 },
+      [TOKEN_B]: { decimals: 18 }
+    }
+
+    const result = await priceWith(curveAdapter(adapterOptions(dustReads)), { [TOKEN_A]: 2 }, LP)
+
+    expect(result.path).toBeNull()
+  })
+
+  it('cannot use the virtual price on a crypto pool', async () => {
+    const cryptoReads = {
+      [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
+      [CURVE_POOL]: {
+        token: LP,
+        N_COINS: 2n,
+        coins: byIndex([TOKEN_A, TOKEN_B]),
+        balances: byIndex([100n * 10n ** 6n, 100n * 10n ** 18n]),
+        get_virtual_price: 1_020_000_000_000_000_000n,
+        gamma: 1n
+      },
+      [TOKEN_A]: { decimals: 6 },
+      [TOKEN_B]: { decimals: 18 }
+    }
+
+    const result = await priceWith(curveAdapter(adapterOptions(cryptoReads)), { [TOKEN_A]: 2 }, LP)
+
+    expect(result.path).toBeNull()
   })
 
   it('refuses a token whose minter does not claim it as its LP', async () => {

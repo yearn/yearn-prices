@@ -81,3 +81,16 @@ export function calculatePoolNavPrice(
   }
   return price
 }
+
+/**
+ * Prices a pegged Curve LP as `get_virtual_price() * price(anchor coin)`.
+ * Valid only where every pool coin tracks the same asset, so the anchor's USD
+ * price stands in for all of them.
+ */
+export function calculateVirtualPricePegPrice(virtualPriceRaw: bigint, anchorPriceUsd: number): number {
+  const price = scaledRaw(virtualPriceRaw, 18) * anchorPriceUsd
+  if (!Number.isFinite(price) || price <= 0) {
+    throw new InvalidPricingError('Curve virtual price produced an invalid price')
+  }
+  return price
+}
