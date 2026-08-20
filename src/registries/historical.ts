@@ -1,6 +1,10 @@
 import { DefiLlamaClient } from '../clients/defillama'
 import { getChainClient } from '../clients/rpc'
-import { createDefiLlamaAliasHistoricalSource, createDefiLlamaHistoricalSource } from '../sources'
+import {
+  createChainlinkHistoricalSource,
+  createDefiLlamaAliasHistoricalSource,
+  createDefiLlamaHistoricalSource
+} from '../sources'
 import { createOnchainHistoricalSource } from '../sources/onchain'
 import type { HistoricalPrice, HistoricalPriceSource } from '../sources/types'
 import type { Env } from '../types'
@@ -23,7 +27,11 @@ function marketPriceResolver(marketSources: HistoricalPriceSource[]) {
 
 export function createHistoricalSources(env?: Env): HistoricalPriceSource[] {
   const client = new DefiLlamaClient()
-  const marketSources = [createDefiLlamaHistoricalSource(client), createDefiLlamaAliasHistoricalSource(client)]
+  const marketSources = [
+    createDefiLlamaHistoricalSource(client),
+    createChainlinkHistoricalSource({ env }),
+    createDefiLlamaAliasHistoricalSource(client)
+  ]
 
   return [
     ...marketSources,
