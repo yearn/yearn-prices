@@ -13,6 +13,7 @@ import {
 } from '../src/backfill/constants'
 import { manifestDigest, type NormalizedTarget, parseManifest } from '../src/backfill/manifest'
 import { type MatchResult, matchChartObservation } from '../src/backfill/matcher'
+import { groupContiguousRanges as groupRanges } from '../src/backfill/ranges'
 import { DefiLlamaClient, SlidingWindowRateLimiter } from '../src/clients'
 import { createPool, getBatchHistoricalPrices } from '../src/db'
 import {
@@ -153,35 +154,12 @@ export function groupContiguousRanges(
   identifierOf: (target: NormalizedTarget) => string,
   maximumSpanDays: number
 ): TargetRange[] {
-  const byIdentifier = new Map<string, Array<{ cohort: Cohort; target: NormalizedTarget }>>()
-  for (const item of items) {
-    const identifier = identifierOf(item.target)
-    const group = byIdentifier.get(identifier) ?? []
-    group.push(item)
-    byIdentifier.set(identifier, group)
-  }
-
-  const ranges: TargetRange[] = []
-  for (const [identifier, group] of byIdentifier) {
-    const sorted = [...group].sort((left, right) => left.target.eodTimestamp - right.target.eodTimestamp)
-
-    let current: TargetRange | null = null
-    for (const item of sorted) {
-      const eod = item.target.eodTimestamp
-      const spanDays = current ? (eod - current.rangeStart) / DAY_SECONDS + 1 : 0
-
-      if (current && eod === current.rangeEnd + DAY_SECONDS && spanDays <= maximumSpanDays) {
-        current.rangeEnd = eod
-        current.items.push(item)
-        continue
-      }
-
-      current = { identifier, rangeStart: eod, rangeEnd: eod, items: [item] }
-      ranges.push(current)
-    }
-  }
-
-  return ranges
+  return groupRanges(
+    items,
+    (item) => identifierOf(item.target),
+    (item) => item.target.eodTimestamp,
+    maximumSpanDays
+  )
 }
 
 export function matchChartResponse(

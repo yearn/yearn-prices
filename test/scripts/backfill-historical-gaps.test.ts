@@ -319,7 +319,8 @@ describe('runBackfill', () => {
 
     expect(result.exitCode).toBe(1)
     const report = readReport(reportPath)
-    expect(report.summary.finalizationLockFailures).toBe(4)
+    expect(report.summary.finalizationLockFailures).toBe(1)
+    expect(report.summary.finalizationLockRetries).toBe(3)
     expect(report.fatal?.message).toContain('lock')
   })
 

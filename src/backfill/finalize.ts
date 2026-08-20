@@ -1,9 +1,9 @@
 import type { Pool } from '@neondatabase/serverless'
-import { getBatchHistoricalPrices } from '../db/queries'
-import type { HistoricalRequestTuple, PriceSource } from '../types'
+import type { PriceSource } from '../types'
 import { pgTimestampToUnix, unixToIsoTimestamp } from '../utils/time'
 import { EXACT_READ_CHUNK_SIZE, FINALIZATION_BATCH_SIZE, FINALIZATION_LOCK_RETRY_LIMIT } from './constants'
 import { chunk, deleteInventoryRows, type InventoryKey, upsertInventoryRows } from './inventory'
+import { priceKey, readPricedKeys } from './priced-keys'
 
 const LOCK_NOT_AVAILABLE = '55P03'
 const TIMEOUT_LITERAL_PATTERN = /^\d+(ms|s|min)$/
@@ -90,10 +90,6 @@ function isLockTimeout(error: unknown): boolean {
   return (error as { code?: string } | null)?.code === LOCK_NOT_AVAILABLE
 }
 
-function targetKey(chain: string, token: string, timestamp: number): string {
-  return `${chain}:${token}:${timestamp}`
-}
-
 function inventoryKey(target: FinalizationTarget): InventoryKey {
   return {
     chainId: target.chainId,
@@ -111,28 +107,6 @@ function toResult(target: FinalizationTarget, status: FinalizationStatus): Final
     eodTimestamp: target.eodTimestamp,
     status
   }
-}
-
-async function readPricedKeys(
-  client: BackfillClient,
-  targets: FinalizationTarget[],
-  readChunkSize: number
-): Promise<Set<string>> {
-  const priced = new Set<string>()
-  const requests: HistoricalRequestTuple[] = targets.map((target) => ({
-    chain: target.chain,
-    token: target.token,
-    timestamp: target.eodTimestamp
-  }))
-
-  for (const requestChunk of chunk(requests, readChunkSize)) {
-    const rows = await getBatchHistoricalPrices(client as unknown as Pool, requestChunk)
-    for (const row of rows) {
-      priced.add(targetKey(row.chain, row.token, row.timestamp))
-    }
-  }
-
-  return priced
 }
 
 async function insertResolvedTargets(client: BackfillClient, targets: FinalizationTarget[]): Promise<Set<string>> {
@@ -171,7 +145,7 @@ async function insertResolvedTargets(client: BackfillClient, targets: Finalizati
 
   const inserted = new Set<string>()
   for (const row of result.rows) {
-    inserted.add(targetKey(row.chain as string, row.token as string, pgTimestampToUnix(row.timestamp as string | Date)))
+    inserted.add(priceKey(row.chain as string, row.token as string, pgTimestampToUnix(row.timestamp as string | Date)))
   }
   return inserted
 }
@@ -182,14 +156,14 @@ async function applyBatch(
   readChunkSize: number,
   write: boolean
 ): Promise<FinalizationTargetResult[]> {
-  const priced = await readPricedKeys(client, batch, readChunkSize)
+  const priced = await readPricedKeys(client as unknown as Pool, batch, readChunkSize)
 
   const concurrent: FinalizationTarget[] = []
   const resolved: FinalizationTarget[] = []
   const unresolved: FinalizationTarget[] = []
 
   for (const target of batch) {
-    if (priced.has(targetKey(target.chain, target.token, target.eodTimestamp))) {
+    if (priced.has(priceKey(target.chain, target.token, target.eodTimestamp))) {
       concurrent.push(target)
     } else if (target.resolution) {
       resolved.push(target)
@@ -214,7 +188,7 @@ async function applyBatch(
 
   const settled: FinalizationTarget[] = [...concurrent]
   for (const target of resolved) {
-    const inserted = insertedKeys.has(targetKey(target.chain, target.token, target.eodTimestamp))
+    const inserted = insertedKeys.has(priceKey(target.chain, target.token, target.eodTimestamp))
     results.push(toResult(target, inserted ? 'inserted' : 'skipped_concurrent_existing'))
     settled.push(target)
   }

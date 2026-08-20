@@ -26,15 +26,16 @@ import {
 import { chunk, deleteInventoryRows } from '../src/backfill/inventory'
 import { ManifestError, manifestDigest, type NormalizedTarget, parseManifest } from '../src/backfill/manifest'
 import { matchChartObservation } from '../src/backfill/matcher'
+import { priceKey, readPricedKeys } from '../src/backfill/priced-keys'
+import { groupContiguousRanges as groupRanges } from '../src/backfill/ranges'
 import { DefiLlamaClient, SlidingWindowRateLimiter } from '../src/clients'
 import { HttpRequestError } from '../src/clients/http-client'
-import { createPool, getBatchHistoricalPrices } from '../src/db'
+import { createPool } from '../src/db'
 import {
   getDefiLlamaCoinGeckoAlias,
   isDefiLlamaAliasValidAt,
   listDefiLlamaCoinGeckoAliases
 } from '../src/sources/defillama/aliases'
-import type { HistoricalRequestTuple } from '../src/types'
 
 const DAY_SECONDS = 86_400
 
@@ -157,39 +158,16 @@ export function groupContiguousRanges(
   identifierOf: (target: NormalizedTarget) => string,
   maximumSpanDays: number
 ): TargetRange[] {
-  const byIdentifier = new Map<string, NormalizedTarget[]>()
-  for (const target of targets) {
-    const identifier = identifierOf(target)
-    const group = byIdentifier.get(identifier) ?? []
-    group.push(target)
-    byIdentifier.set(identifier, group)
-  }
-
-  const ranges: TargetRange[] = []
-  for (const [identifier, group] of byIdentifier) {
-    const sorted = [...group].sort((left, right) => left.eodTimestamp - right.eodTimestamp)
-
-    let current: TargetRange | null = null
-    for (const target of sorted) {
-      const eod = target.eodTimestamp
-      const spanDays = current ? (eod - current.rangeStart) / DAY_SECONDS + 1 : 0
-
-      if (current && eod === current.rangeEnd + DAY_SECONDS && spanDays <= maximumSpanDays) {
-        current.rangeEnd = eod
-        current.targets.push(target)
-        continue
-      }
-
-      current = { identifier, rangeStart: eod, rangeEnd: eod, targets: [target] }
-      ranges.push(current)
-    }
-  }
-
-  return ranges
+  return groupRanges(targets, identifierOf, (target) => target.eodTimestamp, maximumSpanDays).map((range) => ({
+    identifier: range.identifier,
+    rangeStart: range.rangeStart,
+    rangeEnd: range.rangeEnd,
+    targets: range.items
+  }))
 }
 
 function targetKey(target: { chain: string; token: string; eodTimestamp: number }): string {
-  return `${target.chain}:${target.token}:${target.eodTimestamp}`
+  return priceKey(target.chain, target.token, target.eodTimestamp)
 }
 
 function toolVersion(): string {
@@ -223,28 +201,6 @@ export function checkpointPath(reportPath: string): string {
 
 export function writeReport(reportPath: string, report: BackfillReport): void {
   writeAtomically(reportPath, report)
-}
-
-async function readPricedKeys(
-  pool: BackfillPool,
-  targets: NormalizedTarget[],
-  readChunkSize: number
-): Promise<Set<string>> {
-  const priced = new Set<string>()
-  const requests: HistoricalRequestTuple[] = targets.map((target) => ({
-    chain: target.chain,
-    token: target.token,
-    timestamp: target.eodTimestamp
-  }))
-
-  for (const requestChunk of chunk(requests, readChunkSize)) {
-    const rows = await getBatchHistoricalPrices(pool as unknown as Pool, requestChunk)
-    for (const row of rows) {
-      priced.add(`${row.chain}:${row.token}:${row.timestamp}`)
-    }
-  }
-
-  return priced
 }
 
 export async function preflightTokenCasings(
@@ -298,6 +254,7 @@ interface RunState {
   resolvedDirect: number
   resolvedAlias: number
   lockRetries: number
+  lockFailures: number
 }
 
 function newRecord(target: NormalizedTarget, status: TargetStatus): TargetRecord {
@@ -450,7 +407,8 @@ export async function runBackfill(options: BackfillOptions, deps: BackfillDeps):
     invalidProviderResponses: 0,
     resolvedDirect: 0,
     resolvedAlias: 0,
-    lockRetries: 0
+    lockRetries: 0,
+    lockFailures: 0
   }
 
   const report: BackfillReport = {
@@ -488,7 +446,7 @@ export async function runBackfill(options: BackfillOptions, deps: BackfillDeps):
 
     await preflightTokenCasings(deps.pool, manifest.targets, readChunkSize)
 
-    const priced = await readPricedKeys(deps.pool, manifest.targets, readChunkSize)
+    const priced = await readPricedKeys(deps.pool as unknown as Pool, manifest.targets, readChunkSize)
     const skippedExisting: NormalizedTarget[] = []
     const gapTargets: NormalizedTarget[] = []
     for (const target of manifest.targets) {
@@ -601,7 +559,8 @@ export async function runBackfill(options: BackfillOptions, deps: BackfillDeps):
     return { exitCode: unresolved > 0 ? 2 : 0, report }
   } catch (error) {
     if (error instanceof FinalizationLockError) {
-      state.lockRetries += error.attempts
+      state.lockFailures += 1
+      state.lockRetries += error.attempts - 1
     }
     finishReport(report, state, { requestedCount, duplicateCount, alreadyPriced, write: options.write })
     const planned =
@@ -666,7 +625,8 @@ function applyReportState(report: BackfillReport, state: RunState, counts: Repor
     pending: targets.filter((record) => record.status === 'pending').length,
     providerRetryFailures: state.requestFailures,
     invalidProviderResponses: state.invalidProviderResponses,
-    finalizationLockFailures: state.lockRetries,
+    finalizationLockFailures: state.lockFailures,
+    finalizationLockRetries: state.lockRetries,
     inserted: counts.write ? insertedRecords.length : 0,
     projectedInserted: counts.write ? 0 : projected
   }
