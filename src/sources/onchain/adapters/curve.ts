@@ -7,13 +7,13 @@ import {
   maybe,
   normalizedAddress,
   type OnchainAdapterOptions,
+  optionalChildren,
   rawState,
   recursiveInput,
-  requireChildren,
   tokenDecimals
 } from '../context'
 import { InvalidPricingError } from '../errors'
-import { calculatePoolNavPrice } from '../math'
+import { calculatePoolNavPrice, scaledRaw } from '../math'
 import { WRAPPED_NATIVE } from '../tokens'
 import type { RecursivePriceAdapter, RecursivePriceTarget } from '../types'
 
@@ -42,6 +42,8 @@ const coinIntAbi = parseAbi([
   'function coins(int128) view returns (address)',
   'function balances(int128) view returns (uint256)'
 ])
+const getDyUintAbi = parseAbi(['function get_dy(uint256,uint256,uint256) view returns (uint256)'])
+const getDyIntAbi = parseAbi(['function get_dy(int128,int128,uint256) view returns (uint256)'])
 
 interface CurveCoin {
   address: string
@@ -53,6 +55,15 @@ interface CurveCoin {
 interface CurveCoinCount {
   count: number
   source: 'pool-N_COINS' | 'curve-registry' | 'curve-metaregistry'
+}
+
+interface DerivedCurveCoin {
+  coinIndex: number
+  address: string
+  anchorCoinIndex: number
+  anchorAddress: string
+  dxRaw: bigint
+  getDyRaw: bigint
 }
 
 type RegistryWalk = <T>(visit: (registry: Address) => Promise<T | null>) => Promise<T | null>
@@ -148,6 +159,37 @@ async function readCoinAddress(
   }
   const address = normalizedAddress(intAddress)
   return address ? { address, indexType: 'int128' } : null
+}
+
+async function readGetDy(
+  client: PublicClient,
+  poolAddress: Address,
+  fromIndex: number,
+  toIndex: number,
+  dxRaw: bigint,
+  blockNumber: bigint
+): Promise<bigint | null> {
+  const uintQuote = await maybe(() =>
+    client.readContract({
+      address: poolAddress,
+      abi: getDyUintAbi,
+      functionName: 'get_dy',
+      args: [BigInt(fromIndex), BigInt(toIndex), dxRaw],
+      blockNumber
+    })
+  )
+  if (uintQuote != null) {
+    return uintQuote
+  }
+  return maybe(() =>
+    client.readContract({
+      address: poolAddress,
+      abi: getDyIntAbi,
+      functionName: 'get_dy',
+      args: [BigInt(fromIndex), BigInt(toIndex), dxRaw],
+      blockNumber
+    })
+  )
 }
 
 function validCoinCount(value: bigint): number | null {
@@ -306,20 +348,83 @@ export function curveAdapter(options: OnchainAdapterOptions): RecursivePriceAdap
           functionName: 'totalSupply',
           blockNumber: state.blockNumber
         }),
-        requireChildren(
+        optionalChildren(
           context,
           target,
           coins.map((coin) => coin.address),
-          state.numericBlockNumber,
-          'Curve constituent'
+          state.numericBlockNumber
         )
       ])
+
+      const prices = inputs.map((path) => path?.priceUsd ?? null)
+      const derivedCoins: DerivedCurveCoin[] = []
+      const missingIndexes = inputs.flatMap((path, index) => (path ? [] : [index]))
+      if (missingIndexes.length > 0) {
+        const pricedIndexes = inputs.flatMap((path, index) => (path ? [index] : []))
+        if (pricedIndexes.length === 0) {
+          return null
+        }
+        let anchorIndex = pricedIndexes[0]
+        let anchorBalance = scaledRaw(coins[anchorIndex].balanceRaw, coins[anchorIndex].decimals)
+        for (const index of pricedIndexes.slice(1)) {
+          const balance = scaledRaw(coins[index].balanceRaw, coins[index].decimals)
+          if (balance > anchorBalance) {
+            anchorIndex = index
+            anchorBalance = balance
+          }
+        }
+        const totalBalance = coins.reduce((sum, coin) => sum + scaledRaw(coin.balanceRaw, coin.decimals), 0)
+        if (!Number.isFinite(totalBalance) || totalBalance <= 0 || anchorBalance / totalBalance < 0.01) {
+          return null
+        }
+        const anchorPrice = prices[anchorIndex]
+        if (anchorPrice == null || !Number.isFinite(anchorPrice) || anchorPrice <= 0) {
+          return null
+        }
+        for (const index of missingIndexes) {
+          const decimals = coins[index].decimals
+          if (!Number.isInteger(decimals) || decimals < 0 || decimals > 255) {
+            return null
+          }
+          const dxRaw = 10n ** BigInt(decimals)
+          const getDyRaw = await readGetDy(
+            state.client,
+            poolAddress as Address,
+            index,
+            anchorIndex,
+            dxRaw,
+            state.blockNumber
+          )
+          if (getDyRaw == null || getDyRaw === 0n) {
+            return null
+          }
+          let derivedPrice: number
+          try {
+            derivedPrice = scaledRaw(getDyRaw, coins[anchorIndex].decimals) * anchorPrice
+          } catch {
+            return null
+          }
+          if (!Number.isFinite(derivedPrice) || derivedPrice <= 0) {
+            return null
+          }
+          prices[index] = derivedPrice
+          derivedCoins.push({
+            coinIndex: index,
+            address: coins[index].address,
+            anchorCoinIndex: anchorIndex,
+            anchorAddress: coins[anchorIndex].address,
+            dxRaw,
+            getDyRaw
+          })
+        }
+      }
+
       const metadata = {
         ...blockEvidence(state, target),
         poolAddress,
         coinCount: coinCount.count,
         coinCountSource: coinCount.source,
-        valuationRule: 'all-constituents-required',
+        valuationRule: missingIndexes.length === 0 ? 'all-constituents-required' : 'get-dy-derived-constituents',
         totalSupplyRaw: rawState(totalSupplyRaw),
         poolDecimals,
         coins: coins.map((coin) => ({
@@ -327,21 +432,37 @@ export function curveAdapter(options: OnchainAdapterOptions): RecursivePriceAdap
           onchainAddress: coin.onchainAddress,
           decimals: coin.decimals,
           balanceRaw: rawState(coin.balanceRaw)
-        }))
+        })),
+        ...(derivedCoins.length > 0
+          ? {
+              derivedCoins: derivedCoins.map((derived) => ({
+                coinIndex: derived.coinIndex,
+                address: derived.address,
+                anchorCoinIndex: derived.anchorCoinIndex,
+                anchorAddress: derived.anchorAddress,
+                dxRaw: rawState(derived.dxRaw),
+                getDyRaw: rawState(derived.getDyRaw)
+              }))
+            }
+          : {})
       }
       return {
         priceUsd: calculatePoolNavPrice(
-          coins.map((coin, index) => ({ ...coin, priceUsd: inputs[index].priceUsd })),
+          coins.map((coin, index) => ({ ...coin, priceUsd: prices[index] as number })),
           totalSupplyRaw,
           poolDecimals
         ),
         blockNumber: state.numericBlockNumber,
-        inputs: inputs.map((path, index) =>
-          recursiveInput(path, {
-            method: 'curve-reserve-nav',
-            balanceRaw: rawState(coins[index].balanceRaw),
-            decimals: coins[index].decimals
-          })
+        inputs: inputs.flatMap((path, index) =>
+          path
+            ? [
+                recursiveInput(path, {
+                  method: 'curve-reserve-nav',
+                  balanceRaw: rawState(coins[index].balanceRaw),
+                  decimals: coins[index].decimals
+                })
+              ]
+            : []
         ),
         metadata
       }

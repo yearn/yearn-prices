@@ -227,3 +227,15 @@ export async function requireChildren(
 ): Promise<ResolvedPricePath[]> {
   return Promise.all(addresses.map((address) => context.require(childTarget(parent, address, blockNumber), label)))
 }
+
+export async function optionalChildren(
+  context: RecursivePriceContext,
+  parent: RecursivePriceTarget,
+  addresses: string[],
+  blockNumber: number
+): Promise<Array<ResolvedPricePath | null>> {
+  const results = await Promise.all(
+    addresses.map((address) => context.resolve(childTarget(parent, address, blockNumber)))
+  )
+  return results.map((result) => result.path)
+}
