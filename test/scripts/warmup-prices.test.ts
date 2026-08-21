@@ -3,10 +3,19 @@ import {
   categorizeOnchainFailure,
   flattenResolvedPricePath,
   missingUnderlyingToken,
-  resolvedPathTokenPriceWrites
+  type NormalizedVault,
+  type OnchainWarmupDeps,
+  resolvedPathTokenPriceWrites,
+  warmOnchainPrices,
+  type WarmupStats
 } from '../../scripts/warmup-prices'
 import { RecursiveDependencyError } from '../../src/sources/onchain/errors'
-import type { PriceResolutionFailure, ResolvedPricePath } from '../../src/sources/onchain/types'
+import type {
+  PriceResolutionFailure,
+  RecursivePriceResult,
+  RecursivePriceTarget,
+  ResolvedPricePath
+} from '../../src/sources/onchain/types'
 import { normalizeToEndOfDay } from '../../src/utils'
 
 const ROOT = '0x1111111111111111111111111111111111111111'
@@ -32,6 +41,8 @@ function path(): ResolvedPricePath {
         token: INTERMEDIATE,
         observedTimestamp: 100,
         priceUsd: 3,
+        symbol: 'MID',
+        confidence: 0.5,
         source: 'derived',
         adapter: 'intermediate',
         inputs: [
@@ -40,6 +51,8 @@ function path(): ResolvedPricePath {
             token: LEAF,
             observedTimestamp: 100,
             priceUsd: 2,
+            symbol: 'LEAF',
+            confidence: 0.8,
             source: 'db',
             adapter: 'db'
           }
@@ -50,6 +63,8 @@ function path(): ResolvedPricePath {
         token: INTERMEDIATE,
         observedTimestamp: 100,
         priceUsd: 3,
+        symbol: 'MID',
+        confidence: 0.5,
         source: 'derived',
         adapter: 'intermediate'
       }
@@ -67,8 +82,8 @@ describe('warmup on-chain helpers', () => {
         token: INTERMEDIATE,
         timestamp: 100,
         price: 3,
-        symbol: null,
-        confidence: null,
+        symbol: 'MID',
+        confidence: 0.5,
         source: 'derived'
       },
       {
@@ -116,6 +131,8 @@ describe('warmup on-chain helpers', () => {
           token: LEAF,
           observedTimestamp: observedLeafDay,
           priceUsd: 2,
+          symbol: 'LEAF',
+          confidence: 0.42,
           source: 'defillama',
           adapter: 'defillama'
         }
@@ -128,8 +145,8 @@ describe('warmup on-chain helpers', () => {
         token: LEAF,
         timestamp: observedLeafDay,
         price: 2,
-        symbol: null,
-        confidence: null,
+        symbol: 'LEAF',
+        confidence: 0.42,
         source: 'defillama'
       },
       {
@@ -206,5 +223,153 @@ describe('warmup on-chain helpers', () => {
     }
 
     expect(missingUnderlyingToken(rootFailure)).toBe(LEAF)
+  })
+})
+
+const VAULT_TOKEN = '0x4444444444444444444444444444444444444444' as const
+const UNDERLYING_TOKEN = '0x5555555555555555555555555555555555555555' as const
+
+function makeStats(): WarmupStats {
+  return {
+    cacheHits: 0,
+    apiCalls: 0,
+    retries: 0,
+    failures: 0,
+    insertedDirect: 0,
+    insertedOnchain: 0,
+    insertedDerived: 0,
+    insertedCurve: 0,
+    onchainRetryable: 0,
+    onchainInvalid: 0,
+    onchainUnsupported: 0,
+    onchainNotFound: 0
+  }
+}
+
+function makeVault(): NormalizedVault {
+  return {
+    chain: 'ethereum',
+    chainId: 1,
+    vaultToken: VAULT_TOKEN,
+    underlyingToken: UNDERLYING_TOKEN,
+    symbol: 'VLT',
+    apiVersion: null,
+    decimals: 18
+  }
+}
+
+function existingRecord(token: string, timestamp: number) {
+  return { chain: 'ethereum', token, timestamp, price: 1, confidence: null, source: 'db' as const, symbol: null }
+}
+
+function successPath(target: RecursivePriceTarget): ResolvedPricePath {
+  return {
+    chainId: target.chainId,
+    token: target.token,
+    requestedTimestamp: target.timestamp,
+    observedTimestamp: target.timestamp ?? 0,
+    priceUsd: 3,
+    symbol: 'TKN',
+    confidence: 0.9,
+    source: 'defillama',
+    adapter: 'defillama',
+    blockNumber: null,
+    metadata: {},
+    inputs: []
+  }
+}
+
+function makeDeps(over: Partial<OnchainWarmupDeps>): OnchainWarmupDeps {
+  return {
+    pool: {} as OnchainWarmupDeps['pool'],
+    defiLlama: {} as OnchainWarmupDeps['defiLlama'],
+    getBatch: async () => [],
+    insert: async () => {},
+    makePricer: () => ({
+      resolvePath: async (): Promise<RecursivePriceResult> => ({
+        path: null,
+        failure: { reason: 'unsupported', token: '', attempts: [] }
+      })
+    }),
+    ...over
+  }
+}
+
+describe('warmOnchainPrices orchestration', () => {
+  const timestamps = [100]
+
+  it('skips requests already stored and writes nothing', async () => {
+    const stats = makeStats()
+    let inserted = 0
+    let priced = 0
+    await warmOnchainPrices(
+      [makeVault()],
+      timestamps,
+      stats,
+      new Set(),
+      makeDeps({
+        getBatch: async () => [existingRecord(VAULT_TOKEN, 100), existingRecord(UNDERLYING_TOKEN, 100)],
+        insert: async () => {
+          inserted += 1
+        },
+        makePricer: () => ({
+          resolvePath: async (target) => {
+            priced += 1
+            return { path: successPath(target), failure: null }
+          }
+        })
+      })
+    )
+    expect(priced).toBe(0)
+    expect(inserted).toBe(0)
+    expect(stats.insertedOnchain).toBe(0)
+  })
+
+  it('reports a transient failure as retryable and never as not-found', async () => {
+    const stats = makeStats()
+    let priced = 0
+    await warmOnchainPrices(
+      [makeVault()],
+      timestamps,
+      stats,
+      new Set([`ethereum:${UNDERLYING_TOKEN}:100`]),
+      makeDeps({
+        // The other request is already stored, so only the transient one remains.
+        getBatch: async () => [existingRecord(VAULT_TOKEN, 100)],
+        makePricer: () => ({
+          resolvePath: async (target) => {
+            priced += 1
+            return { path: successPath(target), failure: null }
+          }
+        })
+      })
+    )
+    expect(stats.onchainRetryable).toBe(1)
+    expect(stats.onchainNotFound).toBe(0)
+    expect(priced).toBe(0)
+  })
+
+  it('persists a resolved path and counts the inserted writes', async () => {
+    const stats = makeStats()
+    const writes: string[] = []
+    await warmOnchainPrices(
+      [makeVault()],
+      timestamps,
+      stats,
+      new Set(),
+      makeDeps({
+        insert: async (_pool, batch) => {
+          for (const write of batch) {
+            writes.push(write.token)
+          }
+        },
+        makePricer: () => ({
+          resolvePath: async (target) => ({ path: successPath(target), failure: null })
+        })
+      })
+    )
+    expect(writes.sort()).toEqual([UNDERLYING_TOKEN, VAULT_TOKEN].sort())
+    expect(stats.insertedOnchain).toBe(2)
+    expect(stats.onchainNotFound).toBe(0)
   })
 })

@@ -94,6 +94,8 @@ function toInputEvidence(input: RecursivePriceInput): PriceInputEvidence {
     token: path.token,
     observedTimestamp: path.observedTimestamp,
     priceUsd: path.priceUsd,
+    symbol: path.symbol,
+    confidence: path.confidence,
     source: path.source,
     adapter: path.adapter,
     ...(input.conversion ? { conversion: input.conversion } : {}),

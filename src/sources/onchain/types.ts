@@ -34,6 +34,8 @@ export interface PriceInputEvidence {
   token: string
   observedTimestamp: number
   priceUsd: number
+  symbol: string | null
+  confidence: number | null
   source: ResolvedPriceSource
   adapter: string
   conversion?: Record<string, unknown>

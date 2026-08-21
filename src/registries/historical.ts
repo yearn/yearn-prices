@@ -23,15 +23,26 @@ export function marketPriceResolver(marketSources: HistoricalPriceSource[]) {
   )
 }
 
+/**
+ * The child market source list: DB first, then DefiLlama, then DefiLlama alias.
+ * Shared by the registry and the backfill script so the order lives in one place.
+ */
+export function createChildMarketSources(client: DefiLlamaClient, pool?: Pool): HistoricalPriceSource[] {
+  return [
+    ...(pool ? [createDbHistoricalSource(pool)] : []),
+    createDefiLlamaHistoricalSource(client),
+    createDefiLlamaAliasHistoricalSource(client)
+  ]
+}
+
 export function createHistoricalSources(env?: Env, pool?: Pool): HistoricalPriceSource[] {
   const client = new DefiLlamaClient()
   const rootMarketSources = [createDefiLlamaHistoricalSource(client), createDefiLlamaAliasHistoricalSource(client)]
-  const marketSources = [...(pool ? [createDbHistoricalSource(pool)] : []), ...rootMarketSources]
 
   return [
     ...rootMarketSources,
     createOnchainHistoricalSource({
-      marketPrice: marketPriceResolver(marketSources),
+      marketPrice: marketPriceResolver(createChildMarketSources(client, pool)),
       env,
       clientForChain: (chainId) => getChainClient(chainId, env)
     })

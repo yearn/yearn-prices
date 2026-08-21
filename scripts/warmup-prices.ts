@@ -11,12 +11,15 @@ import {
   readVaultSharePrice
 } from '../src/clients'
 import { createPool, getBatchHistoricalPrices, getExistingExactTimestamps, insertTokenPrices } from '../src/db'
-import { marketPriceResolver } from '../src/registries/historical'
-import { createDbHistoricalSource } from '../src/sources/db/historical'
-import { createDefiLlamaAliasHistoricalSource, createDefiLlamaHistoricalSource } from '../src/sources/defillama'
+import { createChildMarketSources, marketPriceResolver } from '../src/registries/historical'
 import { RecursiveDependencyError } from '../src/sources/onchain/errors'
 import { OnchainPricer } from '../src/sources/onchain/pricer'
-import type { PriceInputEvidence, PriceResolutionFailure, ResolvedPricePath } from '../src/sources/onchain/types'
+import type {
+  MarketPriceResolver,
+  PriceInputEvidence,
+  PriceResolutionFailure,
+  ResolvedPricePath
+} from '../src/sources/onchain/types'
 import type { HistoricalRequestTuple, KongVaultListItem, TokenPriceWrite } from '../src/types'
 import {
   chainIdToName,
@@ -51,7 +54,7 @@ const REQUEST_GROUP_DELAY_MS = 200
 const DEFI_LLAMA_TOKEN_BATCH = 5
 const DEFI_LLAMA_TIMESTAMP_BATCH = 20
 
-interface NormalizedVault {
+export interface NormalizedVault {
   chain: string
   chainId: number
   vaultToken: `0x${string}`
@@ -61,7 +64,7 @@ interface NormalizedVault {
   decimals: number
 }
 
-interface WarmupStats {
+export interface WarmupStats {
   cacheHits: number
   apiCalls: number
   retries: number
@@ -229,8 +232,8 @@ export function resolvedPathTokenPriceWrites(path: ResolvedPricePath): TokenPric
       token: node.token,
       timestamp,
       price: node.priceUsd,
-      symbol: 'symbol' in node ? node.symbol : null,
-      confidence: 'confidence' in node ? node.confidence : null,
+      symbol: node.symbol,
+      confidence: node.confidence,
       source: node.source
     })
   }
@@ -419,14 +422,34 @@ async function warmDirectPrices(
   })
 }
 
-async function warmOnchainPrices(
+export interface OnchainWarmupDeps {
+  pool: typeof pool
+  defiLlama: DefiLlamaClient
+  getBatch: typeof getBatchHistoricalPrices
+  insert: typeof insertTokenPrices
+  makePricer: (resolver: MarketPriceResolver) => Pick<OnchainPricer, 'resolvePath'>
+}
+
+function defaultOnchainWarmupDeps(): OnchainWarmupDeps {
+  return {
+    pool,
+    defiLlama,
+    getBatch: getBatchHistoricalPrices,
+    insert: insertTokenPrices,
+    makePricer: (resolver) => new OnchainPricer({ marketPrice: resolver, clientForChain: getChainClient })
+  }
+}
+
+export async function warmOnchainPrices(
   vaults: NormalizedVault[],
   timestamps: number[],
   stats: WarmupStats,
-  transientFailures: Set<string>
+  transientFailures: Set<string>,
+  deps: OnchainWarmupDeps = defaultOnchainWarmupDeps()
 ): Promise<void> {
+  const { pool: db, defiLlama: llama, getBatch, insert, makePricer } = deps
   const requests = buildDirectRequests(vaults, timestamps)
-  const existing = await getBatchHistoricalPrices(pool, requests)
+  const existing = await getBatch(db, requests)
   const existingKeys = new Set(existing.map((price) => `${price.chain}:${price.token}:${price.timestamp}`))
   const reports: OnchainFailureReport[] = []
   const missing: HistoricalRequestTuple[] = []
@@ -451,21 +474,15 @@ async function warmOnchainPrices(
     missing.push(request)
   }
 
+  const resolver = marketPriceResolver(createChildMarketSources(llama, db))
+
   await runInGroups(missing, async (request) => {
     try {
       const chainId = chainNameToId(request.chain)
       if (chainId === undefined) {
         return
       }
-      const marketSources = [
-        createDbHistoricalSource(pool),
-        createDefiLlamaHistoricalSource(defiLlama),
-        createDefiLlamaAliasHistoricalSource(defiLlama)
-      ]
-      const pricer = new OnchainPricer({
-        marketPrice: marketPriceResolver(marketSources),
-        clientForChain: getChainClient
-      })
+      const pricer = makePricer(resolver)
       const result = await pricer.resolvePath({ chainId, token: request.token, timestamp: request.timestamp })
 
       if (!result.path) {
@@ -476,7 +493,7 @@ async function warmOnchainPrices(
       }
 
       const writes = resolvedPathTokenPriceWrites(result.path)
-      await insertTokenPrices(pool, writes)
+      await insert(db, writes)
       stats.insertedOnchain += writes.length
     } catch (error) {
       stats.failures += 1
