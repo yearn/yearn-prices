@@ -30,6 +30,11 @@ export function groupContiguousRanges<Item>(
       const eod = eodOf(item)
       const spanDays = current ? (eod - current.rangeStart) / DAY_SECONDS + 1 : 0
 
+      if (current && eod === current.rangeEnd) {
+        current.items.push(item)
+        continue
+      }
+
       if (current && eod === current.rangeEnd + DAY_SECONDS && spanDays <= maximumSpanDays) {
         current.rangeEnd = eod
         current.items.push(item)

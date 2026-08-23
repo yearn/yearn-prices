@@ -132,6 +132,25 @@ describe('groupContiguousRanges', () => {
       [EOD + 2 * DAY, EOD + 2 * DAY]
     ])
   })
+
+  it('keeps tokens sharing an identifier on the same day in one range', () => {
+    const target = (token: string, eodTimestamp: number) => ({
+      chainId: 1,
+      chain: 'ethereum',
+      token: token as `0x${string}`,
+      tokenLowercase: token.toLowerCase(),
+      eodTimestamp
+    })
+
+    const ranges = groupContiguousRanges(
+      [target(USDC, EOD), target(OPTIMISM_DAI, EOD), target(USDC, EOD + DAY), target(OPTIMISM_DAI, EOD + DAY)],
+      () => 'coingecko:usd-coin',
+      365
+    )
+
+    expect(ranges).toHaveLength(1)
+    expect(ranges[0].targets).toHaveLength(4)
+  })
 })
 
 describe('runBackfill', () => {
@@ -359,7 +378,7 @@ describe('runBackfill', () => {
 
     const report = readReport(reportPath)
     expect(report.finishedAt).not.toBeNull()
-    expect(report.summary).toMatchObject({ pending: 0, unresolved: 1 })
+    expect(report.summary).toMatchObject({ pending: 1, unresolved: 0 })
     expect(report.fatal).toMatchObject({ committedTargets: 1, failedTargets: 1 })
     expect(existsSync(`${reportPath}.tmp`)).toBe(false)
     expect(existsSync(`${checkpointPath(reportPath)}.tmp`)).toBe(false)

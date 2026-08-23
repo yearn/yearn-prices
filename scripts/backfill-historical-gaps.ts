@@ -584,7 +584,7 @@ export async function runBackfill(options: BackfillOptions, deps: BackfillDeps):
       state.lockFailures += 1
       state.lockRetries += error.attempts - 1
     }
-    finishReport(report, state, { requestedCount, duplicateCount, alreadyPriced, write: options.write })
+    finishReport(report, state, { requestedCount, duplicateCount, alreadyPriced, write: options.write }, false)
     const planned =
       finalizationTargets.length > 0 ? finalizationTargets.length : Math.max(state.records.size - alreadyPriced, 0)
     report.fatal = {
@@ -622,8 +622,13 @@ interface ReportCounts {
   write: boolean
 }
 
-function applyReportState(report: BackfillReport, state: RunState, counts: ReportCounts, final: boolean): void {
-  if (final) {
+function applyReportState(
+  report: BackfillReport,
+  state: RunState,
+  counts: ReportCounts,
+  resolvePending: boolean
+): void {
+  if (resolvePending) {
     for (const record of state.records.values()) {
       if (record.status === 'pending') {
         record.status = 'unresolved'
@@ -635,7 +640,7 @@ function applyReportState(report: BackfillReport, state: RunState, counts: Repor
   const insertedRecords = targets.filter((record) => record.status === 'inserted')
   const projected = insertedRecords.filter((record) => record.projected === true).length
 
-  report.finishedAt = final ? new Date().toISOString() : null
+  report.finishedAt = new Date().toISOString()
   report.request = {
     chartRequests: state.chartRequests,
     retries: state.retries,
@@ -661,8 +666,8 @@ function applyReportState(report: BackfillReport, state: RunState, counts: Repor
   }
 }
 
-function finishReport(report: BackfillReport, state: RunState, counts: ReportCounts): void {
-  applyReportState(report, state, counts, true)
+function finishReport(report: BackfillReport, state: RunState, counts: ReportCounts, resolvePending = true): void {
+  applyReportState(report, state, counts, resolvePending)
 }
 
 function checkpointSummary(state: RunState, counts: ReportCounts): Record<string, number> {
