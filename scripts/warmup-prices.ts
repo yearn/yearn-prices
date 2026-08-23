@@ -10,15 +10,18 @@ import {
   readVaultSharePrice
 } from '../src/clients'
 import { createPool, getBatchHistoricalPrices, getExistingExactTimestamps, insertTokenPrices } from '../src/db'
+import { DEFI_LLAMA_SEARCH_WIDTH_SECONDS, matchPricesToRequests } from '../src/sources/defillama/match'
 import type { HistoricalRequestTuple, KongVaultListItem, TokenPriceWrite } from '../src/types'
 import {
   chainIdToName,
+  chunk,
   isTodayNormalized,
   normalizedDaysInRange,
   normalizeToEndOfDay,
   normalizeTokenAddress,
   nowUnix,
-  parseCliDate
+  parseCliDate,
+  toFetchTimestamp
 } from '../src/utils'
 
 const databaseUrl = process.env.DATABASE_URL
@@ -127,14 +130,6 @@ function buildDailyTimestamps(start: number, end: number): number[] {
   return normalizedDaysInRange(start, end)
 }
 
-function chunk<T>(items: T[], size: number): T[][] {
-  const result: T[][] = []
-  for (let index = 0; index < items.length; index += size) {
-    result.push(items.slice(index, index + size))
-  }
-  return result
-}
-
 async function runInGroups<T>(items: T[], worker: (item: T) => Promise<void>): Promise<void> {
   for (const group of chunk(items, REQUEST_GROUP_SIZE)) {
     await Promise.all(group.map((item) => worker(item)))
@@ -183,8 +178,21 @@ function groupMissingRequests(requests: HistoricalRequestTuple[], existing: Set<
   return grouped
 }
 
-function toFetchTimestamp(timestamp: number, currentTimestamp: number): number {
-  return isTodayNormalized(timestamp, currentTimestamp) ? currentTimestamp : timestamp
+function batchSpacedTimestamps(sorted: number[]): number[][] {
+  const batches: number[][] = []
+  let current: number[] = []
+  for (const timestamp of sorted) {
+    const tooClose = current.length > 0 && timestamp - current[current.length - 1] < DEFI_LLAMA_SEARCH_WIDTH_SECONDS
+    if (current.length >= DEFI_LLAMA_TIMESTAMP_BATCH || tooClose) {
+      batches.push(current)
+      current = []
+    }
+    current.push(timestamp)
+  }
+  if (current.length > 0) {
+    batches.push(current)
+  }
+  return batches
 }
 
 function buildDefiLlamaPayloads(
@@ -193,11 +201,10 @@ function buildDefiLlamaPayloads(
 ): Array<Record<string, number[]>> {
   const tokenChunks: Array<{ tokenKey: string; timestamps: number[] }> = []
   for (const [tokenKey, timestamps] of Object.entries(grouped)) {
-    const fetchTimestamps = timestamps.map((timestamp) => toFetchTimestamp(timestamp, currentTimestamp))
-    for (const timestampChunk of chunk(
-      [...new Set(fetchTimestamps)].sort((left, right) => left - right),
-      DEFI_LLAMA_TIMESTAMP_BATCH
-    )) {
+    const fetchTimestamps = [
+      ...new Set(timestamps.map((timestamp) => toFetchTimestamp(timestamp, currentTimestamp)))
+    ].sort((left, right) => left - right)
+    for (const timestampChunk of batchSpacedTimestamps(fetchTimestamps)) {
       tokenChunks.push({ tokenKey, timestamps: timestampChunk })
     }
   }
@@ -226,28 +233,25 @@ async function warmDirectPrices(vaults: NormalizedVault[], timestamps: number[],
 
       for (const [tokenKey, requestedTimestamps] of Object.entries(payload)) {
         const responseCoin = response.coins[tokenKey]
-        const returnedTimestamps = new Set<number>()
-
-        if (responseCoin) {
-          for (const price of responseCoin.prices) {
-            returnedTimestamps.add(normalizeToEndOfDay(price.timestamp))
-            const [chain, token] = tokenKey.split(':')
-            writes.push({
-              chain,
-              token,
-              timestamp: normalizeToEndOfDay(price.timestamp),
-              price: price.price,
-              symbol: responseCoin.symbol ?? null,
-              confidence: price.confidence ?? null,
-              source: 'defillama'
-            })
-          }
-        }
+        const matched = matchPricesToRequests(requestedTimestamps, responseCoin?.prices ?? [])
+        const [chain, token] = tokenKey.split(':')
 
         for (const requestedTimestamp of requestedTimestamps) {
-          if (!returnedTimestamps.has(normalizeToEndOfDay(requestedTimestamp))) {
+          const sample = matched.get(requestedTimestamp)
+          if (!sample) {
             console.warn(`gap:defillama ${tokenKey} ${requestedTimestamp}`)
+            continue
           }
+
+          writes.push({
+            chain,
+            token,
+            timestamp: normalizeToEndOfDay(requestedTimestamp),
+            price: sample.price,
+            symbol: responseCoin?.symbol ?? null,
+            confidence: sample.confidence ?? null,
+            source: 'defillama'
+          })
         }
       }
 

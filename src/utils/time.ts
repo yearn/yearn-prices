@@ -27,6 +27,10 @@ export function isTodayNormalized(timestamp: number, now = nowUnix()): boolean {
   return normalizeToEndOfDay(timestamp) === currentUtcDayEnd(now)
 }
 
+export function toFetchTimestamp(timestamp: number, currentTimestamp = nowUnix()): number {
+  return isTodayNormalized(timestamp, currentTimestamp) ? currentTimestamp : timestamp
+}
+
 export function normalizedRangeDayCount(startTimestamp: number, endTimestamp: number): number {
   return Math.floor((endTimestamp - startTimestamp) / DAY_SECONDS) + 1
 }
