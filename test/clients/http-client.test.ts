@@ -302,7 +302,7 @@ describe('fetchJsonWithRetry opt-in hardening', () => {
       fetchJsonWithRetry<{ ok: boolean }>(URL_UNDER_TEST, {
         service: 'Test',
         rateLimiter: limiter(),
-        retryTransportErrors: true
+        retryInvalidJson: true
       })
     )
 
@@ -322,7 +322,7 @@ describe('fetchJsonWithRetry opt-in hardening', () => {
       fetchJsonWithRetry(URL_UNDER_TEST, {
         service: 'Test',
         rateLimiter: limiter(),
-        retryTransportErrors: true
+        retryInvalidJson: true
       }).catch((thrown) => thrown)
     )
 

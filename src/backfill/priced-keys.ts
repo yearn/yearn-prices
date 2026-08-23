@@ -1,5 +1,4 @@
-import type { Pool } from '@neondatabase/serverless'
-import { getBatchHistoricalPrices } from '../db/queries'
+import { getBatchHistoricalPrices, type QueryExecutor } from '../db/queries'
 import type { HistoricalRequestTuple } from '../types'
 import { chunk } from './inventory'
 
@@ -8,7 +7,7 @@ export function priceKey(chain: string, token: string, timestamp: number): strin
 }
 
 export async function readPricedKeys(
-  pool: Pool,
+  pool: QueryExecutor,
   targets: Array<{ chain: string; token: string; eodTimestamp: number }>,
   readChunkSize: number
 ): Promise<Set<string>> {

@@ -63,7 +63,10 @@ export interface FetchJsonConfig {
   timeoutMs?: number
   honorRetryAfter?: boolean
   retryAfterCapMs?: number
+  // Retry a request that never reached the server (socket/DNS failure or timeout abort).
   retryTransportErrors?: boolean
+  // Retry a 2xx response whose body fails JSON parsing (e.g. a truncated payload).
+  retryInvalidJson?: boolean
 }
 
 const RETRY_DELAYS = [1000, 2000, 4000]
@@ -142,7 +145,7 @@ export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig
     }
 
     if (response.ok) {
-      if (!config.retryTransportErrors) {
+      if (!config.retryInvalidJson) {
         return (await response.json()) as T
       }
 

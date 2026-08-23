@@ -1,13 +1,11 @@
 import { execSync } from 'node:child_process'
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
-import type { Pool } from '@neondatabase/serverless'
 import { config as loadEnv } from 'dotenv'
 
 loadEnv()
 
 import { readChartCoin } from '../src/backfill/chart-envelope'
 import {
-  ALIAS_ROW_SOURCE,
   CHART_REQUEST_TIMEOUT_MS,
   CHART_RETRY_AFTER_CAP_MS,
   EXACT_READ_CHUNK_SIZE,
@@ -82,6 +80,25 @@ export interface BackfillReport {
   summary: Record<string, number>
   targets: TargetRecord[]
   fatal?: { message: string; committedTargets: number; failedTargets: number; unattemptedTargets: number }
+}
+
+/**
+ * Crash-forensics snapshot written after every finalization batch. Deliberately
+ * omits the per-target array so its write cost stays O(1) in the manifest size;
+ * `progress` still distinguishes committed / pending / unattempted for a resume.
+ */
+export interface BackfillCheckpoint {
+  toolVersion: string
+  codeRevision: string | null
+  mode: 'dry-run' | 'write'
+  startedAt: string
+  updatedAt: string
+  finishedAt: null
+  manifest: { path: string; digest: string; byteLength: number } | null
+  aliasRegistryDigest: string
+  request: { chartRequests: number; retries: number; requestFailures: number }
+  progress: { committed: number; inFlight: number; unattempted: number }
+  summary: Record<string, number>
 }
 
 export interface BackfillPool extends BackfillClientPool {
@@ -189,9 +206,9 @@ function gitRevision(): string | null {
   }
 }
 
-function writeAtomically(path: string, report: BackfillReport): void {
+function writeAtomically(path: string, payload: object): void {
   const temporaryPath = `${path}.tmp`
-  writeFileSync(temporaryPath, `${JSON.stringify(report, null, 2)}\n`)
+  writeFileSync(temporaryPath, `${JSON.stringify(payload, null, 2)}\n`)
   renameSync(temporaryPath, path)
 }
 
@@ -255,6 +272,9 @@ interface RunState {
   resolvedAlias: number
   lockRetries: number
   lockFailures: number
+  settledInserted: number
+  settledSkippedConcurrent: number
+  settledUnresolved: number
 }
 
 function newRecord(target: NormalizedTarget, status: TargetStatus): TargetRecord {
@@ -365,7 +385,7 @@ async function resolveRanges(
         record.observedTimestamp = matched.observedTimestamp
         record.offsetSeconds = matched.offsetSeconds
         record.price = matched.price
-        record.source = method === 'defillama-alias' ? ALIAS_ROW_SOURCE : 'defillama'
+        record.source = 'defillama'
         resolved.set(targetKey(target), {
           price: matched.price,
           symbol: matched.symbol,
@@ -408,7 +428,10 @@ export async function runBackfill(options: BackfillOptions, deps: BackfillDeps):
     resolvedDirect: 0,
     resolvedAlias: 0,
     lockRetries: 0,
-    lockFailures: 0
+    lockFailures: 0,
+    settledInserted: 0,
+    settledSkippedConcurrent: 0,
+    settledUnresolved: 0
   }
 
   const report: BackfillReport = {
@@ -446,7 +469,7 @@ export async function runBackfill(options: BackfillOptions, deps: BackfillDeps):
 
     await preflightTokenCasings(deps.pool, manifest.targets, readChunkSize)
 
-    const priced = await readPricedKeys(deps.pool as unknown as Pool, manifest.targets, readChunkSize)
+    const priced = await readPricedKeys(deps.pool, manifest.targets, readChunkSize)
     const skippedExisting: NormalizedTarget[] = []
     const gapTargets: NormalizedTarget[] = []
     for (const target of manifest.targets) {
@@ -469,12 +492,13 @@ export async function runBackfill(options: BackfillOptions, deps: BackfillDeps):
           eodTimestamp: target.eodTimestamp
         }))
       )
-      checkpoint(options.reportPath, report, state, {
-        requestedCount,
-        duplicateCount,
-        alreadyPriced,
-        write: options.write
-      })
+      checkpoint(
+        options.reportPath,
+        report,
+        state,
+        { requestedCount, duplicateCount, alreadyPriced, write: options.write },
+        { committed: committedTargets, inFlight: inFlightBatch }
+      )
     }
 
     const directRanges = groupContiguousRanges(
@@ -515,13 +539,8 @@ export async function runBackfill(options: BackfillOptions, deps: BackfillDeps):
 
     finalizationTargets = gapTargets.map((target) => {
       const key = targetKey(target)
-      const direct = directResolved.get(key)
-      const alias = direct ? undefined : aliasResolved.get(key)
-      const resolution = direct
-        ? { ...direct, source: 'defillama' as const }
-        : alias
-          ? { ...alias, source: ALIAS_ROW_SOURCE }
-          : null
+      const match = directResolved.get(key) ?? aliasResolved.get(key)
+      const resolution = match ? { ...match, source: 'defillama' as const } : null
 
       return {
         chainId: target.chainId,
@@ -533,24 +552,27 @@ export async function runBackfill(options: BackfillOptions, deps: BackfillDeps):
       }
     })
 
-    for (const batch of chunk(finalizationTargets, batchSize)) {
-      inFlightBatch = batch.length
-      const outcome = await finalizeBackfillTargets(deps.pool, batch, {
-        dryRun: !options.write,
-        batchSize,
-        readChunkSize
-      })
-      inFlightBatch = 0
-      state.lockRetries += outcome.lockRetries
-      applyFinalizationResults(state, outcome.results, options.write)
-      committedTargets += batch.length
-      checkpoint(options.reportPath, report, state, {
-        requestedCount,
-        duplicateCount,
-        alreadyPriced,
-        write: options.write
-      })
-    }
+    await finalizeBackfillTargets(deps.pool, finalizationTargets, {
+      dryRun: !options.write,
+      batchSize,
+      readChunkSize,
+      onBatchStart: (size) => {
+        inFlightBatch = size
+      },
+      onBatchSettled: ({ batch, results, lockRetries }) => {
+        inFlightBatch = 0
+        state.lockRetries += lockRetries
+        applyFinalizationResults(state, results, options.write)
+        committedTargets += batch.length
+        checkpoint(
+          options.reportPath,
+          report,
+          state,
+          { requestedCount, duplicateCount, alreadyPriced, write: options.write },
+          { committed: committedTargets, inFlight: inFlightBatch }
+        )
+      }
+    })
 
     finishReport(report, state, { requestedCount, duplicateCount, alreadyPriced, write: options.write })
     writeReport(options.reportPath, report)
@@ -580,8 +602,15 @@ function applyFinalizationResults(state: RunState, results: FinalizationTargetRe
   for (const result of results) {
     const record = state.records.get(`${result.chain}:${result.token}:${result.eodTimestamp}`) as TargetRecord
     record.status = result.status
-    if (result.status === 'inserted' && !write) {
-      record.projected = true
+    if (result.status === 'inserted') {
+      state.settledInserted += 1
+      if (!write) {
+        record.projected = true
+      }
+    } else if (result.status === 'skipped_concurrent_existing') {
+      state.settledSkippedConcurrent += 1
+    } else {
+      state.settledUnresolved += 1
     }
   }
 }
@@ -636,9 +665,55 @@ function finishReport(report: BackfillReport, state: RunState, counts: ReportCou
   applyReportState(report, state, counts, true)
 }
 
-function checkpoint(reportPath: string, report: BackfillReport, state: RunState, counts: ReportCounts): void {
-  applyReportState(report, state, counts, false)
-  writeAtomically(checkpointPath(reportPath), report)
+function checkpointSummary(state: RunState, counts: ReportCounts): Record<string, number> {
+  const total = state.records.size
+  const settled = state.settledInserted + state.settledSkippedConcurrent + state.settledUnresolved
+  const pending = Math.max(total - counts.alreadyPriced - settled, 0)
+  return {
+    requested: counts.requestedCount,
+    normalizedUniqueTargets: total,
+    duplicateManifestTargets: counts.duplicateCount,
+    alreadyPriced: counts.alreadyPriced,
+    resolvedByDirectProvider: state.resolvedDirect,
+    resolvedByReviewedAlias: state.resolvedAlias,
+    skippedConcurrentExisting: state.settledSkippedConcurrent,
+    unresolved: state.settledUnresolved,
+    pending,
+    providerRetryFailures: state.requestFailures,
+    invalidProviderResponses: state.invalidProviderResponses,
+    finalizationLockFailures: state.lockFailures,
+    finalizationLockRetries: state.lockRetries,
+    inserted: counts.write ? state.settledInserted : 0,
+    projectedInserted: counts.write ? 0 : state.settledInserted
+  }
+}
+
+function checkpoint(
+  reportPath: string,
+  report: BackfillReport,
+  state: RunState,
+  counts: ReportCounts,
+  progress: { committed: number; inFlight: number }
+): void {
+  const planned = Math.max(state.records.size - counts.alreadyPriced, 0)
+  const snapshot: BackfillCheckpoint = {
+    toolVersion: report.toolVersion,
+    codeRevision: report.codeRevision,
+    mode: report.mode,
+    startedAt: report.startedAt,
+    updatedAt: new Date().toISOString(),
+    finishedAt: null,
+    manifest: report.manifest,
+    aliasRegistryDigest: report.aliasRegistryDigest,
+    request: { chartRequests: state.chartRequests, retries: state.retries, requestFailures: state.requestFailures },
+    progress: {
+      committed: progress.committed,
+      inFlight: progress.inFlight,
+      unattempted: Math.max(planned - progress.committed - progress.inFlight, 0)
+    },
+    summary: checkpointSummary(state, counts)
+  }
+  writeAtomically(checkpointPath(reportPath), snapshot)
 }
 
 export function createChartFetcher(searchWidth: string): ChartFetch {
@@ -655,7 +730,8 @@ export function createChartFetcher(searchWidth: string): ChartFetch {
         timeoutMs: CHART_REQUEST_TIMEOUT_MS,
         honorRetryAfter: true,
         retryAfterCapMs: CHART_RETRY_AFTER_CAP_MS,
-        retryTransportErrors: true
+        retryTransportErrors: true,
+        retryInvalidJson: true
       }
     )
 
@@ -682,7 +758,7 @@ interface Args {
   manifestPath: string
   reportPath: string
   write: boolean
-  databaseUrl?: string
+  databaseUrlEnv?: string
 }
 
 export function parseArgs(argv: string[]): Args {
@@ -715,7 +791,7 @@ export function parseArgs(argv: string[]): Args {
     manifestPath,
     reportPath,
     write: flags.has('--write'),
-    databaseUrl: options.get('--database-url')
+    databaseUrlEnv: options.get('--database-url-env')
   }
 }
 
@@ -728,9 +804,12 @@ async function main(argv: string[]): Promise<number> {
     return 1
   }
 
-  const databaseUrl = args.databaseUrl ?? process.env.DATABASE_URL
+  const databaseUrlEnv = args.databaseUrlEnv ?? 'DATABASE_URL'
+  const databaseUrl = process.env[databaseUrlEnv]
   if (!databaseUrl) {
-    console.error('a database URL is required: pass --database-url or set DATABASE_URL')
+    console.error(
+      `a database URL is required: set ${databaseUrlEnv} in the environment (name another variable with --database-url-env)`
+    )
     return 1
   }
 

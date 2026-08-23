@@ -1,4 +1,3 @@
-import type { Pool } from '@neondatabase/serverless'
 import type { PriceSource } from '../types'
 import { pgTimestampToUnix, unixToIsoTimestamp } from '../utils/time'
 import { EXACT_READ_CHUNK_SIZE, FINALIZATION_BATCH_SIZE, FINALIZATION_LOCK_RETRY_LIMIT } from './constants'
@@ -58,6 +57,8 @@ export interface FinalizationOptions {
   lockTimeout?: string
   statementTimeout?: string
   readChunkSize?: number
+  onBatchStart?: (batchSize: number) => void
+  onBatchSettled?: (settled: FinalizationBatchSettled) => void | Promise<void>
 }
 
 export interface FinalizationOutcome {
@@ -65,6 +66,12 @@ export interface FinalizationOutcome {
   inserted: number
   skippedConcurrentExisting: number
   unresolved: number
+  lockRetries: number
+}
+
+export interface FinalizationBatchSettled {
+  batch: FinalizationTarget[]
+  results: FinalizationTargetResult[]
   lockRetries: number
 }
 
@@ -156,7 +163,7 @@ async function applyBatch(
   readChunkSize: number,
   write: boolean
 ): Promise<FinalizationTargetResult[]> {
-  const priced = await readPricedKeys(client as unknown as Pool, batch, readChunkSize)
+  const priced = await readPricedKeys(client, batch, readChunkSize)
 
   const concurrent: FinalizationTarget[] = []
   const resolved: FinalizationTarget[] = []
@@ -202,7 +209,7 @@ async function applyBatch(
 async function finalizeBatch(
   pool: BackfillClientPool,
   batch: FinalizationTarget[],
-  options: Required<Omit<FinalizationOptions, 'dryRun' | 'batchSize'>>
+  options: Required<Omit<FinalizationOptions, 'dryRun' | 'batchSize' | 'onBatchStart' | 'onBatchSettled'>>
 ): Promise<{ results: FinalizationTargetResult[]; lockRetries: number }> {
   const lockTimeout = timeoutLiteral(options.lockTimeout)
   const statementTimeout = timeoutLiteral(options.statementTimeout)
@@ -269,14 +276,18 @@ export async function finalizeBackfillTargets(
   let lockRetries = 0
 
   for (const batch of chunk(targets, batchSize)) {
+    options.onBatchStart?.(batch.length)
     if (options.dryRun) {
-      results.push(...(await finalizeDryRun(pool, batch, transactionOptions.readChunkSize)))
+      const dryResults = await finalizeDryRun(pool, batch, transactionOptions.readChunkSize)
+      results.push(...dryResults)
+      await options.onBatchSettled?.({ batch, results: dryResults, lockRetries: 0 })
       continue
     }
 
     const outcome = await finalizeBatch(pool, batch, transactionOptions)
     results.push(...outcome.results)
     lockRetries += outcome.lockRetries
+    await options.onBatchSettled?.({ batch, results: outcome.results, lockRetries: outcome.lockRetries })
   }
 
   return {

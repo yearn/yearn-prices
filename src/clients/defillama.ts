@@ -17,6 +17,7 @@ export interface DefiLlamaRequestOptions {
   honorRetryAfter?: boolean
   retryAfterCapMs?: number
   retryTransportErrors?: boolean
+  retryInvalidJson?: boolean
 }
 
 export class DefiLlamaClient {

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   type BackfillPool,
+  type BackfillCheckpoint,
   type BackfillReport,
   type ChartFetch,
   ChartRequestError,
@@ -108,6 +109,10 @@ function fetchChartFrom(coins: Record<string, unknown>): ChartFetch {
 
 function readReport(path: string): BackfillReport {
   return JSON.parse(readFileSync(path, 'utf8')) as BackfillReport
+}
+
+function readCheckpoint(path: string): BackfillCheckpoint {
+  return JSON.parse(readFileSync(path, 'utf8')) as BackfillCheckpoint
 }
 
 describe('groupContiguousRanges', () => {
@@ -236,7 +241,7 @@ describe('runBackfill', () => {
       status: 'inserted',
       method: 'defillama-alias',
       providerIdentifier: 'coingecko:dai',
-      source: 'defillama-alias',
+      source: 'defillama',
       diagnosticCodes: ['not_found'],
       attempts: 2
     })
@@ -347,10 +352,10 @@ describe('runBackfill', () => {
 
     expect(result.exitCode).toBe(1)
 
-    const checkpoint = readReport(checkpointPath(reportPath))
+    const checkpoint = readCheckpoint(checkpointPath(reportPath))
     expect(checkpoint.finishedAt).toBeNull()
     expect(checkpoint.summary).toMatchObject({ inserted: 1, pending: 1, unresolved: 0 })
-    expect(checkpoint.targets.filter((record) => record.status === 'pending')).toHaveLength(1)
+    expect(checkpoint.progress).toMatchObject({ committed: 1, inFlight: 0 })
 
     const report = readReport(reportPath)
     expect(report.finishedAt).not.toBeNull()
@@ -371,9 +376,9 @@ describe('runBackfill', () => {
     )
 
     expect(result.exitCode).toBe(0)
-    const checkpoint = readReport(checkpointPath(reportPath))
+    const checkpoint = readCheckpoint(checkpointPath(reportPath))
     expect(checkpoint.finishedAt).toBeNull()
-    expect(checkpoint.targets[0].status).toBe('skipped_existing')
+    expect(checkpoint.summary.alreadyPriced).toBe(1)
   })
 
   it('exits 2 when a target stays unresolved and records the failure diagnostics', async () => {

@@ -303,4 +303,37 @@ describe('buildReport', () => {
       }
     ])
   })
+
+  it('summarizes per-window cohort offset distributions and directions', () => {
+    const resolvedAt = (eodTimestamp: number, signedOffsetSeconds: number, direction: 'before' | 'after') => ({
+      ...capture('6h', 'resolved' as const, eodTimestamp),
+      signedOffsetSeconds,
+      absoluteOffsetSeconds: Math.abs(signedOffsetSeconds),
+      direction,
+      observedTimestamp: eodTimestamp + signedOffsetSeconds
+    })
+    const captureRecords = [
+      resolvedAt(BASE_EOD, -300, 'before'),
+      resolvedAt(BASE_EOD + DAY_SECONDS, 100, 'after')
+    ]
+
+    const report = buildReport({
+      controlManifestPath: 'control.json',
+      gapManifestPath: 'gap.json',
+      controlManifest: manifest([BASE_EOD]),
+      gapManifest: manifest([BASE_EOD, BASE_EOD + DAY_SECONDS]),
+      windows: [{ label: '6h', searchWidth: '6h', offsetSeconds: 21_600 }],
+      captureRecords,
+      requestRecords: [],
+      gapTargetsNowPopulated: [],
+      stats: { apiCalls: 1, retries: 0, requestFailures: 0 }
+    })
+
+    const gap = report.byWindow[0].gap
+    expect(gap.targets).toBe(2)
+    expect(gap.directResolved).toBe(2)
+    expect(gap.direction).toEqual({ before: 1, exact: 0, after: 1 })
+    expect(gap.signedOffsetSeconds).toMatchObject({ count: 2, min: -300, median: -300, p90: 100, max: 100 })
+    expect(gap.absoluteOffsetSeconds).toMatchObject({ count: 2, min: 100, median: 100, p90: 300, max: 300 })
+  })
 })

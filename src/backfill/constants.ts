@@ -1,5 +1,3 @@
-import type { PriceSource } from '../types'
-
 /**
  * Operational constants for the historical price gap backfill.
  *
@@ -24,8 +22,6 @@ export const MAXIMUM_MANIFEST_BYTES = 8 * 1024 * 1024
 export const MAXIMUM_MANIFEST_TARGETS = 200_000
 
 export const EXACT_READ_CHUNK_SIZE = 5_000
-
-export const ALIAS_ROW_SOURCE: PriceSource = 'defillama-alias'
 
 export const CHART_REQUEST_TIMEOUT_MS = 30_000
 

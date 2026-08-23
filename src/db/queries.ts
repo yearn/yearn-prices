@@ -11,6 +11,15 @@ import { SOURCE_PRIORITY } from '../types'
 import { optionalResponseNumber, toResponseNumber } from '../utils/format'
 import { isTodayNormalized, pgTimestampToUnix, unixToIsoTimestamp } from '../utils/time'
 
+/**
+ * Minimal read surface shared by the Neon pool and the backfill's checked-out
+ * client. Keeps the source-agnostic gap read decoupled from the concrete driver
+ * without erasing types through an `as unknown as Pool` cast.
+ */
+export interface QueryExecutor {
+  query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>
+}
+
 function buildSourceCaseExpression(column = 'tp.source'): string {
   return `CASE ${column} ${SOURCE_PRIORITY.map((source, index) => `WHEN '${source}' THEN ${index + 1}`).join(' ')} ELSE 999 END`
 }
@@ -25,7 +34,7 @@ export async function getExactHistoricalPrice(
 }
 
 export async function getBatchHistoricalPrices(
-  pool: Pool,
+  pool: QueryExecutor,
   requests: HistoricalRequestTuple[],
   source?: PriceSource
 ): Promise<ExactPriceRecord[]> {
@@ -73,8 +82,8 @@ export async function getBatchHistoricalPrices(
     `
   }
 
-  const result = await pool.query<DbPriceRow>(sql, params)
-  return result.rows.map(mapDbRowToExactRecord)
+  const result = await pool.query(sql, params)
+  return (result.rows as unknown as DbPriceRow[]).map(mapDbRowToExactRecord)
 }
 
 export async function getRangeHistoricalPrices(
