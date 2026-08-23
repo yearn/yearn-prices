@@ -58,10 +58,10 @@ describe('matchPricesToRequests', () => {
     expect(matched.size).toBe(0)
   })
 
-  it('rejects a sample hours into the next day instead of storing it', () => {
+  it('falls back to a sample within the upstream six-hour fetch width', () => {
     const matched = matchPricesToRequests([D16], [{ timestamp: D16 + 2 * 3600, price: 1 }])
 
-    expect(matched.size).toBe(0)
+    expect(matched.get(D16)?.price).toBe(1)
   })
 
   it('falls back to a same-UTC-day sample hours before end-of-day', () => {

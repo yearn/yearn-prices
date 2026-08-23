@@ -262,7 +262,7 @@ async function repairPrices(): Promise<void> {
       const storedPrices = new Map(days.map((day) => [pgTimestampToUnix(day.timestamp), Number(day.price)]))
       const repairTimestamps =
         storedTimestamps.length > 0
-          ? normalizedDaysInRange(Math.min(...storedTimestamps), Math.max(...storedTimestamps))
+          ? normalizedDaysInRange(Math.min(...storedTimestamps) - 86_400, Math.max(...storedTimestamps))
           : []
 
       let transientFailure = false

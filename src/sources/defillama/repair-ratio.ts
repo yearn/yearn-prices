@@ -6,7 +6,7 @@ export interface RatioRow {
 }
 
 export function computeRepairRatios(
-  writes: Array<{ timestamp: number; price: number }>,
+  writes: Array<{ timestamp: number; price: number | string }>,
   storedPrices: Map<number, number>
 ): RatioRow[] {
   const rows: RatioRow[] = []
