@@ -22,7 +22,7 @@ function docker(args: string[]): string {
 function waitForReadiness(containerId: string): void {
   for (let attempt = 0; attempt < READINESS_ATTEMPTS; attempt += 1) {
     try {
-      docker(['exec', containerId, 'pg_isready', '-U', 'postgres', '-d', 'price_service_test'])
+      docker(['exec', containerId, 'pg_isready', '-h', '127.0.0.1', '-U', 'postgres', '-d', 'price_service_test'])
       return
     } catch {
       execFileSync('sleep', ['1'])
