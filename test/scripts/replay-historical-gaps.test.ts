@@ -312,10 +312,7 @@ describe('buildReport', () => {
       direction,
       observedTimestamp: eodTimestamp + signedOffsetSeconds
     })
-    const captureRecords = [
-      resolvedAt(BASE_EOD, -300, 'before'),
-      resolvedAt(BASE_EOD + DAY_SECONDS, 100, 'after')
-    ]
+    const captureRecords = [resolvedAt(BASE_EOD, -300, 'before'), resolvedAt(BASE_EOD + DAY_SECONDS, 100, 'after')]
 
     const report = buildReport({
       controlManifestPath: 'control.json',
