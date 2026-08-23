@@ -6,8 +6,8 @@ import {
   type NormalizedVault,
   type OnchainWarmupDeps,
   resolvedPathTokenPriceWrites,
-  warmOnchainPrices,
-  type WarmupStats
+  type WarmupStats,
+  warmOnchainPrices
 } from '../../scripts/warmup-prices'
 import { RecursiveDependencyError } from '../../src/sources/onchain/errors'
 import type {
