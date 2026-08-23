@@ -1,5 +1,3 @@
-import { normalizeToEndOfDay } from '../../utils/time'
-
 export interface DefiLlamaSample {
   timestamp: number
   price: number
@@ -7,6 +5,7 @@ export interface DefiLlamaSample {
 }
 
 export const DEFI_LLAMA_SEARCH_WIDTH_SECONDS = 15 * 60
+export const DEFI_LLAMA_FETCH_WIDTH_SECONDS = 6 * 60 * 60
 
 export function matchPricesToRequests<T extends DefiLlamaSample>(
   requestedTimestamps: number[],
@@ -44,17 +43,16 @@ export function matchPricesToRequests<T extends DefiLlamaSample>(
     if (matched.has(requested)) {
       continue
     }
-    const requestedDay = normalizeToEndOfDay(requested)
     let bestIndex = -1
     let bestDelta = Number.POSITIVE_INFINITY
     for (const [sampleIndex, sample] of samples.entries()) {
       if (usedSamples.has(sampleIndex) || !Number.isFinite(sample.timestamp) || !Number.isFinite(sample.price)) {
         continue
       }
-      if (normalizeToEndOfDay(sample.timestamp) !== requestedDay) {
+      const delta = Math.abs(sample.timestamp - requested)
+      if (delta > DEFI_LLAMA_FETCH_WIDTH_SECONDS) {
         continue
       }
-      const delta = Math.abs(sample.timestamp - requested)
       if (delta < bestDelta) {
         bestDelta = delta
         bestIndex = sampleIndex

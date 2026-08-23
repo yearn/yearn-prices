@@ -11,6 +11,7 @@ import type { TokenPriceWrite } from '../src/types'
 import {
   chainIdToName,
   chunk,
+  normalizedDaysInRange,
   normalizeToEndOfDay,
   nowUnix,
   pgTimestampToUnix,
@@ -259,10 +260,14 @@ async function repairPrices(): Promise<void> {
       )
       const storedTimestamps = days.map((day) => pgTimestampToUnix(day.timestamp))
       const storedPrices = new Map(days.map((day) => [pgTimestampToUnix(day.timestamp), Number(day.price)]))
+      const repairTimestamps =
+        storedTimestamps.length > 0
+          ? normalizedDaysInRange(Math.min(...storedTimestamps), Math.max(...storedTimestamps))
+          : []
 
       let transientFailure = false
 
-      for (const batch of chunk(storedTimestamps, TIMESTAMP_BATCH)) {
+      for (const batch of chunk(repairTimestamps, TIMESTAMP_BATCH)) {
         const currentTimestamp = nowUnix()
         const fetchTimestamps = batch.map((timestamp) => toFetchTimestamp(timestamp, currentTimestamp))
 
