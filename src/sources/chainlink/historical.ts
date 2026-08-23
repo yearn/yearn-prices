@@ -2,6 +2,7 @@ import { type PublicClient, parseAbi } from 'viem'
 import { estimateBlockByTimestamp, getChainClient } from '../../clients/rpc'
 import type { Env } from '../../types'
 import { HistoricalPriceSourceBase } from '../base'
+import { maybe } from '../onchain/context'
 import type { HistoricalPriceResult } from '../types'
 import { toHistoricalPrice } from './coin'
 import { getChainlinkFeed, hasChainlinkFeeds } from './feeds'
@@ -18,35 +19,24 @@ export interface ChainlinkHistoricalSourceOptions {
   env?: Env
 }
 
-type ChainlinkHistoricalSourceInput = ChainlinkHistoricalSourceOptions | ChainlinkClientForChain
-
-function normalizeOptions(input: ChainlinkHistoricalSourceInput): ChainlinkHistoricalSourceOptions {
-  return typeof input === 'function' ? { clientForChain: input } : input
-}
-
-function clientResolver(options: ChainlinkHistoricalSourceOptions): ChainlinkClientForChain {
-  return options.clientForChain ?? ((chainId) => getChainClient(chainId, options.env))
-}
-
 export class ChainlinkHistoricalSource extends HistoricalPriceSourceBase {
   readonly name = 'chainlink'
   readonly priority = 20
 
   private readonly clientForChain: ChainlinkClientForChain
 
-  constructor(input: ChainlinkHistoricalSourceInput = {}) {
+  constructor(options: ChainlinkHistoricalSourceOptions = {}) {
     super()
-    const options = normalizeOptions(input)
-    this.clientForChain = clientResolver(options)
+    this.clientForChain = options.clientForChain ?? ((chainId) => getChainClient(chainId, options.env))
   }
 
   supports(chainId: number): boolean {
-    return this.clientForChain(chainId) !== null && hasChainlinkFeeds(chainId)
+    return hasChainlinkFeeds(chainId) && this.clientForChain(chainId) !== null
   }
 
   async getHistoricalPrice(chainId: number, token: string, timestamp: number): Promise<HistoricalPriceResult | null> {
     const client = this.clientForChain(chainId)
-    if (!client || !hasChainlinkFeeds(chainId)) {
+    if (!client) {
       return null
     }
 
@@ -57,23 +47,34 @@ export class ChainlinkHistoricalSource extends HistoricalPriceSourceBase {
 
     const blockNumber = await estimateBlockByTimestamp(client, chainId, timestamp)
 
-    const [roundData, decimals, block] = await Promise.all([
-      client.readContract({ address: feed.address, abi: FEED_ABI, functionName: 'latestRoundData', blockNumber }),
-      client.readContract({ address: feed.address, abi: FEED_ABI, functionName: 'decimals', blockNumber }),
-      client.getBlock({ blockNumber })
-    ])
+    // A feed that reverts at this block is not deployed yet: let another
+    // source answer instead of failing the whole request.
+    const reads = await maybe(() =>
+      Promise.all([
+        client.readContract({ address: feed.address, abi: FEED_ABI, functionName: 'latestRoundData', blockNumber }),
+        client.readContract({ address: feed.address, abi: FEED_ABI, functionName: 'decimals', blockNumber }),
+        client.getBlock({ blockNumber })
+      ])
+    )
+    if (!reads) {
+      return null
+    }
+
+    const [roundData, decimals, block] = reads
 
     return toHistoricalPrice(
       roundData[1],
       Number(decimals),
       roundData[3],
       block.timestamp,
-      feed.symbol || null,
+      feed.symbol,
       (price, observedAt) => this.isUsablePrice(price, observedAt)
     )
   }
 }
 
-export function createChainlinkHistoricalSource(input: ChainlinkHistoricalSourceInput = {}): ChainlinkHistoricalSource {
-  return new ChainlinkHistoricalSource(input)
+export function createChainlinkHistoricalSource(
+  options: ChainlinkHistoricalSourceOptions = {}
+): ChainlinkHistoricalSource {
+  return new ChainlinkHistoricalSource(options)
 }
