@@ -17,7 +17,7 @@ import { isTodayNormalized, pgTimestampToUnix, unixToIsoTimestamp } from '../uti
  * without erasing types through an `as unknown as Pool` cast.
  */
 export interface QueryExecutor {
-  query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>
+  query<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<{ rows: R[] }>
 }
 
 function buildSourceCaseExpression(column = 'tp.source'): string {
@@ -82,8 +82,8 @@ export async function getBatchHistoricalPrices(
     `
   }
 
-  const result = await pool.query(sql, params)
-  return (result.rows as unknown as DbPriceRow[]).map(mapDbRowToExactRecord)
+  const result = await pool.query<DbPriceRow>(sql, params)
+  return result.rows.map(mapDbRowToExactRecord)
 }
 
 export async function getRangeHistoricalPrices(

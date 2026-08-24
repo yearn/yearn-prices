@@ -101,6 +101,35 @@ describe('finalizeBackfillTargets client lifecycle', () => {
     expect(clients).toHaveLength(0)
   })
 
+  it('releases the client with the rollback error when ROLLBACK itself fails', async () => {
+    const releaseCalls: unknown[] = []
+    const originalError = new Error('boom')
+    const rollbackError = new Error('rollback failed')
+
+    const pool: BackfillClientPool = {
+      connect: async () => {
+        const client: BackfillClient = {
+          query: async (sql: string) => {
+            if (sql.startsWith('LOCK TABLE')) {
+              throw originalError
+            }
+            if (sql.startsWith('ROLLBACK')) {
+              throw rollbackError
+            }
+            return { rows: [] }
+          },
+          release: (error?: unknown) => {
+            releaseCalls.push(error)
+          }
+        }
+        return client
+      }
+    }
+
+    await expect(finalizeBackfillTargets(pool, [TARGET])).rejects.toBe(originalError)
+    expect(releaseCalls).toEqual([rollbackError])
+  })
+
   it('opens no transaction in dry-run mode', async () => {
     const { pool, clients } = fakePool(0)
 

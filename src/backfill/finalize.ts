@@ -10,13 +10,13 @@ const TIMEOUT_LITERAL_PATTERN = /^\d+(ms|s|min)$/
 export const DEFAULT_LOCK_TIMEOUT = '5s'
 export const DEFAULT_STATEMENT_TIMEOUT = '30s'
 
-export interface BackfillQueryResult {
-  rows: Record<string, unknown>[]
+export interface BackfillQueryResult<R = Record<string, unknown>> {
+  rows: R[]
 }
 
 export interface BackfillClient {
-  query(sql: string, params?: unknown[]): Promise<BackfillQueryResult>
-  release(): void
+  query<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<BackfillQueryResult<R>>
+  release(error?: unknown): void
 }
 
 export interface BackfillClientPool {
@@ -218,6 +218,7 @@ async function finalizeBatch(
   for (;;) {
     const client = await pool.connect()
     let committed = false
+    let releaseError: unknown
     try {
       await client.query('BEGIN')
       await client.query(`SET LOCAL lock_timeout = '${lockTimeout}'`)
@@ -231,7 +232,9 @@ async function finalizeBatch(
       if (!committed) {
         try {
           await client.query('ROLLBACK')
-        } catch {}
+        } catch (rollbackError) {
+          releaseError = rollbackError
+        }
       }
       if (!isLockTimeout(error)) {
         throw error
@@ -241,7 +244,7 @@ async function finalizeBatch(
       }
       retries += 1
     } finally {
-      client.release()
+      client.release(releaseError)
     }
   }
 }
