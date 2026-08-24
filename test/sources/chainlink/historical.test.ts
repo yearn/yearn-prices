@@ -100,6 +100,28 @@ describe('ChainlinkHistoricalSource', () => {
     expect(new Set(readBlocks)).toEqual(new Set([LATEST_BLOCK / 2n]))
   })
 
+  it('rejects when the read fails on transport, instead of reading as no price', async () => {
+    const client = {
+      async getBlockNumber() {
+        return LATEST_BLOCK
+      },
+      async getBlock() {
+        return { number: LATEST_BLOCK, timestamp: BigInt(HISTORICAL_TIMESTAMP) }
+      },
+      async readContract() {
+        throw Object.assign(new Error('HTTP request failed'), { name: 'HttpRequestError' })
+      }
+    } as unknown as PublicClient
+
+    await expect(
+      createChainlinkHistoricalSource({ clientForChain: () => client }).getHistoricalPrice(
+        1,
+        TOKEN,
+        HISTORICAL_TIMESTAMP
+      )
+    ).rejects.toThrow()
+  })
+
   it('returns null when the feed reverts at that block', async () => {
     readBlocks = []
     const client = historicalClient({})

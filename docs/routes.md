@@ -66,6 +66,9 @@ Price routes accept an optional `source` query parameter. Supported values are:
 - `defillama-alias`
 - `enso`
 
+`source` filters the stored price rows only. `chainlink` and `defillama-alias` are resolved live and never written
+to storage, so filtering on either returns `404` today.
+
 When `source` is omitted, the API returns the first available row by priority:
 
 1. `defillama`

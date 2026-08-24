@@ -5,15 +5,12 @@ export interface ChainlinkFeed {
   symbol: string
 }
 
-const ETH_NATIVE = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
-
 export const CHAINLINK_FEEDS: Readonly<Record<number, Readonly<Record<string, ChainlinkFeed>>>> = {
   1: {
     '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2': {
       address: '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419',
       symbol: 'ETH'
     },
-    [ETH_NATIVE]: { address: '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419', symbol: 'ETH' },
     '0x2260fac5e5542a773aa44fbcfedf7c193bc2c599': {
       address: '0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c',
       symbol: 'BTC'

@@ -4,8 +4,9 @@ import type { Env } from '../../types'
 import { HistoricalPriceSourceBase } from '../base'
 import { maybe } from '../onchain/context'
 import type { HistoricalPriceResult } from '../types'
-import { toHistoricalPrice } from './coin'
 import { getChainlinkFeed, hasChainlinkFeeds } from './feeds'
+
+const MAX_STALENESS_SECONDS = 86_400
 
 const FEED_ABI = parseAbi([
   'function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)',
@@ -21,7 +22,7 @@ export interface ChainlinkHistoricalSourceOptions {
 
 export class ChainlinkHistoricalSource extends HistoricalPriceSourceBase {
   readonly name = 'chainlink'
-  readonly priority = 20
+  readonly priority = 15
 
   private readonly clientForChain: ChainlinkClientForChain
 
@@ -62,14 +63,17 @@ export class ChainlinkHistoricalSource extends HistoricalPriceSourceBase {
 
     const [roundData, decimals, block] = reads
 
-    return toHistoricalPrice(
-      roundData[1],
-      Number(decimals),
-      roundData[3],
-      block.timestamp,
-      feed.symbol,
-      (price, observedAt) => this.isUsablePrice(price, observedAt)
-    )
+    const updatedAt = Number(roundData[3])
+    if (updatedAt + MAX_STALENESS_SECONDS < Number(block.timestamp)) {
+      return null
+    }
+
+    const price = Number(roundData[1]) / 10 ** decimals
+    if (!this.isUsablePrice(price, updatedAt)) {
+      return null
+    }
+
+    return { price, timestamp: updatedAt, symbol: feed.symbol, confidence: null }
   }
 }
 
