@@ -109,6 +109,10 @@ function isAbortError(error: unknown): boolean {
   return name === 'AbortError' || name === 'TimeoutError'
 }
 
+function isJsonParseError(error: unknown): boolean {
+  return (error as { name?: string } | null)?.name === 'SyntaxError'
+}
+
 export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig): Promise<T> {
   const lastAttempt = RETRY_DELAYS.length - 1
 
@@ -121,10 +125,8 @@ export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig
       await sleep(delayMs)
     }
 
-    let response: Response
-    try {
-      response = await fetch(url, requestInit(config))
-    } catch (error) {
+    // Returns normally when the caller should retry; throws otherwise.
+    const failOrRetryTransport = async (error: unknown): Promise<void> => {
       if (!config.retryTransportErrors) {
         throw error
       }
@@ -141,17 +143,30 @@ export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig
       }
 
       await scheduleRetry(RETRY_DELAYS[attempt], 0)
+    }
+
+    let response: Response
+    try {
+      response = await fetch(url, requestInit(config))
+    } catch (error) {
+      await failOrRetryTransport(error)
       continue
     }
 
     if (response.ok) {
-      if (!config.retryInvalidJson) {
-        return (await response.json()) as T
-      }
-
       try {
         return (await response.json()) as T
       } catch (error) {
+        // A timeout or reset while the body streams rejects here, not at fetch.
+        if (!isJsonParseError(error)) {
+          await failOrRetryTransport(error)
+          continue
+        }
+
+        if (!config.retryInvalidJson) {
+          throw error
+        }
+
         if (attempt === lastAttempt) {
           throw new HttpRequestError(
             'INTERNAL_ERROR',
@@ -186,7 +201,7 @@ export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig
       ? parseRetryAfter(response.headers.get('retry-after'), config.retryAfterCapMs ?? DEFAULT_RETRY_AFTER_CAP_MS)
       : null
 
-    await scheduleRetry(retryAfter ?? RETRY_DELAYS[attempt], response.status)
+    await scheduleRetry(Math.max(retryAfter ?? 0, RETRY_DELAYS[attempt]), response.status)
   }
 
   throw new ApiError('INTERNAL_ERROR', `Unexpected ${config.service} retry state`)

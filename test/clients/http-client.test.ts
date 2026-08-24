@@ -48,6 +48,12 @@ function named(name: string, message: string): Error {
   return Object.assign(new Error(message), { name })
 }
 
+function bodyFailure(error: Error): Response {
+  const response = new Response('{}', { status: 200 })
+  response.json = () => Promise.reject(error)
+  return response
+}
+
 describe('fetchJsonWithRetry compatibility for callers passing no options', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -103,6 +109,15 @@ describe('fetchJsonWithRetry compatibility for callers passing no options', () =
     await expect(
       fetchJsonWithRetry(URL_UNDER_TEST, { service: 'Test', rateLimiter: limiter() })
     ).rejects.toBeInstanceOf(SyntaxError)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('propagates a body-read failure without retrying', async () => {
+    const fetchMock = stubFetch(bodyFailure(named('TimeoutError', 'The operation was aborted due to timeout')))
+
+    await expect(fetchJsonWithRetry(URL_UNDER_TEST, { service: 'Test', rateLimiter: limiter() })).rejects.toMatchObject(
+      { name: 'TimeoutError' }
+    )
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
@@ -327,6 +342,60 @@ describe('fetchJsonWithRetry opt-in hardening', () => {
     )
 
     expect(error).toMatchObject({ diagnosticCode: 'invalid_json', attempts: 3 })
+  })
+
+  it('classifies a timeout during the body read as a timeout, not invalid JSON', async () => {
+    vi.useFakeTimers()
+    const timeout = named('TimeoutError', 'The operation was aborted due to timeout')
+    const fetchMock = stubFetch(bodyFailure(timeout), bodyFailure(timeout), bodyFailure(timeout))
+
+    const error = await drain(
+      fetchJsonWithRetry(URL_UNDER_TEST, {
+        service: 'Test',
+        rateLimiter: limiter(),
+        timeoutMs: 30_000,
+        retryTransportErrors: true,
+        retryInvalidJson: true
+      }).catch((thrown) => thrown)
+    )
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(error).toBeInstanceOf(HttpRequestError)
+    expect(error).toMatchObject({ diagnosticCode: 'timeout', attempts: 3 })
+  })
+
+  it('retries a body-read transport failure even when invalid JSON retries are off', async () => {
+    vi.useFakeTimers()
+    const fetchMock = stubFetch(bodyFailure(named('TypeError', 'terminated')), Response.json({ ok: true }))
+
+    const result = await drain(
+      fetchJsonWithRetry<{ ok: boolean }>(URL_UNDER_TEST, {
+        service: 'Test',
+        rateLimiter: limiter(),
+        timeoutMs: 30_000,
+        retryTransportErrors: true
+      })
+    )
+
+    expect(result).toEqual({ ok: true })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('never backs off less than the fixed delay when Retry-After is zero', async () => {
+    vi.useFakeTimers()
+    stubFetch(Response.json({}, { status: 429, headers: { 'retry-after': '0' } }), Response.json({ ok: true }))
+    const onRetry = vi.fn()
+
+    await drain(
+      fetchJsonWithRetry(URL_UNDER_TEST, {
+        service: 'Test',
+        rateLimiter: limiter(),
+        honorRetryAfter: true,
+        onRetry
+      })
+    )
+
+    expect(onRetry.mock.calls[0][1]).toBe(1000)
   })
 
   it('reports a failed provider response with the provider diagnostic code', async () => {
