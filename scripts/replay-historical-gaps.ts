@@ -12,7 +12,13 @@ import {
   MAXIMUM_CHART_SPAN_DAYS
 } from '../src/backfill/constants'
 import { manifestDigest, type NormalizedTarget, parseManifest } from '../src/backfill/manifest'
-import { type MatchResult, matchChartObservation } from '../src/backfill/matcher'
+import {
+  isObservationPrice,
+  isObservationTimestamp,
+  type MatchResult,
+  matchChartObservation,
+  windowEligibleObservations
+} from '../src/backfill/matcher'
 import { groupContiguousRanges as groupRanges } from '../src/backfill/ranges'
 import { DefiLlamaClient, SlidingWindowRateLimiter } from '../src/clients'
 import { createPool, getBatchHistoricalPrices } from '../src/db'
@@ -81,6 +87,7 @@ interface RequestRecord {
   missingDailyPeriods: number[]
   firstPeriodResolved: boolean | null
   lastPeriodResolved: boolean | null
+  coverageIgnoresAliasBounds: boolean
   attempts: number
 }
 
@@ -190,10 +197,7 @@ function observationList(coin: unknown): { total: number; points: Array<{ timest
       continue
     }
     const { timestamp, price } = raw as Record<string, unknown>
-    if (typeof timestamp !== 'number' || !Number.isSafeInteger(timestamp) || timestamp <= 0) {
-      continue
-    }
-    if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) {
+    if (!isObservationTimestamp(timestamp) || !isObservationPrice(price)) {
       continue
     }
     points.push({ timestamp, price })
@@ -247,17 +251,12 @@ export function hasEqualDistanceTie(
   eodTimestamp: number,
   options: { offsetSeconds: number; isEligibleObservation?: (observedTimestamp: number) => boolean }
 ): boolean {
-  const { points } = observationList(coin)
-  const candidates = new Set<number>()
-  for (const point of points) {
-    if (Math.abs(point.timestamp - eodTimestamp) > options.offsetSeconds) {
-      continue
-    }
-    if (options.isEligibleObservation && !options.isEligibleObservation(point.timestamp)) {
-      continue
-    }
-    candidates.add(point.timestamp)
-  }
+  const candidates = new Set(
+    windowEligibleObservations(coin, eodTimestamp, {
+      maximumOffsetSeconds: options.offsetSeconds,
+      isEligibleObservation: options.isEligibleObservation
+    }).map((observation) => observation.timestamp)
+  )
 
   let bestDistance = Number.POSITIVE_INFINITY
   let bestCount = 0
@@ -309,7 +308,8 @@ function distributionSummary(values: number[]): {
 }
 
 function csvEscape(value: string): string {
-  return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value
+  const neutralized = /^[=+\-@]/.test(value) ? `'${value}` : value
+  return /[",\n]/.test(neutralized) ? `"${neutralized.replace(/"/g, '""')}"` : neutralized
 }
 
 const CSV_COLUMNS: Array<keyof CaptureRecord> = [
@@ -436,65 +436,17 @@ async function run(args: Args): Promise<void> {
         args.maximumChartSpanDays
       )
 
-      const directResultByKey = new Map<string, ReturnType<typeof matchChartObservation>>()
-
-      for (const range of directRanges) {
-        let retries = 0
-        const client = chartClient(rateLimiter, () => {
-          retries += 1
-          stats.retries += 1
-        })
-
-        stats.apiCalls += 1
-        try {
-          const spanDays = (range.rangeEnd - range.rangeStart) / DAY_SECONDS + 1
-          const response = await client.getChart([range.identifier], {
-            start: range.rangeStart,
-            span: spanDays,
-            period: '1d',
-            searchWidth: window.searchWidth
-          })
-          const envelope = readChartCoin(response, range.identifier)
-          const coin = envelope.kind === 'coin' ? envelope.coin : undefined
-
-          requestRecords.push(
-            buildRequestRecord(window, 'direct', range, envelope.kind === 'invalid', coin, 1 + retries, {})
-          )
-
-          for (const { cohort, target } of range.items) {
-            const matched = matchChartResponse(response, range.identifier, target.eodTimestamp, {
-              maximumOffsetSeconds: window.offsetSeconds
-            })
-            const key = `${target.chain}:${target.token}:${target.eodTimestamp}`
-            directResultByKey.set(key, matched)
-            const record = buildCaptureRecord(
-              cohort,
-              target,
-              window.label,
-              'direct',
-              range.identifier,
-              range,
-              matched,
-              existingByKey,
-              1 + retries
-            )
-            record.equalDistanceTie = hasEqualDistanceTie(coin, target.eodTimestamp, {
-              offsetSeconds: window.offsetSeconds
-            })
-            captureRecords.push(record)
-          }
-        } catch {
-          stats.requestFailures += 1
-          requestRecords.push(buildFailedRequestRecord(window, 'direct', range, 1 + retries))
-          for (const { cohort, target } of range.items) {
-            const key = `${target.chain}:${target.token}:${target.eodTimestamp}`
-            directResultByKey.set(key, { kind: 'not_found' })
-            captureRecords.push(
-              buildFailedCaptureRecord(cohort, target, window.label, 'direct', range.identifier, range, 1 + retries)
-            )
-          }
-        }
-      }
+      const directResultByKey = await captureRanges(
+        window,
+        'direct',
+        directRanges,
+        () => undefined,
+        rateLimiter,
+        stats,
+        existingByKey,
+        captureRecords,
+        requestRecords
+      )
 
       const aliasCandidates = activeTargets.filter(({ target }) => {
         const key = `${target.chain}:${target.token}:${target.eodTimestamp}`
@@ -502,8 +454,7 @@ async function run(args: Args): Promise<void> {
         if (!directResult || directResult.kind === 'matched') {
           return false
         }
-        const alias = getDefiLlamaCoinGeckoAlias(target.chain, target.token)
-        return alias != null && isDefiLlamaAliasValidAt(alias, target.eodTimestamp)
+        return aliasEligibilityOf(target) != null
       })
 
       const aliasRanges = groupContiguousRanges(
@@ -512,64 +463,17 @@ async function run(args: Args): Promise<void> {
         args.maximumChartSpanDays
       )
 
-      for (const range of aliasRanges) {
-        let retries = 0
-        const client = chartClient(rateLimiter, () => {
-          retries += 1
-          stats.retries += 1
-        })
-
-        stats.apiCalls += 1
-        try {
-          const spanDays = (range.rangeEnd - range.rangeStart) / DAY_SECONDS + 1
-          const response = await client.getChart([range.identifier], {
-            start: range.rangeStart,
-            span: spanDays,
-            period: '1d',
-            searchWidth: window.searchWidth
-          })
-          const envelope = readChartCoin(response, range.identifier)
-          const coin = envelope.kind === 'coin' ? envelope.coin : undefined
-
-          requestRecords.push(
-            buildRequestRecord(window, 'alias', range, envelope.kind === 'invalid', coin, 1 + retries, {})
-          )
-
-          for (const { cohort, target } of range.items) {
-            const alias = getDefiLlamaCoinGeckoAlias(target.chain, target.token)!
-            const isEligibleObservation = (observedTimestamp: number) =>
-              isDefiLlamaAliasValidAt(alias, observedTimestamp)
-            const matched = matchChartResponse(response, range.identifier, target.eodTimestamp, {
-              maximumOffsetSeconds: window.offsetSeconds,
-              isEligibleObservation
-            })
-            const record = buildCaptureRecord(
-              cohort,
-              target,
-              window.label,
-              'alias',
-              range.identifier,
-              range,
-              matched,
-              existingByKey,
-              1 + retries
-            )
-            record.equalDistanceTie = hasEqualDistanceTie(coin, target.eodTimestamp, {
-              offsetSeconds: window.offsetSeconds,
-              isEligibleObservation
-            })
-            captureRecords.push(record)
-          }
-        } catch {
-          stats.requestFailures += 1
-          requestRecords.push(buildFailedRequestRecord(window, 'alias', range, 1 + retries))
-          for (const { cohort, target } of range.items) {
-            captureRecords.push(
-              buildFailedCaptureRecord(cohort, target, window.label, 'alias', range.identifier, range, 1 + retries)
-            )
-          }
-        }
-      }
+      await captureRanges(
+        window,
+        'alias',
+        aliasRanges,
+        aliasEligibilityOf,
+        rateLimiter,
+        stats,
+        existingByKey,
+        captureRecords,
+        requestRecords
+      )
     }
 
     const report = buildReport({
@@ -601,6 +505,89 @@ function chartClient(rateLimiter: SlidingWindowRateLimiter, onRetry: () => void)
   })
 }
 
+export function aliasEligibilityOf(target: NormalizedTarget): ((observedTimestamp: number) => boolean) | undefined {
+  const alias = getDefiLlamaCoinGeckoAlias(target.chain, target.token)
+  if (alias == null || !isDefiLlamaAliasValidAt(alias, target.eodTimestamp)) {
+    return undefined
+  }
+  return (observedTimestamp: number) => isDefiLlamaAliasValidAt(alias, observedTimestamp)
+}
+
+async function captureRanges(
+  window: ReplayWindow,
+  method: Method,
+  ranges: TargetRange[],
+  eligibilityOf: (target: NormalizedTarget) => ((observedTimestamp: number) => boolean) | undefined,
+  rateLimiter: SlidingWindowRateLimiter,
+  stats: { apiCalls: number; retries: number; requestFailures: number },
+  existingByKey: Map<string, ExactPriceRecord>,
+  captureRecords: CaptureRecord[],
+  requestRecords: RequestRecord[]
+): Promise<Map<string, MatchResult>> {
+  const resultByKey = new Map<string, MatchResult>()
+
+  for (const range of ranges) {
+    let retries = 0
+    const client = chartClient(rateLimiter, () => {
+      retries += 1
+      stats.retries += 1
+    })
+
+    stats.apiCalls += 1
+    try {
+      const spanDays = (range.rangeEnd - range.rangeStart) / DAY_SECONDS + 1
+      const response = await client.getChart([range.identifier], {
+        start: range.rangeStart,
+        span: spanDays,
+        period: '1d',
+        searchWidth: window.searchWidth
+      })
+      const envelope = readChartCoin(response, range.identifier)
+      const coin = envelope.kind === 'coin' ? envelope.coin : undefined
+
+      requestRecords.push(buildRequestRecord(window, method, range, envelope.kind === 'invalid', coin, 1 + retries, {}))
+
+      for (const { cohort, target } of range.items) {
+        const isEligibleObservation = eligibilityOf(target)
+        const matched = matchChartResponse(response, range.identifier, target.eodTimestamp, {
+          maximumOffsetSeconds: window.offsetSeconds,
+          isEligibleObservation
+        })
+        const key = `${target.chain}:${target.token}:${target.eodTimestamp}`
+        resultByKey.set(key, matched)
+        const record = buildCaptureRecord(
+          cohort,
+          target,
+          window.label,
+          method,
+          range.identifier,
+          range,
+          matched,
+          existingByKey,
+          1 + retries
+        )
+        record.equalDistanceTie = hasEqualDistanceTie(coin, target.eodTimestamp, {
+          offsetSeconds: window.offsetSeconds,
+          isEligibleObservation
+        })
+        captureRecords.push(record)
+      }
+    } catch {
+      stats.requestFailures += 1
+      requestRecords.push(buildFailedRequestRecord(window, method, range, 1 + retries))
+      for (const { cohort, target } of range.items) {
+        const key = `${target.chain}:${target.token}:${target.eodTimestamp}`
+        resultByKey.set(key, { kind: 'not_found' })
+        captureRecords.push(
+          buildFailedCaptureRecord(cohort, target, window.label, method, range.identifier, range, 1 + retries)
+        )
+      }
+    }
+  }
+
+  return resultByKey
+}
+
 function requestedPeriods(range: TargetRange): number {
   return (range.rangeEnd - range.rangeStart) / DAY_SECONDS + 1
 }
@@ -621,6 +608,7 @@ function buildRequestRecord(
     rangeStart: range.rangeStart,
     rangeEnd: range.rangeEnd,
     requestedPeriods: requestedPeriods(range),
+    coverageIgnoresAliasBounds: method === 'alias',
     attempts
   }
 
@@ -665,6 +653,7 @@ function buildFailedRequestRecord(
     missingDailyPeriods: [],
     firstPeriodResolved: null,
     lastPeriodResolved: null,
+    coverageIgnoresAliasBounds: method === 'alias',
     attempts
   }
 }

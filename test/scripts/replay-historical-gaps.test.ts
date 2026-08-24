@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  aliasEligibilityOf,
   buildReport,
   classifyDirection,
   groupContiguousRanges,
@@ -9,6 +10,7 @@ import {
   summarizeRangeResponse
 } from '../../scripts/replay-historical-gaps'
 import { type NormalizedTarget, parseManifest } from '../../src/backfill/manifest'
+import { getDefiLlamaCoinGeckoAlias } from '../../src/sources/defillama/aliases'
 
 const DAY_SECONDS = 86_400
 const BASE_EOD = 1_704_153_599
@@ -204,6 +206,40 @@ describe('hasEqualDistanceTie', () => {
         isEligibleObservation: (timestamp) => timestamp > BASE_EOD
       })
     ).toBe(false)
+  })
+})
+
+describe('aliasEligibilityOf', () => {
+  const FANTOM_USDC = getDefiLlamaCoinGeckoAlias('fantom', '0x04068da6c83afcfa0e13ba15a6696662335d5b75')!
+  const VALID_UNTIL = FANTOM_USDC.validUntil!
+
+  function fantomTarget(eodTimestamp: number): NormalizedTarget {
+    return {
+      chainId: 250,
+      chain: 'fantom',
+      token: FANTOM_USDC.token,
+      tokenLowercase: FANTOM_USDC.token.toLowerCase(),
+      eodTimestamp
+    }
+  }
+
+  it('does not alias-attempt a target whose eodTimestamp is past validUntil', () => {
+    expect(aliasEligibilityOf(fantomTarget(VALID_UNTIL + 100))).toBeUndefined()
+  })
+
+  it('resolves not_found when the only in-window observation is past validUntil', () => {
+    const eodTimestamp = VALID_UNTIL - 1_800
+    const isEligibleObservation = aliasEligibilityOf(fantomTarget(eodTimestamp))
+    expect(isEligibleObservation).toBeDefined()
+
+    const response = { coins: { [FANTOM_USDC.identifier]: chart([{ timestamp: VALID_UNTIL + 60, price: 1.01 }]) } }
+
+    expect(
+      matchChartResponse(response, FANTOM_USDC.identifier, eodTimestamp, {
+        maximumOffsetSeconds: 3_600,
+        isEligibleObservation
+      })
+    ).toEqual({ kind: 'not_found' })
   })
 })
 

@@ -19,11 +19,11 @@ export type MatchResult =
   | { kind: 'not_found' }
   | { kind: 'invalid_response' }
 
-function isObservationTimestamp(value: unknown): value is number {
+export function isObservationTimestamp(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
 }
 
-function isObservationPrice(value: unknown): value is number {
+export function isObservationPrice(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0
 }
 
@@ -45,26 +45,9 @@ export function matchChartObservation(coin: unknown, eodTimestamp: number, optio
     return { kind: 'invalid_response' }
   }
 
-  const maximumOffsetSeconds = options.maximumOffsetSeconds ?? MAXIMUM_ACCEPTED_OFFSET_SECONDS
   const candidates = new Map<number, number>()
 
-  for (const raw of entry.prices) {
-    if (raw == null || typeof raw !== 'object') {
-      continue
-    }
-
-    const observation = raw as Record<string, unknown>
-    const { timestamp, price } = observation
-    if (!isObservationTimestamp(timestamp) || !isObservationPrice(price)) {
-      continue
-    }
-    if (Math.abs(timestamp - eodTimestamp) > maximumOffsetSeconds) {
-      continue
-    }
-    if (options.isEligibleObservation && !options.isEligibleObservation(timestamp)) {
-      continue
-    }
-
+  for (const { timestamp, price } of windowEligibleObservations(coin, eodTimestamp, options)) {
     const collapsed = candidates.get(timestamp)
     if (collapsed !== undefined) {
       if (collapsed !== price) {
@@ -101,4 +84,44 @@ export function matchChartObservation(coin: unknown, eodTimestamp: number, optio
     observedTimestamp: selected.timestamp,
     offsetSeconds: selected.timestamp - eodTimestamp
   }
+}
+
+export function windowEligibleObservations(
+  coin: unknown,
+  eodTimestamp: number,
+  options: MatchOptions = {}
+): Array<{ timestamp: number; price: number }> {
+  if (coin == null || typeof coin !== 'object' || Array.isArray(coin)) {
+    return []
+  }
+
+  const entry = coin as Record<string, unknown>
+  if (!Array.isArray(entry.prices)) {
+    return []
+  }
+
+  const maximumOffsetSeconds = options.maximumOffsetSeconds ?? MAXIMUM_ACCEPTED_OFFSET_SECONDS
+  const observations: Array<{ timestamp: number; price: number }> = []
+
+  for (const raw of entry.prices) {
+    if (raw == null || typeof raw !== 'object') {
+      continue
+    }
+
+    const observation = raw as Record<string, unknown>
+    const { timestamp, price } = observation
+    if (!isObservationTimestamp(timestamp) || !isObservationPrice(price)) {
+      continue
+    }
+    if (Math.abs(timestamp - eodTimestamp) > maximumOffsetSeconds) {
+      continue
+    }
+    if (options.isEligibleObservation && !options.isEligibleObservation(timestamp)) {
+      continue
+    }
+
+    observations.push({ timestamp, price })
+  }
+
+  return observations
 }
