@@ -17,6 +17,10 @@ const DAY = 86_400
 const EOD = 1_704_153_599
 const USDC = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
 const OPTIMISM_DAI = '0xDA10009cBd5D07dd0CeCc66161FC93D7c9000da1'
+const FANTOM_USDC = '0x04068da6c83afcfa0e13ba15a6696662335d5b75'
+const FANTOM_USDC_ALIAS_VALID_UNTIL = 1_688_667_035
+const FANTOM_EOD_AFTER_ALIAS_VALID_UNTIL = 1_688_687_999
+const FANTOM_EOD_BEFORE_ALIAS_VALID_UNTIL = 1_688_601_599
 
 let directory: string
 
@@ -280,6 +284,87 @@ describe('runBackfill', () => {
     ])
   })
 
+  it('skips a bounded alias entirely once the target day is at or after its validUntil', async () => {
+    const manifestPath = manifestFile([
+      { chainId: 250, token: FANTOM_USDC, eodTimestamp: FANTOM_EOD_AFTER_ALIAS_VALID_UNTIL }
+    ])
+    const reportPath = join(directory, 'report.json')
+    const { pool } = fakePool()
+    let aliasCalls = 0
+
+    const result = await runBackfill(
+      { manifestPath, reportPath, write: true },
+      {
+        pool,
+        fetchChart: async (identifier) => {
+          if (identifier === 'coingecko:usd-coin') {
+            aliasCalls += 1
+          }
+          return { coin: chart([]), attempts: 1 }
+        }
+      }
+    )
+
+    expect(result.exitCode).toBe(2)
+    expect(aliasCalls).toBe(0)
+    const report = readReport(reportPath)
+    expect(report.targets[0]).toMatchObject({
+      status: 'unresolved',
+      method: null,
+      diagnosticCodes: ['not_found', 'not_applicable']
+    })
+    expect(report.targets[0].methods).toEqual([
+      {
+        method: 'defillama-direct',
+        providerIdentifier: `fantom:${FANTOM_USDC.toLowerCase()}`,
+        attempts: 1,
+        diagnosticCodes: ['not_found']
+      }
+    ])
+  })
+
+  it('leaves a bounded alias unresolved when its only in-window observation is at or after validUntil', async () => {
+    const manifestPath = manifestFile([
+      { chainId: 250, token: FANTOM_USDC, eodTimestamp: FANTOM_EOD_BEFORE_ALIAS_VALID_UNTIL }
+    ])
+    const reportPath = join(directory, 'report.json')
+    const { pool } = fakePool()
+
+    const result = await runBackfill(
+      {
+        manifestPath,
+        reportPath,
+        write: true,
+        maximumOffsetSeconds: FANTOM_USDC_ALIAS_VALID_UNTIL - FANTOM_EOD_BEFORE_ALIAS_VALID_UNTIL + 1_000
+      },
+      {
+        pool,
+        fetchChart: fetchChartFrom({
+          [`fantom:${FANTOM_USDC.toLowerCase()}`]: chart([]),
+          'coingecko:usd-coin': chart([{ timestamp: FANTOM_USDC_ALIAS_VALID_UNTIL, price: 1 }])
+        })
+      }
+    )
+
+    expect(result.exitCode).toBe(2)
+    const report = readReport(reportPath)
+    expect(report.targets[0]).toMatchObject({ status: 'unresolved', method: null })
+    expect(report.targets[0].methods).toEqual([
+      {
+        method: 'defillama-direct',
+        providerIdentifier: `fantom:${FANTOM_USDC.toLowerCase()}`,
+        attempts: 1,
+        diagnosticCodes: ['not_found']
+      },
+      {
+        method: 'defillama-alias',
+        providerIdentifier: 'coingecko:usd-coin',
+        attempts: 1,
+        diagnosticCodes: ['not_found']
+      }
+    ])
+  })
+
   it('classifies a malformed provider envelope as an invalid response', async () => {
     const manifestPath = manifestFile([{ chainId: 1, token: USDC, eodTimestamp: EOD }])
     const reportPath = join(directory, 'report.json')
@@ -384,7 +469,7 @@ describe('runBackfill', () => {
     expect(existsSync(`${checkpointPath(reportPath)}.tmp`)).toBe(false)
   })
 
-  it('checkpoints straight after clearing inventory for already priced targets', async () => {
+  it('removes the checkpoint after a successful run that cleared inventory for already priced targets', async () => {
     const manifestPath = manifestFile([{ chainId: 1, token: USDC, eodTimestamp: EOD }])
     const reportPath = join(directory, 'report.json')
     const { pool } = fakePool({ pricedRows: [{ chain: 'ethereum', token: USDC, eodTimestamp: EOD }] })
@@ -395,9 +480,7 @@ describe('runBackfill', () => {
     )
 
     expect(result.exitCode).toBe(0)
-    const checkpoint = readCheckpoint(checkpointPath(reportPath))
-    expect(checkpoint.finishedAt).toBeNull()
-    expect(checkpoint.summary.alreadyPriced).toBe(1)
+    expect(existsSync(checkpointPath(reportPath))).toBe(false)
   })
 
   it('exits 2 when a target stays unresolved and records the failure diagnostics', async () => {

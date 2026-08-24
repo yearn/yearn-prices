@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process'
-import { readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { config as loadEnv } from 'dotenv'
 
 loadEnv()
@@ -102,7 +102,7 @@ export interface BackfillCheckpoint {
 }
 
 export interface BackfillPool extends BackfillClientPool {
-  query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>
+  query<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<{ rows: R[] }>
 }
 
 export interface ChartFetchResult {
@@ -122,7 +122,6 @@ export interface BackfillOptions {
   manifestPath: string
   reportPath: string
   write: boolean
-  searchWidth?: string
   maximumOffsetSeconds?: number
   maximumChartSpanDays?: number
   batchSize?: number
@@ -412,7 +411,6 @@ async function resolveRanges(
 }
 
 export async function runBackfill(options: BackfillOptions, deps: BackfillDeps): Promise<BackfillRunResult> {
-  const searchWidth = options.searchWidth ?? PROVIDER_SEARCH_WIDTH
   const maximumOffsetSeconds = options.maximumOffsetSeconds ?? MAXIMUM_ACCEPTED_OFFSET_SECONDS
   const maximumChartSpanDays = options.maximumChartSpanDays ?? MAXIMUM_CHART_SPAN_DAYS
   const batchSize = options.batchSize ?? FINALIZATION_BATCH_SIZE
@@ -442,7 +440,7 @@ export async function runBackfill(options: BackfillOptions, deps: BackfillDeps):
     finishedAt: null,
     manifest: { path: options.manifestPath, digest: '', byteLength: 0 },
     aliasRegistryDigest: manifestDigest(JSON.stringify(listDefiLlamaCoinGeckoAliases())),
-    searchWidth,
+    searchWidth: PROVIDER_SEARCH_WIDTH,
     maximumAcceptedOffsetSeconds: maximumOffsetSeconds,
     request: { chartRequests: 0, retries: 0, requestFailures: 0 },
     summary: {},
@@ -574,8 +572,15 @@ export async function runBackfill(options: BackfillOptions, deps: BackfillDeps):
       }
     })
 
-    finishReport(report, state, { requestedCount, duplicateCount, alreadyPriced, write: options.write })
+    applyReportState(report, state, { requestedCount, duplicateCount, alreadyPriced, write: options.write }, true)
     writeReport(options.reportPath, report)
+    try {
+      unlinkSync(checkpointPath(options.reportPath))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error
+      }
+    }
 
     const unresolved = report.summary.unresolved
     return { exitCode: unresolved > 0 ? 2 : 0, report }
@@ -584,7 +589,7 @@ export async function runBackfill(options: BackfillOptions, deps: BackfillDeps):
       state.lockFailures += 1
       state.lockRetries += error.attempts - 1
     }
-    finishReport(report, state, { requestedCount, duplicateCount, alreadyPriced, write: options.write }, false)
+    applyReportState(report, state, { requestedCount, duplicateCount, alreadyPriced, write: options.write }, false)
     const planned =
       finalizationTargets.length > 0 ? finalizationTargets.length : Math.max(state.records.size - alreadyPriced, 0)
     report.fatal = {
@@ -620,6 +625,24 @@ interface ReportCounts {
   duplicateCount: number
   alreadyPriced: number
   write: boolean
+}
+
+interface RunSummary {
+  requested: number
+  normalizedUniqueTargets: number
+  duplicateManifestTargets: number
+  alreadyPriced: number
+  resolvedByDirectProvider: number
+  resolvedByReviewedAlias: number
+  skippedConcurrentExisting: number
+  unresolved: number
+  pending: number
+  providerRetryFailures: number
+  invalidProviderResponses: number
+  finalizationLockFailures: number
+  finalizationLockRetries: number
+  inserted: number
+  projectedInserted: number
 }
 
 function applyReportState(
@@ -663,11 +686,7 @@ function applyReportState(
     finalizationLockRetries: state.lockRetries,
     inserted: counts.write ? insertedRecords.length : 0,
     projectedInserted: counts.write ? 0 : projected
-  }
-}
-
-function finishReport(report: BackfillReport, state: RunState, counts: ReportCounts, resolvePending = true): void {
-  applyReportState(report, state, counts, resolvePending)
+  } satisfies RunSummary
 }
 
 function checkpointSummary(state: RunState, counts: ReportCounts): Record<string, number> {
@@ -690,7 +709,7 @@ function checkpointSummary(state: RunState, counts: ReportCounts): Record<string
     finalizationLockRetries: state.lockRetries,
     inserted: counts.write ? state.settledInserted : 0,
     projectedInserted: counts.write ? 0 : state.settledInserted
-  }
+  } satisfies RunSummary
 }
 
 function checkpoint(
@@ -766,6 +785,9 @@ interface Args {
   databaseUrlEnv?: string
 }
 
+const KNOWN_OPTIONS = new Set(['--manifest', '--report', '--database-url-env'])
+const KNOWN_FLAGS = new Set(['--write', '--dry-run'])
+
 export function parseArgs(argv: string[]): Args {
   const options = new Map<string, string>()
   const flags = new Set<string>()
@@ -775,12 +797,23 @@ export function parseArgs(argv: string[]): Args {
       continue
     }
     const next = argv[index + 1]
-    if (next && !next.startsWith('--')) {
-      options.set(current, next)
+    const hasValue = next !== undefined && !next.startsWith('--')
+    if (KNOWN_FLAGS.has(current)) {
+      if (hasValue) {
+        throw new Error(`${current} does not take a value`)
+      }
+      flags.add(current)
+      continue
+    }
+    if (KNOWN_OPTIONS.has(current)) {
+      if (!hasValue) {
+        throw new Error(`${current} requires a value`)
+      }
+      options.set(current, next as string)
       index += 1
       continue
     }
-    flags.add(current)
+    throw new Error(`unrecognized option: ${current}`)
   }
 
   const manifestPath = options.get('--manifest')
