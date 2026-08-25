@@ -1,4 +1,5 @@
 import { readFile, writeFile } from 'node:fs/promises'
+import { parseArgs } from 'node:util'
 import { config as loadEnv } from 'dotenv'
 
 loadEnv()
@@ -11,11 +12,10 @@ import type { TokenPriceWrite } from '../src/types'
 import {
   chainIdToName,
   chunk,
+  isTodayNormalized,
   normalizedDaysInRange,
   normalizeToEndOfDay,
-  nowUnix,
   pgTimestampToUnix,
-  toFetchTimestamp,
   unixToIsoTimestamp
 } from '../src/utils'
 
@@ -26,43 +26,30 @@ if (!databaseUrl) {
 
 const pool = createPool(databaseUrl)
 
-function rawFlag(name: string): string | undefined {
-  const args = process.argv
-  const inline = args.find((arg) => arg.startsWith(`--${name}=`))
-  if (inline) {
-    return inline.split('=').slice(1).join('=')
-  }
-  const index = args.indexOf(`--${name}`)
-  return index === -1 ? undefined : args[index + 1]
-}
+const cliArgs = process.argv
+  .slice(2)
+  .map((arg, index, all) =>
+    arg === '--retry' && (all[index + 1] === undefined || all[index + 1].startsWith('--')) ? '--retry=db' : arg
+  )
+const { values: flags, positionals } = parseArgs({
+  args: cliArgs,
+  options: {
+    out: { type: 'string' },
+    retry: { type: 'string' },
+    concurrency: { type: 'string' }
+  },
+  allowPositionals: true
+})
 
-function numericFlag(name: string, fallback: number): number {
-  const parsed = Number(rawFlag(name))
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback
-}
+const REPORT_PATH = flags.out ?? 'backfill-report.json'
+const RETRY_PATH = flags.retry ?? ''
 
-function stringFlag(name: string, fallback: string): string {
-  const raw = rawFlag(name)
-  return raw && !raw.startsWith('--') ? raw : fallback
-}
-
-const REPORT_PATH = stringFlag('out', 'backfill-report.json')
-const hasRetryFlag = process.argv.some((arg) => arg === '--retry' || arg.startsWith('--retry='))
-const RETRY_PATH = hasRetryFlag ? stringFlag('retry', 'db') : ''
-
-const SPACED_FLAG_VALUES = new Set(
-  ['--concurrency', '--retry', '--out'].flatMap((flag) => {
-    const index = process.argv.indexOf(flag)
-    return index === -1 ? [] : [process.argv[index + 1]]
-  })
-)
 const PHASES = ['prices', 'derived', 'verify', 'cleanup', 'all'] as const
-const positional = process.argv.slice(2).filter((arg) => !arg.startsWith('--') && !SPACED_FLAG_VALUES.has(arg))
-const unknownPhase = positional.find((arg) => !PHASES.includes(arg as (typeof PHASES)[number]))
+const unknownPhase = positionals.find((arg) => !PHASES.includes(arg as (typeof PHASES)[number]))
 if (unknownPhase) {
   throw new Error(`unknown phase "${unknownPhase}". Expected one of ${PHASES.join(', ')}`)
 }
-const phase = positional[0] ?? 'all'
+const phase = positionals[0] ?? 'all'
 
 interface MissingDay {
   chain: string
@@ -92,11 +79,13 @@ async function writeReport(quiet = false): Promise<void> {
 }
 
 process.on('SIGINT', () => {
-  void writeReport().then(() => process.exit(130))
+  void writeReport().finally(() => process.exit(130))
 })
 
 const TIMESTAMP_BATCH = 20
-const TOKEN_CONCURRENCY = numericFlag('concurrency', 4)
+const parsedConcurrency = Number(flags.concurrency)
+const TOKEN_CONCURRENCY =
+  Number.isFinite(parsedConcurrency) && parsedConcurrency > 0 ? Math.floor(parsedConcurrency) : 4
 
 console.log(`starting phase=${phase} concurrency=${TOKEN_CONCURRENCY} retry=${RETRY_PATH || 'none'} out=${REPORT_PATH}`)
 
@@ -189,10 +178,10 @@ async function persistBatch(
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
-    await insertTokenPrices(client as unknown as Queryable, writes, true)
-    await recordRatios(client as unknown as Queryable, chain, token, writes, storedPrices)
-    await recordMissing(client as unknown as Queryable, missing)
-    await clearMissing(client as unknown as Queryable, chain, token, writes)
+    await insertTokenPrices(client, writes, true)
+    await recordRatios(client, chain, token, writes, storedPrices)
+    await recordMissing(client, missing)
+    await clearMissing(client, chain, token, writes)
     await client.query('COMMIT')
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined)
@@ -262,15 +251,14 @@ async function repairPrices(): Promise<void> {
       const storedPrices = new Map(days.map((day) => [pgTimestampToUnix(day.timestamp), Number(day.price)]))
       const repairTimestamps =
         storedTimestamps.length > 0
-          ? normalizedDaysInRange(Math.min(...storedTimestamps) - 86_400, Math.max(...storedTimestamps))
+          ? normalizedDaysInRange(Math.min(...storedTimestamps) - 86_400, Math.max(...storedTimestamps)).filter(
+              (timestamp) => !isTodayNormalized(timestamp)
+            )
           : []
 
       let transientFailure = false
 
-      for (const batch of chunk(repairTimestamps, TIMESTAMP_BATCH)) {
-        const currentTimestamp = nowUnix()
-        const fetchTimestamps = batch.map((timestamp) => toFetchTimestamp(timestamp, currentTimestamp))
-
+      for (const fetchTimestamps of chunk(repairTimestamps, TIMESTAMP_BATCH)) {
         let coin:
           | { symbol?: string | null; prices: Array<{ timestamp: number; price: number; confidence?: number | null }> }
           | undefined
@@ -516,7 +504,7 @@ async function rescaleDerived(): Promise<void> {
          AND r.timestamp = d.timestamp
          AND NOT r.applied
          AND r.repaired_at IS NOT NULL
-         AND COALESCE(d.updated_at, '-infinity'::timestamp) < r.repaired_at
+         AND COALESCE(d.updated_at, '-infinity'::timestamp) AT TIME ZONE 'UTC' < r.repaired_at
         WHERE d.source = 'derived' AND d.chain = $1
       ), rescaled AS (
         UPDATE token_prices d

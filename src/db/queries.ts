@@ -11,7 +11,9 @@ import { SOURCE_PRIORITY } from '../types'
 import { optionalResponseNumber, toResponseNumber } from '../utils/format'
 import { isTodayNormalized, pgTimestampToUnix, unixToIsoTimestamp } from '../utils/time'
 
-export type Queryable = Pick<Pool, 'query'>
+export interface Queryable {
+  query(text: string, values?: unknown[]): Promise<{ rows: unknown[]; rowCount: number | null }>
+}
 
 function buildSourceCaseExpression(column = 'tp.source'): string {
   return `CASE ${column} ${SOURCE_PRIORITY.map((source, index) => `WHEN '${source}' THEN ${index + 1}`).join(' ')} ELSE 999 END`

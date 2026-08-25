@@ -10,7 +10,8 @@ import {
   readVaultSharePrice
 } from '../src/clients'
 import { createPool, getBatchHistoricalPrices, getExistingExactTimestamps, insertTokenPrices } from '../src/db'
-import { DEFI_LLAMA_SEARCH_WIDTH_SECONDS, matchPricesToRequests } from '../src/sources/defillama/match'
+import { buildDefiLlamaPayloads } from '../src/sources/defillama/batch'
+import { matchPricesToRequests } from '../src/sources/defillama/match'
 import type { HistoricalRequestTuple, KongVaultListItem, TokenPriceWrite } from '../src/types'
 import {
   chainIdToName,
@@ -45,8 +46,6 @@ const defiLlama = new DefiLlamaClient(undefined, () => {
 
 const REQUEST_GROUP_SIZE = 5
 const REQUEST_GROUP_DELAY_MS = 200
-const DEFI_LLAMA_TOKEN_BATCH = 5
-const DEFI_LLAMA_TIMESTAMP_BATCH = 20
 
 interface NormalizedVault {
   chain: string
@@ -176,42 +175,6 @@ function groupMissingRequests(requests: HistoricalRequestTuple[], existing: Set<
   }
 
   return grouped
-}
-
-function batchSpacedTimestamps(sorted: number[]): number[][] {
-  const batches: number[][] = []
-  let current: number[] = []
-  for (const timestamp of sorted) {
-    const tooClose = current.length > 0 && timestamp - current[current.length - 1] < DEFI_LLAMA_SEARCH_WIDTH_SECONDS
-    if (current.length >= DEFI_LLAMA_TIMESTAMP_BATCH || tooClose) {
-      batches.push(current)
-      current = []
-    }
-    current.push(timestamp)
-  }
-  if (current.length > 0) {
-    batches.push(current)
-  }
-  return batches
-}
-
-function buildDefiLlamaPayloads(
-  grouped: Record<string, number[]>,
-  currentTimestamp = nowUnix()
-): Array<Record<string, number[]>> {
-  const tokenChunks: Array<{ tokenKey: string; timestamps: number[] }> = []
-  for (const [tokenKey, timestamps] of Object.entries(grouped)) {
-    const fetchTimestamps = [
-      ...new Set(timestamps.map((timestamp) => toFetchTimestamp(timestamp, currentTimestamp)))
-    ].sort((left, right) => left - right)
-    for (const timestampChunk of batchSpacedTimestamps(fetchTimestamps)) {
-      tokenChunks.push({ tokenKey, timestamps: timestampChunk })
-    }
-  }
-
-  return chunk(tokenChunks, DEFI_LLAMA_TOKEN_BATCH).map((group) => {
-    return Object.fromEntries(group.map((item) => [item.tokenKey, item.timestamps]))
-  })
 }
 
 async function warmDirectPrices(vaults: NormalizedVault[], timestamps: number[], stats: WarmupStats): Promise<void> {
