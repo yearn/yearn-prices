@@ -19,7 +19,8 @@
     "warmup": "bun run scripts/warmup-prices.ts",
     "backfill:token-address-checksums": "bun run scripts/backfill-token-address-checksums.ts",
     "backfill:historical-gaps": "bun run scripts/backfill-historical-gaps.ts",
-    "replay:historical-gaps": "bun run scripts/replay-historical-gaps.ts"
+    "replay:historical-gaps": "bun run scripts/replay-historical-gaps.ts",
+    "backfill:defillama-day-alignment": "bun run scripts/backfill-defillama-day-alignment.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "0.10.4",

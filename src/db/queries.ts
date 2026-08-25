@@ -20,6 +20,10 @@ export interface QueryExecutor {
   query<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<{ rows: R[] }>
 }
 
+export interface Queryable {
+  query(text: string, values?: unknown[]): Promise<{ rows: unknown[]; rowCount: number | null }>
+}
+
 function buildSourceCaseExpression(column = 'tp.source'): string {
   return `CASE ${column} ${SOURCE_PRIORITY.map((source, index) => `WHEN '${source}' THEN ${index + 1}`).join(' ')} ELSE 999 END`
 }
@@ -157,12 +161,17 @@ export async function getExistingExactTimestamps(
   return new Set(rows.map((row) => `${row.chain}:${row.token}:${row.timestamp}`))
 }
 
-export async function insertTokenPrices(pool: Pool, rows: TokenPriceWrite[]): Promise<void> {
+export async function insertTokenPrices(pool: Queryable, rows: TokenPriceWrite[], forceUpdate = false): Promise<void> {
   if (rows.length === 0) {
     return
   }
 
   const dedupedRows = dedupeTokenPriceWrites(rows)
+  if (forceUpdate) {
+    await insertRows(pool, dedupedRows, true)
+    return
+  }
+
   const immutableRows = dedupedRows.filter((row) => !isTodayNormalized(row.timestamp))
   const mutableRows = dedupedRows.filter((row) => isTodayNormalized(row.timestamp))
 
@@ -178,7 +187,7 @@ function dedupeTokenPriceWrites(rows: TokenPriceWrite[]): TokenPriceWrite[] {
   return [...keyedRows.values()]
 }
 
-async function insertRows(pool: Pool, rows: TokenPriceWrite[], updateOnConflict: boolean): Promise<void> {
+async function insertRows(pool: Queryable, rows: TokenPriceWrite[], updateOnConflict: boolean): Promise<void> {
   if (rows.length === 0) {
     return
   }
@@ -207,7 +216,7 @@ async function insertRows(pool: Pool, rows: TokenPriceWrite[], updateOnConflict:
       ON CONFLICT (chain, token, timestamp, source)
       DO UPDATE SET
         price = EXCLUDED.price,
-        symbol = EXCLUDED.symbol,
+        symbol = COALESCE(EXCLUDED.symbol, token_prices.symbol),
         confidence = EXCLUDED.confidence,
         updated_at = NOW()
     `
