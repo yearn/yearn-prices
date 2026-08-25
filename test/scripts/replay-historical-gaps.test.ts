@@ -3,13 +3,14 @@ import {
   aliasEligibilityOf,
   buildReport,
   classifyDirection,
-  groupContiguousRanges,
   hasEqualDistanceTie,
   matchChartResponse,
+  parseArgs,
   percentile,
   summarizeRangeResponse
 } from '../../scripts/replay-historical-gaps'
 import { type NormalizedTarget, parseManifest } from '../../src/backfill/manifest'
+import { groupContiguousRanges } from '../../src/backfill/ranges'
 import { getDefiLlamaCoinGeckoAlias } from '../../src/sources/defillama/aliases'
 
 const DAY_SECONDS = 86_400
@@ -26,8 +27,12 @@ function target(chain: string, token: string, dayOffset: number): NormalizedTarg
   }
 }
 
-function identifierOf(candidate: NormalizedTarget): string {
-  return `${candidate.chain}:${candidate.tokenLowercase}`
+function identifierOf(item: { target: NormalizedTarget }): string {
+  return `${item.target.chain}:${item.target.tokenLowercase}`
+}
+
+function eodOf(item: { target: NormalizedTarget }): number {
+  return item.target.eodTimestamp
 }
 
 describe('groupContiguousRanges', () => {
@@ -38,7 +43,7 @@ describe('groupContiguousRanges', () => {
       { cohort: 'gap' as const, target: target('ethereum', '0xA', 2) }
     ]
 
-    const ranges = groupContiguousRanges(items, identifierOf, 365)
+    const ranges = groupContiguousRanges(items, identifierOf, eodOf, 365)
     expect(ranges).toHaveLength(1)
     expect(ranges[0].rangeStart).toBe(BASE_EOD)
     expect(ranges[0].rangeEnd).toBe(BASE_EOD + 2 * DAY_SECONDS)
@@ -51,7 +56,7 @@ describe('groupContiguousRanges', () => {
       { cohort: 'gap' as const, target: target('ethereum', '0xA', 5) }
     ]
 
-    const ranges = groupContiguousRanges(items, identifierOf, 365)
+    const ranges = groupContiguousRanges(items, identifierOf, eodOf, 365)
     expect(ranges).toHaveLength(2)
   })
 
@@ -61,17 +66,55 @@ describe('groupContiguousRanges', () => {
       { cohort: 'gap' as const, target: target('ethereum', '0xB', 0) }
     ]
 
-    const ranges = groupContiguousRanges(items, identifierOf, 365)
+    const ranges = groupContiguousRanges(items, identifierOf, eodOf, 365)
     expect(ranges).toHaveLength(2)
     expect(new Set(ranges.map((range) => range.identifier))).toEqual(new Set(['ethereum:0xa', 'ethereum:0xb']))
   })
 
   it('splits a run once it exceeds the maximum span', () => {
     const items = [0, 1, 2].map((offset) => ({ cohort: 'gap' as const, target: target('ethereum', '0xA', offset) }))
-    const ranges = groupContiguousRanges(items, identifierOf, 2)
+    const ranges = groupContiguousRanges(items, identifierOf, eodOf, 2)
     expect(ranges).toHaveLength(2)
     expect(ranges[0].items).toHaveLength(2)
     expect(ranges[1].items).toHaveLength(1)
+  })
+})
+
+describe('parseArgs', () => {
+  const required = [
+    '--control-manifest',
+    'control.json',
+    '--gap-manifest',
+    'gap.json',
+    '--report',
+    'report.json',
+    '--csv',
+    'capture.csv'
+  ]
+
+  it('names a database URL environment variable instead of taking the credential on argv', () => {
+    expect(parseArgs([...required, '--database-url-env', 'REPLAY_DATABASE_URL'])).toMatchObject({
+      controlManifestPath: 'control.json',
+      csvPath: 'capture.csv',
+      databaseUrlEnv: 'REPLAY_DATABASE_URL'
+    })
+  })
+
+  it('rejects a connection string on argv', () => {
+    expect(() => parseArgs([...required, '--database-url', 'postgres://user:secret@host/db'])).toThrow(
+      'unrecognized option: --database-url'
+    )
+  })
+
+  it('rejects an unknown option and a stray positional argument', () => {
+    expect(() => parseArgs([...required, '--nope', 'x'])).toThrow('unrecognized option: --nope')
+    expect(() => parseArgs([...required, 'write'])).toThrow('unrecognized argument: write')
+  })
+
+  it('keeps the default windows and rejects an unsupported one', () => {
+    expect(parseArgs(required).windows.map((window) => window.label)).toEqual(['1h', '2h', '6h'])
+    expect(parseArgs([...required, '--windows', '2h,6h']).windows.map((window) => window.label)).toEqual(['2h', '6h'])
+    expect(() => parseArgs([...required, '--windows', '12h'])).toThrow('unsupported --windows value')
   })
 })
 

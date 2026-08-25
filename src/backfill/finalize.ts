@@ -67,12 +67,16 @@ export interface FinalizationOutcome {
   skippedConcurrentExisting: number
   unresolved: number
   lockRetries: number
+  lockWaitMs: number
+  lockHoldMs: number
 }
 
 export interface FinalizationBatchSettled {
   batch: FinalizationTarget[]
   results: FinalizationTargetResult[]
   lockRetries: number
+  lockWaitMs: number
+  lockHoldMs: number
 }
 
 export class FinalizationLockError extends Error {
@@ -188,20 +192,38 @@ async function applyBatch(
   }
 
   const insertedKeys = await insertResolvedTargets(client, resolved)
-  const results: FinalizationTargetResult[] = [
-    ...concurrent.map((target) => toResult(target, 'skipped_concurrent_existing')),
-    ...unresolved.map((target) => toResult(target, 'unresolved'))
-  ]
+  const contested = resolved.filter(
+    (target) => !insertedKeys.has(priceKey(target.chain, target.token, target.eodTimestamp))
+  )
+  const contestedPriced =
+    contested.length > 0 ? await readPricedKeys(client, contested, readChunkSize) : new Set<string>()
 
+  const results: FinalizationTargetResult[] = [
+    ...concurrent.map((target) => toResult(target, 'skipped_concurrent_existing'))
+  ]
   const settled: FinalizationTarget[] = [...concurrent]
+  const stillUnresolved: FinalizationTarget[] = [...unresolved]
+
   for (const target of resolved) {
-    const inserted = insertedKeys.has(priceKey(target.chain, target.token, target.eodTimestamp))
-    results.push(toResult(target, inserted ? 'inserted' : 'skipped_concurrent_existing'))
-    settled.push(target)
+    const key = priceKey(target.chain, target.token, target.eodTimestamp)
+    if (insertedKeys.has(key)) {
+      results.push(toResult(target, 'inserted'))
+      settled.push(target)
+      continue
+    }
+    if (contestedPriced.has(key)) {
+      results.push(toResult(target, 'skipped_concurrent_existing'))
+      settled.push(target)
+      continue
+    }
+    results.push(toResult(target, 'unresolved'))
+    stillUnresolved.push(target)
   }
 
+  results.push(...unresolved.map((target) => toResult(target, 'unresolved')))
+
   await deleteInventoryRows(client, settled.map(inventoryKey))
-  await upsertInventoryRows(client, unresolved.map(inventoryKey))
+  await upsertInventoryRows(client, stillUnresolved.map(inventoryKey))
 
   return results
 }
@@ -210,7 +232,7 @@ async function finalizeBatch(
   pool: BackfillClientPool,
   batch: FinalizationTarget[],
   options: Required<Omit<FinalizationOptions, 'dryRun' | 'batchSize' | 'onBatchStart' | 'onBatchSettled'>>
-): Promise<{ results: FinalizationTargetResult[]; lockRetries: number }> {
+): Promise<{ results: FinalizationTargetResult[]; lockRetries: number; lockWaitMs: number; lockHoldMs: number }> {
   const lockTimeout = timeoutLiteral(options.lockTimeout)
   const statementTimeout = timeoutLiteral(options.statementTimeout)
   let retries = 0
@@ -223,11 +245,18 @@ async function finalizeBatch(
       await client.query('BEGIN')
       await client.query(`SET LOCAL lock_timeout = '${lockTimeout}'`)
       await client.query(`SET LOCAL statement_timeout = '${statementTimeout}'`)
+      const lockRequestedAt = Date.now()
       await client.query('LOCK TABLE token_prices IN SHARE ROW EXCLUSIVE MODE')
+      const lockAcquiredAt = Date.now()
       const results = await applyBatch(client, batch, options.readChunkSize, true)
       await client.query('COMMIT')
       committed = true
-      return { results, lockRetries: retries }
+      return {
+        results,
+        lockRetries: retries,
+        lockWaitMs: lockAcquiredAt - lockRequestedAt,
+        lockHoldMs: Date.now() - lockAcquiredAt
+      }
     } catch (error) {
       if (!committed) {
         try {
@@ -277,20 +306,30 @@ export async function finalizeBackfillTargets(
 
   const results: FinalizationTargetResult[] = []
   let lockRetries = 0
+  let lockWaitMs = 0
+  let lockHoldMs = 0
 
   for (const batch of chunk(targets, batchSize)) {
     options.onBatchStart?.(batch.length)
     if (options.dryRun) {
       const dryResults = await finalizeDryRun(pool, batch, transactionOptions.readChunkSize)
       results.push(...dryResults)
-      await options.onBatchSettled?.({ batch, results: dryResults, lockRetries: 0 })
+      await options.onBatchSettled?.({ batch, results: dryResults, lockRetries: 0, lockWaitMs: 0, lockHoldMs: 0 })
       continue
     }
 
     const outcome = await finalizeBatch(pool, batch, transactionOptions)
     results.push(...outcome.results)
     lockRetries += outcome.lockRetries
-    await options.onBatchSettled?.({ batch, results: outcome.results, lockRetries: outcome.lockRetries })
+    lockWaitMs += outcome.lockWaitMs
+    lockHoldMs += outcome.lockHoldMs
+    await options.onBatchSettled?.({
+      batch,
+      results: outcome.results,
+      lockRetries: outcome.lockRetries,
+      lockWaitMs: outcome.lockWaitMs,
+      lockHoldMs: outcome.lockHoldMs
+    })
   }
 
   return {
@@ -298,6 +337,8 @@ export async function finalizeBackfillTargets(
     inserted: results.filter((result) => result.status === 'inserted').length,
     skippedConcurrentExisting: results.filter((result) => result.status === 'skipped_concurrent_existing').length,
     unresolved: results.filter((result) => result.status === 'unresolved').length,
-    lockRetries
+    lockRetries,
+    lockWaitMs,
+    lockHoldMs
   }
 }

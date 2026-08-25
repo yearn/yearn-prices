@@ -1,9 +1,9 @@
-import { execSync } from 'node:child_process'
 import { readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { config as loadEnv } from 'dotenv'
 
 loadEnv()
 
+import { parseCliArgs } from '../src/backfill/args'
 import { readChartCoin } from '../src/backfill/chart-envelope'
 import {
   CHART_REQUEST_TIMEOUT_MS,
@@ -25,7 +25,8 @@ import { chunk, deleteInventoryRows } from '../src/backfill/inventory'
 import { ManifestError, manifestDigest, type NormalizedTarget, parseManifest } from '../src/backfill/manifest'
 import { matchChartObservation } from '../src/backfill/matcher'
 import { priceKey, readPricedKeys } from '../src/backfill/priced-keys'
-import { groupContiguousRanges as groupRanges } from '../src/backfill/ranges'
+import { gitRevision, toolVersion } from '../src/backfill/provenance'
+import { type ContiguousRange, groupContiguousRanges } from '../src/backfill/ranges'
 import { DefiLlamaClient, SlidingWindowRateLimiter } from '../src/clients'
 import { HttpRequestError } from '../src/clients/http-client'
 import { createPool } from '../src/db'
@@ -76,7 +77,7 @@ export interface BackfillReport {
   aliasRegistryDigest: string
   searchWidth: string
   maximumAcceptedOffsetSeconds: number
-  request: { chartRequests: number; retries: number; requestFailures: number }
+  request: { chartRequests: number; retries: number; requestFailures: number; rateLimitedResponses: number }
   summary: Record<string, number>
   targets: TargetRecord[]
   fatal?: { message: string; committedTargets: number; failedTargets: number; unattemptedTargets: number }
@@ -84,8 +85,9 @@ export interface BackfillReport {
 
 /**
  * Crash-forensics snapshot written after every finalization batch. Deliberately
- * omits the per-target array so its write cost stays O(1) in the manifest size;
- * `progress` still distinguishes committed / pending / unattempted for a resume.
+ * omits the per-target array so its write cost stays O(1) in the manifest size.
+ * Nothing reads it back: a rerun is driven by the manifest and the exact-row
+ * guard, not by this file.
  */
 export interface BackfillCheckpoint {
   toolVersion: string
@@ -96,7 +98,7 @@ export interface BackfillCheckpoint {
   finishedAt: null
   manifest: { path: string; digest: string; byteLength: number } | null
   aliasRegistryDigest: string
-  request: { chartRequests: number; retries: number; requestFailures: number }
+  request: { chartRequests: number; retries: number; requestFailures: number; rateLimitedResponses: number }
   progress: { committed: number; inFlight: number; unattempted: number }
   summary: Record<string, number>
 }
@@ -109,6 +111,7 @@ export interface ChartFetchResult {
   coin: unknown
   attempts: number
   malformed?: boolean
+  rateLimited?: number
 }
 
 export type ChartFetch = (identifier: string, rangeStart: number, spanDays: number) => Promise<ChartFetchResult>
@@ -137,12 +140,14 @@ export interface BackfillRunResult {
 export class ChartRequestError extends Error {
   readonly attempts: number
   readonly diagnosticCodes: string[]
+  readonly rateLimited: number
 
-  constructor(attempts: number, diagnosticCodes: string[], cause?: unknown) {
+  constructor(attempts: number, diagnosticCodes: string[], cause?: unknown, rateLimited = 0) {
     super(`DeFiLlama chart request failed after ${attempts} attempts`)
     this.name = 'ChartRequestError'
     this.attempts = attempts
     this.diagnosticCodes = diagnosticCodes
+    this.rateLimited = rateLimited
     this.cause = cause
   }
 }
@@ -162,47 +167,10 @@ export class PreflightError extends Error {
   }
 }
 
-export interface TargetRange {
-  identifier: string
-  rangeStart: number
-  rangeEnd: number
-  targets: NormalizedTarget[]
-}
-
-export function groupContiguousRanges(
-  targets: NormalizedTarget[],
-  identifierOf: (target: NormalizedTarget) => string,
-  maximumSpanDays: number
-): TargetRange[] {
-  return groupRanges(targets, identifierOf, (target) => target.eodTimestamp, maximumSpanDays).map((range) => ({
-    identifier: range.identifier,
-    rangeStart: range.rangeStart,
-    rangeEnd: range.rangeEnd,
-    targets: range.items
-  }))
-}
+type TargetRange = ContiguousRange<NormalizedTarget>
 
 function targetKey(target: { chain: string; token: string; eodTimestamp: number }): string {
   return priceKey(target.chain, target.token, target.eodTimestamp)
-}
-
-function toolVersion(): string {
-  try {
-    const raw = readFileSync(new URL('../package.json', import.meta.url))
-    return (JSON.parse(raw.toString('utf8')) as { version?: string }).version ?? 'unknown'
-  } catch {
-    return 'unknown'
-  }
-}
-
-function gitRevision(): string | null {
-  try {
-    return execSync('git rev-parse HEAD', { cwd: import.meta.dirname })
-      .toString()
-      .trim()
-  } catch {
-    return null
-  }
 }
 
 function writeAtomically(path: string, payload: object): void {
@@ -266,11 +234,15 @@ interface RunState {
   chartRequests: number
   retries: number
   requestFailures: number
+  retryExhaustedFailures: number
+  rateLimitedResponses: number
   invalidProviderResponses: number
   resolvedDirect: number
   resolvedAlias: number
   lockRetries: number
   lockFailures: number
+  lockWaitMs: number
+  lockHoldMs: number
   settledInserted: number
   settledSkippedConcurrent: number
   settledUnresolved: number
@@ -312,7 +284,7 @@ function chartDiagnosticCodes(error: unknown): string[] {
     return error.diagnosticCodes
   }
   if (error instanceof HttpRequestError) {
-    return ['retry_exhausted', error.diagnosticCode]
+    return [error.attempts > 1 ? 'retry_exhausted' : 'provider_rejected', error.diagnosticCode]
   }
   return ['retry_exhausted']
 }
@@ -350,8 +322,14 @@ async function resolveRanges(
       state.requestFailures += 1
       const codes = chartDiagnosticCodes(error)
       const attempts = chartAttempts(error)
+      if (codes.includes('retry_exhausted')) {
+        state.retryExhaustedFailures += 1
+      }
+      if (error instanceof ChartRequestError) {
+        state.rateLimitedResponses += error.rateLimited
+      }
       state.retries += Math.max(attempts - 1, 0)
-      for (const target of range.targets) {
+      for (const target of range.items) {
         const record = state.records.get(targetKey(target)) as TargetRecord
         const entry = methodRecord(record, method, range.identifier)
         record.attempts += attempts
@@ -364,8 +342,10 @@ async function resolveRanges(
     }
 
     state.retries += Math.max(fetched.attempts - 1, 0)
+    state.rateLimitedResponses += fetched.rateLimited ?? 0
+    let invalidResponse = false
 
-    for (const target of range.targets) {
+    for (const target of range.items) {
       const record = state.records.get(targetKey(target)) as TargetRecord
       const entry = methodRecord(record, method, range.identifier)
       record.attempts += fetched.attempts
@@ -402,8 +382,12 @@ async function resolveRanges(
       record.diagnosticCodes.push(matched.kind)
       entry.diagnosticCodes.push(matched.kind)
       if (matched.kind === 'invalid_response') {
-        state.invalidProviderResponses += 1
+        invalidResponse = true
       }
+    }
+
+    if (invalidResponse) {
+      state.invalidProviderResponses += 1
     }
   }
 
@@ -422,11 +406,15 @@ export async function runBackfill(options: BackfillOptions, deps: BackfillDeps):
     chartRequests: 0,
     retries: 0,
     requestFailures: 0,
+    retryExhaustedFailures: 0,
+    rateLimitedResponses: 0,
     invalidProviderResponses: 0,
     resolvedDirect: 0,
     resolvedAlias: 0,
     lockRetries: 0,
     lockFailures: 0,
+    lockWaitMs: 0,
+    lockHoldMs: 0,
     settledInserted: 0,
     settledSkippedConcurrent: 0,
     settledUnresolved: 0
@@ -442,7 +430,7 @@ export async function runBackfill(options: BackfillOptions, deps: BackfillDeps):
     aliasRegistryDigest: manifestDigest(JSON.stringify(listDefiLlamaCoinGeckoAliases())),
     searchWidth: PROVIDER_SEARCH_WIDTH,
     maximumAcceptedOffsetSeconds: maximumOffsetSeconds,
-    request: { chartRequests: 0, retries: 0, requestFailures: 0 },
+    request: { chartRequests: 0, retries: 0, requestFailures: 0, rateLimitedResponses: 0 },
     summary: {},
     targets: []
   }
@@ -502,6 +490,7 @@ export async function runBackfill(options: BackfillOptions, deps: BackfillDeps):
     const directRanges = groupContiguousRanges(
       gapTargets,
       (target) => `${target.chain}:${target.tokenLowercase}`,
+      (target) => target.eodTimestamp,
       maximumChartSpanDays
     )
     const directResolved = await resolveRanges(directRanges, 'defillama-direct', deps.fetchChart, state, {
@@ -525,6 +514,7 @@ export async function runBackfill(options: BackfillOptions, deps: BackfillDeps):
     const aliasRanges = groupContiguousRanges(
       aliasTargets,
       (target) => (getDefiLlamaCoinGeckoAlias(target.chain, target.token) as { identifier: string }).identifier,
+      (target) => target.eodTimestamp,
       maximumChartSpanDays
     )
     const aliasResolved = await resolveRanges(aliasRanges, 'defillama-alias', deps.fetchChart, state, {
@@ -557,9 +547,11 @@ export async function runBackfill(options: BackfillOptions, deps: BackfillDeps):
       onBatchStart: (size) => {
         inFlightBatch = size
       },
-      onBatchSettled: ({ batch, results, lockRetries }) => {
+      onBatchSettled: ({ batch, results, lockRetries, lockWaitMs, lockHoldMs }) => {
         inFlightBatch = 0
         state.lockRetries += lockRetries
+        state.lockWaitMs += lockWaitMs
+        state.lockHoldMs += lockHoldMs
         applyFinalizationResults(state, results, options.write)
         committedTargets += batch.length
         checkpoint(
@@ -605,7 +597,7 @@ export async function runBackfill(options: BackfillOptions, deps: BackfillDeps):
 
 function applyFinalizationResults(state: RunState, results: FinalizationTargetResult[], write: boolean): void {
   for (const result of results) {
-    const record = state.records.get(`${result.chain}:${result.token}:${result.eodTimestamp}`) as TargetRecord
+    const record = state.records.get(priceKey(result.chain, result.token, result.eodTimestamp)) as TargetRecord
     record.status = result.status
     if (result.status === 'inserted') {
       state.settledInserted += 1
@@ -638,9 +630,12 @@ interface RunSummary {
   unresolved: number
   pending: number
   providerRetryFailures: number
+  rateLimitedResponses: number
   invalidProviderResponses: number
   finalizationLockFailures: number
   finalizationLockRetries: number
+  finalizationLockWaitMs: number
+  finalizationLockHoldMs: number
   inserted: number
   projectedInserted: number
 }
@@ -667,7 +662,8 @@ function applyReportState(
   report.request = {
     chartRequests: state.chartRequests,
     retries: state.retries,
-    requestFailures: state.requestFailures
+    requestFailures: state.requestFailures,
+    rateLimitedResponses: state.rateLimitedResponses
   }
   report.targets = targets
   report.summary = {
@@ -680,10 +676,13 @@ function applyReportState(
     skippedConcurrentExisting: targets.filter((record) => record.status === 'skipped_concurrent_existing').length,
     unresolved: targets.filter((record) => record.status === 'unresolved').length,
     pending: targets.filter((record) => record.status === 'pending').length,
-    providerRetryFailures: state.requestFailures,
+    providerRetryFailures: state.retryExhaustedFailures,
+    rateLimitedResponses: state.rateLimitedResponses,
     invalidProviderResponses: state.invalidProviderResponses,
     finalizationLockFailures: state.lockFailures,
     finalizationLockRetries: state.lockRetries,
+    finalizationLockWaitMs: state.lockWaitMs,
+    finalizationLockHoldMs: state.lockHoldMs,
     inserted: counts.write ? insertedRecords.length : 0,
     projectedInserted: counts.write ? 0 : projected
   } satisfies RunSummary
@@ -703,10 +702,13 @@ function checkpointSummary(state: RunState, counts: ReportCounts): Record<string
     skippedConcurrentExisting: state.settledSkippedConcurrent,
     unresolved: state.settledUnresolved,
     pending,
-    providerRetryFailures: state.requestFailures,
+    providerRetryFailures: state.retryExhaustedFailures,
+    rateLimitedResponses: state.rateLimitedResponses,
     invalidProviderResponses: state.invalidProviderResponses,
     finalizationLockFailures: state.lockFailures,
     finalizationLockRetries: state.lockRetries,
+    finalizationLockWaitMs: state.lockWaitMs,
+    finalizationLockHoldMs: state.lockHoldMs,
     inserted: counts.write ? state.settledInserted : 0,
     projectedInserted: counts.write ? 0 : state.settledInserted
   } satisfies RunSummary
@@ -729,7 +731,12 @@ function checkpoint(
     finishedAt: null,
     manifest: report.manifest,
     aliasRegistryDigest: report.aliasRegistryDigest,
-    request: { chartRequests: state.chartRequests, retries: state.retries, requestFailures: state.requestFailures },
+    request: {
+      chartRequests: state.chartRequests,
+      retries: state.retries,
+      requestFailures: state.requestFailures,
+      rateLimitedResponses: state.rateLimitedResponses
+    },
     progress: {
       committed: progress.committed,
       inFlight: progress.inFlight,
@@ -745,10 +752,14 @@ export function createChartFetcher(searchWidth: string): ChartFetch {
 
   return async (identifier, rangeStart, spanDays) => {
     let retries = 0
+    let rateLimited = 0
     const client = new DefiLlamaClient(
       rateLimiter,
-      () => {
+      (_attempt, _delayMs, _url, status) => {
         retries += 1
+        if (status === 429) {
+          rateLimited += 1
+        }
       },
       {
         timeoutMs: CHART_REQUEST_TIMEOUT_MS,
@@ -770,10 +781,11 @@ export function createChartFetcher(searchWidth: string): ChartFetch {
       return {
         coin: envelope.kind === 'coin' ? envelope.coin : undefined,
         attempts: 1 + retries,
-        malformed: envelope.kind === 'invalid'
+        malformed: envelope.kind === 'invalid',
+        rateLimited
       }
     } catch (error) {
-      throw new ChartRequestError(1 + retries, chartDiagnosticCodes(error), error)
+      throw new ChartRequestError(1 + retries, chartDiagnosticCodes(error), error, rateLimited)
     }
   }
 }
@@ -789,32 +801,7 @@ const KNOWN_OPTIONS = new Set(['--manifest', '--report', '--database-url-env'])
 const KNOWN_FLAGS = new Set(['--write', '--dry-run'])
 
 export function parseArgs(argv: string[]): Args {
-  const options = new Map<string, string>()
-  const flags = new Set<string>()
-  for (let index = 0; index < argv.length; index += 1) {
-    const current = argv[index]
-    if (!current.startsWith('--')) {
-      continue
-    }
-    const next = argv[index + 1]
-    const hasValue = next !== undefined && !next.startsWith('--')
-    if (KNOWN_FLAGS.has(current)) {
-      if (hasValue) {
-        throw new Error(`${current} does not take a value`)
-      }
-      flags.add(current)
-      continue
-    }
-    if (KNOWN_OPTIONS.has(current)) {
-      if (!hasValue) {
-        throw new Error(`${current} requires a value`)
-      }
-      options.set(current, next as string)
-      index += 1
-      continue
-    }
-    throw new Error(`unrecognized option: ${current}`)
-  }
+  const { options, flags } = parseCliArgs(argv, { options: KNOWN_OPTIONS, flags: KNOWN_FLAGS })
 
   const manifestPath = options.get('--manifest')
   const reportPath = options.get('--report')

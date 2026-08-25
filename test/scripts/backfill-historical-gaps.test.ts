@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   type BackfillCheckpoint,
   type BackfillPool,
@@ -9,9 +9,11 @@ import {
   type ChartFetch,
   ChartRequestError,
   checkpointPath,
-  groupContiguousRanges,
+  createChartFetcher,
   runBackfill
 } from '../../scripts/backfill-historical-gaps'
+import { groupContiguousRanges } from '../../src/backfill/ranges'
+import { HttpRequestError } from '../../src/clients/http-client'
 
 const DAY = 86_400
 const EOD = 1_704_153_599
@@ -129,7 +131,12 @@ describe('groupContiguousRanges', () => {
       eodTimestamp
     })
 
-    const ranges = groupContiguousRanges([target(EOD + 2 * DAY), target(EOD), target(EOD + DAY)], () => 'coin', 2)
+    const ranges = groupContiguousRanges(
+      [target(EOD + 2 * DAY), target(EOD), target(EOD + DAY)],
+      () => 'coin',
+      (candidate) => candidate.eodTimestamp,
+      2
+    )
 
     expect(ranges.map((range) => [range.rangeStart, range.rangeEnd])).toEqual([
       [EOD, EOD + DAY],
@@ -149,11 +156,12 @@ describe('groupContiguousRanges', () => {
     const ranges = groupContiguousRanges(
       [target(USDC, EOD), target(OPTIMISM_DAI, EOD), target(USDC, EOD + DAY), target(OPTIMISM_DAI, EOD + DAY)],
       () => 'coingecko:usd-coin',
+      (candidate) => candidate.eodTimestamp,
       365
     )
 
     expect(ranges).toHaveLength(1)
-    expect(ranges[0].targets).toHaveLength(4)
+    expect(ranges[0].items).toHaveLength(4)
   })
 })
 
@@ -411,6 +419,35 @@ describe('runBackfill', () => {
     expect(readReport(reportPath).request).toMatchObject({ chartRequests: 1, retries: 2, requestFailures: 1 })
   })
 
+  it('records a rejected request as provider_rejected, not an exhausted retry budget', async () => {
+    const manifestPath = manifestFile([{ chainId: 1, token: USDC, eodTimestamp: EOD }])
+    const reportPath = join(directory, 'report.json')
+    const { pool } = fakePool()
+
+    const result = await runBackfill(
+      { manifestPath, reportPath, write: true },
+      {
+        pool,
+        fetchChart: fetchChartFrom({
+          [`ethereum:${USDC.toLowerCase()}`]: new HttpRequestError(
+            'INTERNAL_ERROR',
+            'DeFiLlama request failed with status 400',
+            'provider_response',
+            1,
+            400
+          )
+        })
+      }
+    )
+
+    expect(result.exitCode).toBe(2)
+    const report = readReport(reportPath)
+    expect(report.targets[0].diagnosticCodes).toContain('provider_rejected')
+    expect(report.targets[0].diagnosticCodes).not.toContain('retry_exhausted')
+    expect(report.summary).toMatchObject({ providerRetryFailures: 0 })
+    expect(report.request).toMatchObject({ requestFailures: 1 })
+  })
+
   it('counts finalization lock failures before emitting the fatal report', async () => {
     const manifestPath = manifestFile([{ chainId: 1, token: USDC, eodTimestamp: EOD }])
     const reportPath = join(directory, 'report.json')
@@ -554,5 +591,27 @@ describe('runBackfill', () => {
     expect(report.fatal?.message).toContain('noncanonical token casings')
     expect(report.fatal).toMatchObject({ committedTargets: 0, failedTargets: 0, unattemptedTargets: 1 })
     expect(existsSync(reportPath)).toBe(true)
+  })
+})
+
+describe('createChartFetcher', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('counts a 429 that later succeeds as a rate limited response', async () => {
+    const responses: Response[] = [
+      new Response('rate limited', { status: 429, headers: { 'retry-after': '0' } }),
+      Response.json({ coins: { 'ethereum:0xa': { symbol: 'USDC', confidence: 0.99, prices: [] } } })
+    ]
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => responses.shift() as Response)
+    )
+
+    const fetched = await createChartFetcher('6h')('ethereum:0xa', EOD, 1)
+
+    expect(fetched.attempts).toBe(2)
+    expect(fetched.rateLimited).toBe(1)
   })
 })

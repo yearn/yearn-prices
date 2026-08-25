@@ -1,9 +1,9 @@
-import { execSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { config as loadEnv } from 'dotenv'
 
 loadEnv()
 
+import { parseCliArgs } from '../src/backfill/args'
 import { readChartCoin } from '../src/backfill/chart-envelope'
 import {
   CHART_REQUEST_TIMEOUT_MS,
@@ -12,14 +12,10 @@ import {
   MAXIMUM_CHART_SPAN_DAYS
 } from '../src/backfill/constants'
 import { manifestDigest, type NormalizedTarget, parseManifest } from '../src/backfill/manifest'
-import {
-  isObservationPrice,
-  isObservationTimestamp,
-  type MatchResult,
-  matchChartObservation,
-  windowEligibleObservations
-} from '../src/backfill/matcher'
-import { groupContiguousRanges as groupRanges } from '../src/backfill/ranges'
+import { type MatchResult, matchChartObservation, windowEligibleObservations } from '../src/backfill/matcher'
+import { priceKey } from '../src/backfill/priced-keys'
+import { gitRevision, toolVersion } from '../src/backfill/provenance'
+import { type ContiguousRange, groupContiguousRanges } from '../src/backfill/ranges'
 import { DefiLlamaClient, SlidingWindowRateLimiter } from '../src/clients'
 import { createPool, getBatchHistoricalPrices } from '../src/db'
 import {
@@ -96,21 +92,23 @@ interface Args {
   gapManifestPath: string
   reportPath: string
   csvPath: string
-  databaseUrl?: string
+  databaseUrlEnv?: string
   windows: ReplayWindow[]
   maximumChartSpanDays: number
 }
 
-function parseArgs(argv: string[]): Args {
-  const options = new Map<string, string>()
-  for (let index = 0; index < argv.length; index += 1) {
-    const current = argv[index]
-    const next = argv[index + 1]
-    if (current.startsWith('--') && next) {
-      options.set(current, next)
-      index += 1
-    }
-  }
+const KNOWN_OPTIONS = new Set([
+  '--control-manifest',
+  '--gap-manifest',
+  '--report',
+  '--csv',
+  '--database-url-env',
+  '--windows',
+  '--max-chart-span-days'
+])
+
+export function parseArgs(argv: string[]): Args {
+  const { options } = parseCliArgs(argv, { options: KNOWN_OPTIONS })
 
   const controlManifestPath = options.get('--control-manifest')
   const gapManifestPath = options.get('--gap-manifest')
@@ -143,25 +141,21 @@ function parseArgs(argv: string[]): Args {
     gapManifestPath,
     reportPath,
     csvPath,
-    databaseUrl: options.get('--database-url'),
+    databaseUrlEnv: options.get('--database-url-env'),
     windows,
     maximumChartSpanDays
   }
 }
 
-interface TargetRange {
-  identifier: string
-  rangeStart: number
-  rangeEnd: number
-  items: Array<{ cohort: Cohort; target: NormalizedTarget }>
-}
+type CohortTarget = { cohort: Cohort; target: NormalizedTarget }
+type TargetRange = ContiguousRange<CohortTarget>
 
-export function groupContiguousRanges(
-  items: Array<{ cohort: Cohort; target: NormalizedTarget }>,
+function groupCohortRanges(
+  items: CohortTarget[],
   identifierOf: (target: NormalizedTarget) => string,
   maximumSpanDays: number
 ): TargetRange[] {
-  return groupRanges(
+  return groupContiguousRanges(
     items,
     (item) => identifierOf(item.target),
     (item) => item.target.eodTimestamp,
@@ -182,28 +176,12 @@ export function matchChartResponse(
   return matchChartObservation(envelope.kind === 'coin' ? envelope.coin : undefined, eodTimestamp, options)
 }
 
-function observationList(coin: unknown): { total: number; points: Array<{ timestamp: number; price: number }> } {
+function responsePointCount(coin: unknown): number {
   if (coin == null || typeof coin !== 'object' || Array.isArray(coin)) {
-    return { total: 0, points: [] }
+    return 0
   }
   const prices = (coin as Record<string, unknown>).prices
-  if (!Array.isArray(prices)) {
-    return { total: 0, points: [] }
-  }
-
-  const points: Array<{ timestamp: number; price: number }> = []
-  for (const raw of prices) {
-    if (raw == null || typeof raw !== 'object') {
-      continue
-    }
-    const { timestamp, price } = raw as Record<string, unknown>
-    if (!isObservationTimestamp(timestamp) || !isObservationPrice(price)) {
-      continue
-    }
-    points.push({ timestamp, price })
-  }
-
-  return { total: prices.length, points }
+  return Array.isArray(prices) ? prices.length : 0
 }
 
 export interface RangeCoverage {
@@ -223,22 +201,29 @@ export function summarizeRangeResponse(
     isEligibleObservation?: (observedTimestamp: number) => boolean
   }
 ): RangeCoverage {
-  const { total, points } = observationList(coin)
-  const eligible = points.filter(
-    (point) => !options.isEligibleObservation || options.isEligibleObservation(point.timestamp)
-  )
-
   const periods: number[] = []
   for (let period = options.rangeStart; period <= options.rangeEnd; period += DAY_SECONDS) {
     periods.push(period)
   }
 
-  const covers = (period: number, timestamp: number) => Math.abs(timestamp - period) <= options.offsetSeconds
-  const missingDailyPeriods = periods.filter((period) => !eligible.some((point) => covers(period, point.timestamp)))
-  const usablePoints = eligible.filter((point) => periods.some((period) => covers(period, point.timestamp))).length
+  const missingDailyPeriods: number[] = []
+  const usable = new Set<number>()
+  for (const period of periods) {
+    const observations = windowEligibleObservations(coin, period, {
+      maximumOffsetSeconds: options.offsetSeconds,
+      isEligibleObservation: options.isEligibleObservation
+    })
+    if (observations.length === 0) {
+      missingDailyPeriods.push(period)
+    }
+    for (const observation of observations) {
+      usable.add(observation.timestamp)
+    }
+  }
+  const usablePoints = usable.size
 
   return {
-    responsePoints: total,
+    responsePoints: responsePointCount(coin),
     usablePoints,
     missingDailyPeriods,
     firstPeriodResolved: !missingDailyPeriods.includes(periods[0]),
@@ -308,8 +293,8 @@ function distributionSummary(values: number[]): {
 }
 
 function csvEscape(value: string): string {
-  const neutralized = /^[=+\-@]/.test(value) ? `'${value}` : value
-  return /[",\n]/.test(neutralized) ? `"${neutralized.replace(/"/g, '""')}"` : neutralized
+  const neutralized = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value
+  return /[",\n\r\t]/.test(neutralized) ? `"${neutralized.replace(/"/g, '""')}"` : neutralized
 }
 
 const CSV_COLUMNS: Array<keyof CaptureRecord> = [
@@ -356,30 +341,12 @@ function toCsv(records: CaptureRecord[]): string {
   return `${lines.join('\n')}\n`
 }
 
-function toolVersion(): string {
-  try {
-    const raw = readFileSync(new URL('../package.json', import.meta.url))
-    return (JSON.parse(raw.toString('utf8')) as { version?: string }).version ?? 'unknown'
-  } catch {
-    return 'unknown'
-  }
-}
-
-function gitRevision(): string | null {
-  try {
-    return execSync('git rev-parse HEAD', { cwd: import.meta.dirname })
-      .toString()
-      .trim()
-  } catch {
-    return null
-  }
-}
-
 async function run(args: Args): Promise<void> {
-  const databaseUrl = args.databaseUrl ?? process.env.DATABASE_URL
+  const databaseUrlEnv = args.databaseUrlEnv ?? 'DATABASE_URL'
+  const databaseUrl = process.env[databaseUrlEnv]
   if (!databaseUrl) {
     throw new Error(
-      'a database URL is required: pass --database-url or set DATABASE_URL (read-only credentials preferred)'
+      `a database URL is required: set ${databaseUrlEnv} in the environment (name another variable with --database-url-env; read-only credentials preferred)`
     )
   }
 
@@ -409,7 +376,7 @@ async function run(args: Args): Promise<void> {
       const chunkRequests = requests.slice(offset, offset + EXACT_READ_CHUNK_SIZE)
       const rows = await getBatchHistoricalPrices(pool, chunkRequests)
       for (const row of rows) {
-        existingByKey.set(`${row.chain}:${row.token}:${row.timestamp}`, row)
+        existingByKey.set(priceKey(row.chain, row.token, row.timestamp), row)
       }
     }
 
@@ -418,7 +385,7 @@ async function run(args: Args): Promise<void> {
       if (cohort !== 'gap') {
         return true
       }
-      const key = `${target.chain}:${target.token}:${target.eodTimestamp}`
+      const key = priceKey(target.chain, target.token, target.eodTimestamp)
       if (existingByKey.has(key)) {
         gapTargetsNowPopulated.push(target)
         return false
@@ -430,7 +397,7 @@ async function run(args: Args): Promise<void> {
     const requestRecords: RequestRecord[] = []
 
     for (const window of args.windows) {
-      const directRanges = groupContiguousRanges(
+      const directRanges = groupCohortRanges(
         activeTargets,
         (target) => `${target.chain}:${target.tokenLowercase}`,
         args.maximumChartSpanDays
@@ -449,7 +416,7 @@ async function run(args: Args): Promise<void> {
       )
 
       const aliasCandidates = activeTargets.filter(({ target }) => {
-        const key = `${target.chain}:${target.token}:${target.eodTimestamp}`
+        const key = priceKey(target.chain, target.token, target.eodTimestamp)
         const directResult = directResultByKey.get(key)
         if (!directResult || directResult.kind === 'matched') {
           return false
@@ -457,7 +424,7 @@ async function run(args: Args): Promise<void> {
         return aliasEligibilityOf(target) != null
       })
 
-      const aliasRanges = groupContiguousRanges(
+      const aliasRanges = groupCohortRanges(
         aliasCandidates,
         (target) => getDefiLlamaCoinGeckoAlias(target.chain, target.token)!.identifier,
         args.maximumChartSpanDays
@@ -545,7 +512,7 @@ async function captureRanges(
       const envelope = readChartCoin(response, range.identifier)
       const coin = envelope.kind === 'coin' ? envelope.coin : undefined
 
-      requestRecords.push(buildRequestRecord(window, method, range, envelope.kind === 'invalid', coin, 1 + retries, {}))
+      requestRecords.push(buildRequestRecord(window, method, range, envelope.kind === 'invalid', coin, 1 + retries))
 
       for (const { cohort, target } of range.items) {
         const isEligibleObservation = eligibilityOf(target)
@@ -553,7 +520,7 @@ async function captureRanges(
           maximumOffsetSeconds: window.offsetSeconds,
           isEligibleObservation
         })
-        const key = `${target.chain}:${target.token}:${target.eodTimestamp}`
+        const key = priceKey(target.chain, target.token, target.eodTimestamp)
         resultByKey.set(key, matched)
         const record = buildCaptureRecord(
           cohort,
@@ -576,7 +543,7 @@ async function captureRanges(
       stats.requestFailures += 1
       requestRecords.push(buildFailedRequestRecord(window, method, range, 1 + retries))
       for (const { cohort, target } of range.items) {
-        const key = `${target.chain}:${target.token}:${target.eodTimestamp}`
+        const key = priceKey(target.chain, target.token, target.eodTimestamp)
         resultByKey.set(key, { kind: 'not_found' })
         captureRecords.push(
           buildFailedCaptureRecord(cohort, target, window.label, method, range.identifier, range, 1 + retries)
@@ -598,8 +565,7 @@ function buildRequestRecord(
   range: TargetRange,
   malformed: boolean,
   coin: unknown,
-  attempts: number,
-  options: { isEligibleObservation?: (observedTimestamp: number) => boolean }
+  attempts: number
 ): RequestRecord {
   const base = {
     window: window.label,
@@ -627,8 +593,7 @@ function buildRequestRecord(
   const coverage = summarizeRangeResponse(coin, {
     rangeStart: range.rangeStart,
     rangeEnd: range.rangeEnd,
-    offsetSeconds: window.offsetSeconds,
-    isEligibleObservation: options.isEligibleObservation
+    offsetSeconds: window.offsetSeconds
   })
 
   return { ...base, result: 'ok', ...coverage }
@@ -671,7 +636,7 @@ function buildCaptureRecord(
 ): CaptureRecord {
   const retainedWarmupPrice =
     cohort === 'control'
-      ? (existingByKey.get(`${target.chain}:${target.token}:${target.eodTimestamp}`)?.price ?? null)
+      ? (existingByKey.get(priceKey(target.chain, target.token, target.eodTimestamp))?.price ?? null)
       : null
 
   const base: CaptureRecord = {
@@ -772,7 +737,7 @@ interface ReportInput {
 }
 
 function targetKey(record: CaptureRecord): string {
-  return `${record.chainId}:${record.token}:${record.eodTimestamp}`
+  return priceKey(String(record.chainId), record.token, record.eodTimestamp)
 }
 
 function incrementalCoverage(windows: ReplayWindow[], records: CaptureRecord[]) {
@@ -859,7 +824,7 @@ function cohortSummary(records: CaptureRecord[], cohort: Cohort) {
     .filter((value): value is number => value != null)
 
   return {
-    targets: new Set(cohortRecords.map((record) => `${record.chainId}:${record.token}:${record.eodTimestamp}`)).size,
+    targets: new Set(cohortRecords.map((record) => targetKey(record))).size,
     directResolved: directRecords.filter((record) => record.result === 'resolved').length,
     directUnresolved: directRecords.filter((record) => record.result !== 'resolved').length,
     aliasResolved: aliasRecords.filter((record) => record.result === 'resolved').length,
@@ -874,6 +839,16 @@ function cohortSummary(records: CaptureRecord[], cohort: Cohort) {
   }
 }
 
+async function main(argv: string[]): Promise<number> {
+  try {
+    await run(parseArgs(argv))
+    return 0
+  } catch (error) {
+    console.error((error as Error).message)
+    return 1
+  }
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
-  await run(parseArgs(process.argv.slice(2)))
+  process.exit(await main(process.argv.slice(2)))
 }
