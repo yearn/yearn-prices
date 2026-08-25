@@ -32,6 +32,18 @@ describe('computeRepairRatios', () => {
     expect(ratios).toHaveLength(0)
   })
 
+  it('skips a zero corrected price (a zero ratio would wipe every dependent derived price)', () => {
+    const ratios = computeRepairRatios([{ timestamp: D16, price: 0 }], new Map([[D16, 100]]))
+
+    expect(ratios).toHaveLength(0)
+  })
+
+  it('skips a negative corrected price', () => {
+    const ratios = computeRepairRatios([{ timestamp: D16, price: -5 }], new Map([[D16, 100]]))
+
+    expect(ratios).toHaveLength(0)
+  })
+
   it('skips a non-finite corrected price', () => {
     const ratios = computeRepairRatios([{ timestamp: D16, price: Number.NaN }], new Map([[D16, 100]]))
 

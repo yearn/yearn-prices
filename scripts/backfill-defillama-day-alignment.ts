@@ -1,3 +1,21 @@
+/**
+ * One-off repair of DeFiLlama prices stored against the wrong day.
+ *
+ * Phases: prices (refetch and rewrite), derived (rescale vault prices by the
+ * repair ratio of their underlying), verify, cleanup. Run `all` or one phase.
+ * Flags: --out <report.json>, --retry[=db|<file>], --concurrency <n>.
+ *
+ * Deliberately not repaired by the derived phase: vaults missing from Kong and
+ * nested vaults (vault-of-vault). Days whose derived price may have come from a
+ * non-defillama underlying source are counted as ambiguous-underlying-source and
+ * still rescaled: derivation provenance is not stored, so exact exclusion is not
+ * derivable from the data.
+ *
+ * Both this script and the hourly warmup write token_prices.updated_at with a
+ * naive NOW(); the derived phase compares it against repaired_at assuming both
+ * sessions are UTC (Neon's default). Pause the warmup workflow while running
+ * prices/derived: rows warmup rewrites after stampRepairedAt are skipped.
+ */
 import { readFile, writeFile } from 'node:fs/promises'
 import { parseArgs } from 'node:util'
 import { config as loadEnv } from 'dotenv'
@@ -6,7 +24,8 @@ loadEnv()
 
 import { DefiLlamaClient } from '../src/clients'
 import { createPool, insertTokenPrices, type Queryable } from '../src/db'
-import { matchPricesToRequests } from '../src/sources/defillama/match'
+import { DEFI_LLAMA_TIMESTAMP_BATCH } from '../src/sources/defillama/batch'
+import { buildDefiLlamaWrites } from '../src/sources/defillama/match'
 import { computeRepairRatios } from '../src/sources/defillama/repair-ratio'
 import type { TokenPriceWrite } from '../src/types'
 import {
@@ -16,6 +35,7 @@ import {
   normalizedDaysInRange,
   normalizeToEndOfDay,
   pgTimestampToUnix,
+  runInGroups,
   unixToIsoTimestamp
 } from '../src/utils'
 
@@ -56,7 +76,7 @@ interface MissingDay {
   token: string
   timestamp: number
   day: string
-  kind: 'gap' | 'not-found'
+  kind: 'gap' | 'not-found' | 'stale-row'
 }
 
 interface FailedToken {
@@ -82,7 +102,6 @@ process.on('SIGINT', () => {
   void writeReport().finally(() => process.exit(130))
 })
 
-const TIMESTAMP_BATCH = 20
 const parsedConcurrency = Number(flags.concurrency)
 const TOKEN_CONCURRENCY =
   Number.isFinite(parsedConcurrency) && parsedConcurrency > 0 ? Math.floor(parsedConcurrency) : 4
@@ -95,17 +114,6 @@ const KONG_URL = 'https://kong.yearn.fi/api/rest/list/vaults?origin=yearn'
 interface TokenRow {
   chain: string
   token: string
-}
-
-async function runInGroups<T>(items: T[], size: number, worker: (item: T) => Promise<void>): Promise<void> {
-  for (const group of chunk(items, size)) {
-    const results = await Promise.allSettled(group.map((item) => worker(item)))
-    for (const result of results) {
-      if (result.status === 'rejected') {
-        console.error(`worker crashed: ${String(result.reason)}`)
-      }
-    }
-  }
 }
 
 function isNotFound(error: unknown): boolean {
@@ -239,7 +247,7 @@ async function repairPrices(): Promise<void> {
   let notFound = 0
   const failedTokens: string[] = []
 
-  await runInGroups(tokens, TOKEN_CONCURRENCY, async ({ chain, token }) => {
+  await runInGroups(tokens, TOKEN_CONCURRENCY, 0, async ({ chain, token }) => {
     const coinKey = `${chain}:${token.toLowerCase()}`
 
     try {
@@ -258,7 +266,7 @@ async function repairPrices(): Promise<void> {
 
       let transientFailure = false
 
-      for (const fetchTimestamps of chunk(repairTimestamps, TIMESTAMP_BATCH)) {
+      for (const fetchTimestamps of chunk(repairTimestamps, DEFI_LLAMA_TIMESTAMP_BATCH)) {
         let coin:
           | { symbol?: string | null; prices: Array<{ timestamp: number; price: number; confidence?: number | null }> }
           | undefined
@@ -281,28 +289,15 @@ async function repairPrices(): Promise<void> {
           break
         }
 
-        const matched = matchPricesToRequests(fetchTimestamps, coin?.prices ?? [])
-
-        const writes: TokenPriceWrite[] = []
+        const built = buildDefiLlamaWrites(chain, token, fetchTimestamps, coin)
+        const writes = built.writes
         const batchMissing: MissingDay[] = []
-        for (const fetchTimestamp of fetchTimestamps) {
-          const sample = matched.get(fetchTimestamp)
-          if (!sample) {
-            gaps += 1
-            const missing = describeMissing(chain, token, fetchTimestamp, 'gap')
-            batchMissing.push(missing)
-            console.warn(`gap ${coinKey} ${missing.day}`)
-            continue
-          }
-          writes.push({
-            chain,
-            token,
-            timestamp: normalizeToEndOfDay(fetchTimestamp),
-            price: sample.price,
-            symbol: coin?.symbol ?? null,
-            confidence: sample.confidence ?? null,
-            source: 'defillama'
-          })
+        for (const fetchTimestamp of built.missing) {
+          gaps += 1
+          const stale = storedPrices.has(normalizeToEndOfDay(fetchTimestamp))
+          const missing = describeMissing(chain, token, fetchTimestamp, stale ? 'stale-row' : 'gap')
+          batchMissing.push(missing)
+          console.warn(`${missing.kind} ${coinKey} ${missing.day}`)
         }
 
         try {
@@ -508,7 +503,7 @@ async function rescaleDerived(): Promise<void> {
         WHERE d.source = 'derived' AND d.chain = $1
       ), rescaled AS (
         UPDATE token_prices d
-        SET price = t.new_price, updated_at = NOW()
+        SET price = t.new_price, updated_at = NOW() AT TIME ZONE 'UTC'
         FROM targets t
         WHERE d.source = 'derived'
           AND d.chain = t.chain
@@ -539,7 +534,22 @@ async function rescaleDerived(): Promise<void> {
       SELECT 1 FROM vault_underlying_map m WHERE m.chain = d.chain AND m.vault = lower(d.token)
     )
   `)
-  console.log(`derived done updated=${total} vaults-not-in-kong=${orphans[0].count}`)
+  const { rows: ambiguous } = await pool.query<{ count: string }>(`
+    SELECT count(*) count
+    FROM token_prices d
+    JOIN vault_underlying_map m ON m.chain = d.chain AND m.vault = lower(d.token)
+    JOIN defillama_repair_ratio r
+      ON r.chain = d.chain AND lower(r.token) = m.underlying AND r.timestamp = d.timestamp
+    WHERE d.source = 'derived'
+      AND EXISTS (
+        SELECT 1 FROM token_prices u
+        WHERE u.chain = d.chain AND lower(u.token) = m.underlying AND u.timestamp = d.timestamp
+          AND u.source NOT IN ('defillama', 'derived')
+      )
+  `)
+  console.log(
+    `derived done updated=${total} vaults-not-in-kong=${orphans[0].count} ambiguous-underlying-source=${ambiguous[0].count}`
+  )
 }
 
 async function verify(): Promise<void> {

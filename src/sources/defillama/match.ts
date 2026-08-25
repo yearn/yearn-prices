@@ -1,11 +1,15 @@
+import { DEFI_LLAMA_SEARCH_WIDTH_SECONDS } from '../../clients/defillama'
+import type { TokenPriceWrite } from '../../types'
+import { normalizeToEndOfDay } from '../../utils'
+
 export interface DefiLlamaSample {
   timestamp: number
   price: number
   confidence?: number | null
 }
 
-export const DEFI_LLAMA_SEARCH_WIDTH_SECONDS = 15 * 60
-export const DEFI_LLAMA_FETCH_WIDTH_SECONDS = 6 * 60 * 60
+/** Strict pass: a sample this close to midnight is that day's close, not a neighbour's. */
+export const DEFI_LLAMA_STRICT_MATCH_SECONDS = 15 * 60
 
 function assignNearestSamples<T extends DefiLlamaSample>(
   requestedTimestamps: number[],
@@ -49,8 +53,48 @@ export function matchPricesToRequests<T extends DefiLlamaSample>(
   const matched = new Map<number, T>()
   const usedSamples = new Set<number>()
 
+  assignNearestSamples(requestedTimestamps, samples, DEFI_LLAMA_STRICT_MATCH_SECONDS, matched, usedSamples)
   assignNearestSamples(requestedTimestamps, samples, DEFI_LLAMA_SEARCH_WIDTH_SECONDS, matched, usedSamples)
-  assignNearestSamples(requestedTimestamps, samples, DEFI_LLAMA_FETCH_WIDTH_SECONDS, matched, usedSamples)
 
   return matched
+}
+
+export interface DefiLlamaCoinResponse {
+  symbol?: string | null
+  prices?: DefiLlamaSample[]
+}
+
+/**
+ * Keys every write by the day that was requested, not by the sample's own
+ * timestamp: a sample minutes either side of midnight belongs to the day we
+ * asked for.
+ */
+export function buildDefiLlamaWrites(
+  chain: string,
+  token: string,
+  requestedTimestamps: number[],
+  coin: DefiLlamaCoinResponse | undefined
+): { writes: TokenPriceWrite[]; missing: number[] } {
+  const matched = matchPricesToRequests(requestedTimestamps, coin?.prices ?? [])
+  const writes: TokenPriceWrite[] = []
+  const missing: number[] = []
+
+  for (const requested of requestedTimestamps) {
+    const sample = matched.get(requested)
+    if (!sample) {
+      missing.push(requested)
+      continue
+    }
+    writes.push({
+      chain,
+      token,
+      timestamp: normalizeToEndOfDay(requested),
+      price: sample.price,
+      symbol: coin?.symbol ?? null,
+      confidence: sample.confidence ?? null,
+      source: 'defillama'
+    })
+  }
+
+  return { writes, missing }
 }

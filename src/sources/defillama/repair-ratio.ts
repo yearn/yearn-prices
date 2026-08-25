@@ -16,7 +16,7 @@ export function computeRepairRatios(
     }
     const oldPrice = storedPrices.get(write.timestamp)
     const newPrice = Number(write.price)
-    if (!oldPrice || !Number.isFinite(newPrice) || oldPrice === newPrice) {
+    if (!oldPrice || !(newPrice > 0) || oldPrice === newPrice) {
       continue
     }
     rows.push({ timestamp: write.timestamp, ratio: newPrice / oldPrice })

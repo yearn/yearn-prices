@@ -1,5 +1,5 @@
 import { nowUnix, toFetchTimestamp } from '../../utils/time'
-import { DEFI_LLAMA_SEARCH_WIDTH_SECONDS } from './match'
+import { DEFI_LLAMA_SEARCH_WIDTH_SECONDS } from '../../clients/defillama'
 
 export const DEFI_LLAMA_TOKEN_BATCH = 5
 export const DEFI_LLAMA_TIMESTAMP_BATCH = 20

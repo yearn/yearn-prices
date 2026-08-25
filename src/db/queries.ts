@@ -207,7 +207,7 @@ async function insertRows(pool: Queryable, rows: TokenPriceWrite[], updateOnConf
       ON CONFLICT (chain, token, timestamp, source)
       DO UPDATE SET
         price = EXCLUDED.price,
-        symbol = EXCLUDED.symbol,
+        symbol = COALESCE(EXCLUDED.symbol, token_prices.symbol),
         confidence = EXCLUDED.confidence,
         updated_at = NOW()
     `

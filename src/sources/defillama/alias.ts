@@ -1,4 +1,4 @@
-import { DefiLlamaClient } from '../../clients/defillama'
+import { DEFI_LLAMA_SEARCH_WIDTH, DefiLlamaClient } from '../../clients/defillama'
 import { chainIdToName } from '../../utils/chains'
 import { HistoricalPriceSourceBase } from '../base'
 import type { HistoricalPriceResult } from '../types'
@@ -32,7 +32,7 @@ export class DefiLlamaAliasHistoricalSource extends HistoricalPriceSourceBase {
 
   constructor(
     private readonly client: DefiLlamaClient = new DefiLlamaClient(),
-    private readonly searchWidth = '6h'
+    private readonly searchWidth = DEFI_LLAMA_SEARCH_WIDTH
   ) {
     super()
     const widthSeconds = searchWidthSeconds(searchWidth)

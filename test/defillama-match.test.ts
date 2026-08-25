@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { matchPricesToRequests } from '../src/sources/defillama/match'
+import { buildDefiLlamaWrites, matchPricesToRequests } from '../src/sources/defillama/match'
 
 const D16 = 1_755_388_799 // 2025-08-16 23:59:59Z
 const D17 = D16 + 86_400
@@ -93,5 +93,46 @@ describe('matchPricesToRequests', () => {
     )
 
     expect(matched.get(D17)?.price).toBe(3)
+  })
+})
+
+describe('buildDefiLlamaWrites', () => {
+  it('keys writes by the requested day, not the sample timestamp', () => {
+    const { writes, missing } = buildDefiLlamaWrites('ethereum', '0xabc', [D16, D17], {
+      symbol: 'YFI',
+      prices: [
+        { timestamp: D16 + 2, price: 5649.51, confidence: 0.99 },
+        { timestamp: D17 - 10, price: 5680.28 }
+      ]
+    })
+
+    expect(missing).toEqual([])
+    expect(writes).toEqual([
+      {
+        chain: 'ethereum',
+        token: '0xabc',
+        timestamp: D16,
+        price: 5649.51,
+        symbol: 'YFI',
+        confidence: 0.99,
+        source: 'defillama'
+      },
+      {
+        chain: 'ethereum',
+        token: '0xabc',
+        timestamp: D17,
+        price: 5680.28,
+        symbol: 'YFI',
+        confidence: null,
+        source: 'defillama'
+      }
+    ])
+  })
+
+  it('reports unmatched days as missing', () => {
+    const { writes, missing } = buildDefiLlamaWrites('ethereum', '0xabc', [D16, D18], undefined)
+
+    expect(writes).toEqual([])
+    expect(missing).toEqual([D16, D18])
   })
 })

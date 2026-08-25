@@ -11,17 +11,17 @@ import {
 } from '../src/clients'
 import { createPool, getBatchHistoricalPrices, getExistingExactTimestamps, insertTokenPrices } from '../src/db'
 import { buildDefiLlamaPayloads } from '../src/sources/defillama/batch'
-import { matchPricesToRequests } from '../src/sources/defillama/match'
+import { buildDefiLlamaWrites } from '../src/sources/defillama/match'
 import type { HistoricalRequestTuple, KongVaultListItem, TokenPriceWrite } from '../src/types'
 import {
   chainIdToName,
-  chunk,
   isTodayNormalized,
   normalizedDaysInRange,
   normalizeToEndOfDay,
   normalizeTokenAddress,
   nowUnix,
   parseCliDate,
+  runInGroups,
   toFetchTimestamp
 } from '../src/utils'
 
@@ -65,10 +65,6 @@ interface WarmupStats {
   insertedDirect: number
   insertedDerived: number
   insertedCurve: number
-}
-
-function sleep(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
 function parseArgs(argv: string[]): { start: number; end: number } {
@@ -129,15 +125,6 @@ function buildDailyTimestamps(start: number, end: number): number[] {
   return normalizedDaysInRange(start, end)
 }
 
-async function runInGroups<T>(items: T[], worker: (item: T) => Promise<void>): Promise<void> {
-  for (const group of chunk(items, REQUEST_GROUP_SIZE)) {
-    await Promise.all(group.map((item) => worker(item)))
-    if (group.length === REQUEST_GROUP_SIZE) {
-      await sleep(REQUEST_GROUP_DELAY_MS)
-    }
-  }
-}
-
 function buildDirectRequests(vaults: NormalizedVault[], timestamps: number[]): HistoricalRequestTuple[] {
   const tokenMap = new Map<string, { chain: string; token: string }>()
   for (const vault of vaults) {
@@ -188,33 +175,18 @@ async function warmDirectPrices(vaults: NormalizedVault[], timestamps: number[],
   const groupedMissing = groupMissingRequests(requests, existing)
   const payloads = buildDefiLlamaPayloads(groupedMissing)
 
-  await runInGroups(payloads, async (payload) => {
+  await runInGroups(payloads, REQUEST_GROUP_SIZE, REQUEST_GROUP_DELAY_MS, async (payload) => {
     stats.apiCalls += 1
     try {
       const response = await defiLlama.getBatchHistorical(payload)
       const writes: TokenPriceWrite[] = []
 
       for (const [tokenKey, requestedTimestamps] of Object.entries(payload)) {
-        const responseCoin = response.coins[tokenKey]
-        const matched = matchPricesToRequests(requestedTimestamps, responseCoin?.prices ?? [])
         const [chain, token] = tokenKey.split(':')
-
-        for (const requestedTimestamp of requestedTimestamps) {
-          const sample = matched.get(requestedTimestamp)
-          if (!sample) {
-            console.warn(`gap:defillama ${tokenKey} ${requestedTimestamp}`)
-            continue
-          }
-
-          writes.push({
-            chain,
-            token,
-            timestamp: normalizeToEndOfDay(requestedTimestamp),
-            price: sample.price,
-            symbol: responseCoin?.symbol ?? null,
-            confidence: sample.confidence ?? null,
-            source: 'defillama'
-          })
+        const built = buildDefiLlamaWrites(chain, token, requestedTimestamps, response.coins[tokenKey])
+        writes.push(...built.writes)
+        for (const requestedTimestamp of built.missing) {
+          console.warn(`gap:defillama ${tokenKey} ${requestedTimestamp}`)
         }
       }
 
@@ -260,7 +232,7 @@ async function warmCurveFallbackPrices(
     return isTodayNormalized(request.timestamp) || (!existingDefillama.has(key) && !existingCurve.has(key))
   })
 
-  await runInGroups(missing, async (request) => {
+  await runInGroups(missing, REQUEST_GROUP_SIZE, REQUEST_GROUP_DELAY_MS, async (request) => {
     try {
       const underlying = underlyings.get(`${request.chain}:${request.token}`)!
 
@@ -340,7 +312,7 @@ async function warmDerivedVaultPrices(
     underlyingPrices.map((price) => [`${price.chain}:${price.token}:${price.timestamp}`, price])
   )
 
-  await runInGroups(missingVaults, async ({ vault, timestamp }) => {
+  await runInGroups(missingVaults, REQUEST_GROUP_SIZE, REQUEST_GROUP_DELAY_MS, async ({ vault, timestamp }) => {
     try {
       const underlying = underlyingMap.get(`${vault.chain}:${vault.underlyingToken}:${timestamp}`)
       if (!underlying) {

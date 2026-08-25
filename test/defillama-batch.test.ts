@@ -14,6 +14,10 @@ describe('batchSpacedTimestamps', () => {
     expect(batchSpacedTimestamps([D16, D16 + 300])).toEqual([[D16], [D16 + 300]])
   })
 
+  it('splits a gap wider than the strict match window but inside the search width', () => {
+    expect(batchSpacedTimestamps([D16, D16 + 3 * 3_600])).toEqual([[D16], [D16 + 3 * 3_600]])
+  })
+
   it('keeps day-spaced timestamps in one batch', () => {
     expect(batchSpacedTimestamps([D16, D17])).toEqual([[D16, D17]])
   })
@@ -28,7 +32,7 @@ describe('batchSpacedTimestamps', () => {
 
 describe('buildDefiLlamaPayloads', () => {
   it('puts both chunks of a near-midnight split into separate payloads', () => {
-    const now = D16 + 121 // 2 min past UTC midnight: yesterday's EOD and now are < 15 min apart
+    const now = D16 + 3 * 3_600 // 3h past UTC midnight: yesterday's EOD and now are < 6h apart
     const payloads = buildDefiLlamaPayloads({ 'ethereum:0xaaa': [D16, D17] }, now)
 
     expect(payloads).toHaveLength(2)
