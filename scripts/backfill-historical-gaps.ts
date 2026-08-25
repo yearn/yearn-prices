@@ -21,7 +21,7 @@ import {
   type FinalizationTargetResult,
   finalizeBackfillTargets
 } from '../src/backfill/finalize'
-import { chunk, deleteInventoryRows } from '../src/backfill/inventory'
+import { deleteInventoryRows } from '../src/backfill/inventory'
 import { ManifestError, manifestDigest, type NormalizedTarget, parseManifest } from '../src/backfill/manifest'
 import { matchChartObservation } from '../src/backfill/matcher'
 import { priceKey, readPricedKeys } from '../src/backfill/priced-keys'
@@ -35,6 +35,7 @@ import {
   isDefiLlamaAliasValidAt,
   listDefiLlamaCoinGeckoAliases
 } from '../src/sources/defillama/aliases'
+import { chunk } from '../src/utils'
 
 const DAY_SECONDS = 86_400
 
@@ -570,7 +571,7 @@ export async function runBackfill(options: BackfillOptions, deps: BackfillDeps):
       unlinkSync(checkpointPath(options.reportPath))
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        throw error
+        console.warn(`failed to remove checkpoint: ${(error as Error).message}`)
       }
     }
 
@@ -785,7 +786,8 @@ export function createChartFetcher(searchWidth: string): ChartFetch {
         rateLimited
       }
     } catch (error) {
-      throw new ChartRequestError(1 + retries, chartDiagnosticCodes(error), error, rateLimited)
+      const terminalRateLimit = error instanceof HttpRequestError && error.responseStatus === 429 ? 1 : 0
+      throw new ChartRequestError(1 + retries, chartDiagnosticCodes(error), error, rateLimited + terminalRateLimit)
     }
   }
 }

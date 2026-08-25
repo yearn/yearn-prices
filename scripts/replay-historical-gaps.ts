@@ -24,6 +24,7 @@ import {
   listDefiLlamaCoinGeckoAliases
 } from '../src/sources/defillama/aliases'
 import type { ExactPriceRecord, HistoricalRequestTuple } from '../src/types'
+import { chunk } from '../src/utils'
 
 const DAY_SECONDS = 86_400
 
@@ -323,7 +324,7 @@ const CSV_COLUMNS: Array<keyof CaptureRecord> = [
   'diagnosticCodes'
 ]
 
-function toCsv(records: CaptureRecord[]): string {
+export function toCsv(records: CaptureRecord[]): string {
   const lines = [CSV_COLUMNS.join(',')]
   for (const record of records) {
     const row = CSV_COLUMNS.map((column) => {
@@ -333,6 +334,9 @@ function toCsv(records: CaptureRecord[]): string {
       }
       if (Array.isArray(value)) {
         return csvEscape(value.join('|'))
+      }
+      if (typeof value === 'number' || typeof value === 'boolean') {
+        return String(value)
       }
       return csvEscape(String(value))
     })
@@ -372,8 +376,7 @@ async function run(args: Args): Promise<void> {
     }))
 
     const existingByKey = new Map<string, ExactPriceRecord>()
-    for (let offset = 0; offset < requests.length; offset += EXACT_READ_CHUNK_SIZE) {
-      const chunkRequests = requests.slice(offset, offset + EXACT_READ_CHUNK_SIZE)
+    for (const chunkRequests of chunk(requests, EXACT_READ_CHUNK_SIZE)) {
       const rows = await getBatchHistoricalPrices(pool, chunkRequests)
       for (const row of rows) {
         existingByKey.set(priceKey(row.chain, row.token, row.timestamp), row)

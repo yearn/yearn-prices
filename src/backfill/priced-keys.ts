@@ -1,6 +1,6 @@
 import { getBatchHistoricalPrices, type QueryExecutor } from '../db/queries'
 import type { HistoricalRequestTuple } from '../types'
-import { chunk } from './inventory'
+import { chunk } from '../utils/collections'
 
 export function priceKey(chain: string, token: string, timestamp: number): string {
   return `${chain}:${token}:${timestamp}`

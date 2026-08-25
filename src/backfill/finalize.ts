@@ -1,7 +1,8 @@
 import type { PriceSource } from '../types'
+import { chunk } from '../utils/collections'
 import { pgTimestampToUnix, unixToIsoTimestamp } from '../utils/time'
 import { EXACT_READ_CHUNK_SIZE, FINALIZATION_BATCH_SIZE, FINALIZATION_LOCK_RETRY_LIMIT } from './constants'
-import { chunk, deleteInventoryRows, type InventoryKey, upsertInventoryRows } from './inventory'
+import { deleteInventoryRows, type InventoryKey, upsertInventoryRows } from './inventory'
 import { priceKey, readPricedKeys } from './priced-keys'
 
 const LOCK_NOT_AVAILABLE = '55P03'

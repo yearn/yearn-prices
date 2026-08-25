@@ -56,7 +56,9 @@ export class DefiLlamaClient {
       throw new ApiError('INVALID_INPUT', 'DeFiLlama /chart requires either start or end, not both')
     }
 
-    const url = new URL(`${BASE_URL}/chart/${coins.join(',')}`)
+    const url = new URL(
+      `${BASE_URL}/chart/${coins.map((coin) => encodeURIComponent(coin).replaceAll('%3A', ':')).join(',')}`
+    )
     if (options.start !== undefined) {
       url.searchParams.set('start', String(options.start))
     }

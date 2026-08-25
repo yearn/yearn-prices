@@ -7,7 +7,8 @@ import {
   matchChartResponse,
   parseArgs,
   percentile,
-  summarizeRangeResponse
+  summarizeRangeResponse,
+  toCsv
 } from '../../scripts/replay-historical-gaps'
 import { type NormalizedTarget, parseManifest } from '../../src/backfill/manifest'
 import { groupContiguousRanges } from '../../src/backfill/ranges'
@@ -411,5 +412,16 @@ describe('buildReport', () => {
     expect(gap.direction).toEqual({ before: 1, exact: 0, after: 1 })
     expect(gap.signedOffsetSeconds).toMatchObject({ count: 2, min: -300, median: -300, p90: 100, max: 100 })
     expect(gap.absoluteOffsetSeconds).toMatchObject({ count: 2, min: 100, median: 100, p90: 300, max: 300 })
+  })
+})
+
+describe('toCsv', () => {
+  it('keeps negative numbers intact and neutralizes formula strings', () => {
+    const csv = toCsv([{ symbol: '=SUM(A1)', signedOffsetSeconds: -135 } as never])
+    const header = csv.split('\n')[0].split(',')
+    const row = csv.split('\n')[1].split(',')
+
+    expect(row[header.indexOf('signedOffsetSeconds')]).toBe('-135')
+    expect(row[header.indexOf('symbol')]).toBe("'=SUM(A1)")
   })
 })

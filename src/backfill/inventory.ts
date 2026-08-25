@@ -1,3 +1,4 @@
+import { chunk } from '../utils/collections'
 import { unixToIsoTimestamp } from '../utils/time'
 
 export interface InventoryQueryable {
@@ -11,14 +12,6 @@ export interface InventoryKey {
 }
 
 const INVENTORY_KEY_CHUNK_SIZE = 1_000
-
-export function chunk<T>(items: T[], size: number): T[][] {
-  const chunks: T[][] = []
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size))
-  }
-  return chunks
-}
 
 function buildKeyValues(keys: InventoryKey[]): { valuesSql: string; params: Array<string | number> } {
   const valuesSql: string[] = []

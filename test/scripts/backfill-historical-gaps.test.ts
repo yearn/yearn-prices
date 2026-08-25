@@ -10,6 +10,7 @@ import {
   ChartRequestError,
   checkpointPath,
   createChartFetcher,
+  parseArgs,
   runBackfill
 } from '../../scripts/backfill-historical-gaps'
 import { groupContiguousRanges } from '../../src/backfill/ranges'
@@ -613,5 +614,25 @@ describe('createChartFetcher', () => {
 
     expect(fetched.attempts).toBe(2)
     expect(fetched.rateLimited).toBe(1)
+  })
+})
+
+describe('parseArgs', () => {
+  const required = ['--manifest', 'm.json', '--report', 'r.json']
+
+  it('rejects --write with --dry-run', () => {
+    expect(() => parseArgs([...required, '--write', '--dry-run'])).toThrow(/mutually exclusive/)
+  })
+
+  it('rejects a value after --write', () => {
+    expect(() => parseArgs([...required, '--write', 'yes'])).toThrow(/does not take a value/)
+  })
+
+  it('rejects an unknown option', () => {
+    expect(() => parseArgs([...required, '--nope', '1'])).toThrow(/unrecognized option/)
+  })
+
+  it('accepts a bare --write', () => {
+    expect(parseArgs([...required, '--write']).write).toBe(true)
   })
 })
