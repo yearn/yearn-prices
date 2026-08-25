@@ -49,6 +49,11 @@ export function fakeClient(reads: ContractReads): PublicClient {
         if (functionName === 'get_dy' && Array.isArray(value)) {
           value = value[Number(args?.[1])]
         }
+        // Real pools revert on an out-of-range index; returning undefined here
+        // would let an adapter read past the coin count unnoticed.
+        if (value === undefined) {
+          throw new ContractRevert(address, functionName)
+        }
       }
       if (value instanceof Error) {
         throw value
