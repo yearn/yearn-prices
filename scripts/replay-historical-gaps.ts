@@ -3,6 +3,7 @@ import { config as loadEnv } from 'dotenv'
 
 loadEnv()
 
+import { applicableAlias } from '../src/backfill/alias-eligibility'
 import { parseCliArgs } from '../src/backfill/args'
 import { readChartCoin } from '../src/backfill/chart-envelope'
 import {
@@ -11,18 +12,15 @@ import {
   EXACT_READ_CHUNK_SIZE,
   MAXIMUM_CHART_SPAN_DAYS
 } from '../src/backfill/constants'
+import { httpAttempts, httpDiagnosticCodes } from '../src/backfill/diagnostics'
 import { manifestDigest, type NormalizedTarget, parseManifest } from '../src/backfill/manifest'
 import { type MatchResult, matchChartObservation, windowEligibleObservations } from '../src/backfill/matcher'
 import { priceKey } from '../src/backfill/priced-keys'
 import { gitRevision, toolVersion } from '../src/backfill/provenance'
-import { type ContiguousRange, groupContiguousRanges } from '../src/backfill/ranges'
+import { type ContiguousRange, groupContiguousRanges, rangeSpanDays } from '../src/backfill/ranges'
 import { DefiLlamaClient, SlidingWindowRateLimiter } from '../src/clients'
 import { createPool, getBatchHistoricalPrices } from '../src/db'
-import {
-  getDefiLlamaCoinGeckoAlias,
-  isDefiLlamaAliasValidAt,
-  listDefiLlamaCoinGeckoAliases
-} from '../src/sources/defillama/aliases'
+import { getDefiLlamaCoinGeckoAlias, listDefiLlamaCoinGeckoAliases } from '../src/sources/defillama/aliases'
 import type { ExactPriceRecord, HistoricalRequestTuple } from '../src/types'
 import { chunk } from '../src/utils'
 
@@ -471,16 +469,13 @@ function chartClient(rateLimiter: SlidingWindowRateLimiter, onRetry: () => void)
     timeoutMs: CHART_REQUEST_TIMEOUT_MS,
     honorRetryAfter: true,
     retryAfterCapMs: CHART_RETRY_AFTER_CAP_MS,
-    retryTransportErrors: true
+    retryTransportErrors: true,
+    retryInvalidJson: true
   })
 }
 
 export function aliasEligibilityOf(target: NormalizedTarget): ((observedTimestamp: number) => boolean) | undefined {
-  const alias = getDefiLlamaCoinGeckoAlias(target.chain, target.token)
-  if (alias == null || !isDefiLlamaAliasValidAt(alias, target.eodTimestamp)) {
-    return undefined
-  }
-  return (observedTimestamp: number) => isDefiLlamaAliasValidAt(alias, observedTimestamp)
+  return applicableAlias(target)?.isEligibleObservation
 }
 
 async function captureRanges(
@@ -505,7 +500,7 @@ async function captureRanges(
 
     stats.apiCalls += 1
     try {
-      const spanDays = (range.rangeEnd - range.rangeStart) / DAY_SECONDS + 1
+      const spanDays = rangeSpanDays(range)
       const response = await client.getChart([range.identifier], {
         start: range.rangeStart,
         span: spanDays,
@@ -542,14 +537,16 @@ async function captureRanges(
         })
         captureRecords.push(record)
       }
-    } catch {
+    } catch (error) {
       stats.requestFailures += 1
-      requestRecords.push(buildFailedRequestRecord(window, method, range, 1 + retries))
+      const attempts = Math.max(httpAttempts(error), 1 + retries)
+      const codes = httpDiagnosticCodes(error)
+      requestRecords.push(buildFailedRequestRecord(window, method, range, attempts))
       for (const { cohort, target } of range.items) {
         const key = priceKey(target.chain, target.token, target.eodTimestamp)
         resultByKey.set(key, { kind: 'not_found' })
         captureRecords.push(
-          buildFailedCaptureRecord(cohort, target, window.label, method, range.identifier, range, 1 + retries)
+          buildFailedCaptureRecord(cohort, target, window.label, method, range.identifier, range, attempts, codes)
         )
       }
     }
@@ -559,7 +556,7 @@ async function captureRanges(
 }
 
 function requestedPeriods(range: TargetRange): number {
-  return (range.rangeEnd - range.rangeStart) / DAY_SECONDS + 1
+  return rangeSpanDays(range)
 }
 
 function buildRequestRecord(
@@ -698,7 +695,8 @@ function buildFailedCaptureRecord(
   method: Method,
   providerIdentifier: string,
   range: TargetRange,
-  attempts: number
+  attempts: number,
+  diagnosticCodes: string[]
 ): CaptureRecord {
   return {
     cohort,
@@ -723,7 +721,7 @@ function buildFailedCaptureRecord(
     relativeDifference: null,
     equalDistanceTie: false,
     attempts,
-    diagnosticCodes: ['retry_exhausted']
+    diagnosticCodes
   }
 }
 

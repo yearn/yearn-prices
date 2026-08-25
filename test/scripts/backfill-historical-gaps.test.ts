@@ -3,12 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  type BackfillCheckpoint,
   type BackfillPool,
   type BackfillReport,
   type ChartFetch,
   ChartRequestError,
-  checkpointPath,
   createChartFetcher,
   parseArgs,
   runBackfill
@@ -40,23 +38,21 @@ function manifestFile(targets: Array<{ chainId: number; token: string; eodTimest
 interface FakePoolConfig {
   pricedRows?: Array<{ chain: string; token: string; eodTimestamp: number }>
   noncanonical?: Array<{ chain: string; token: string }>
-  failBeginOnCall?: number
   lockUnavailable?: boolean
 }
 
-function fakePool(config: FakePoolConfig = {}): { pool: BackfillPool; statements: string[] } {
+function fakePool(config: FakePoolConfig = {}): {
+  pool: BackfillPool
+  statements: string[]
+  queries: Array<{ sql: string; params?: unknown[] }>
+} {
   const statements: string[] = []
-  let beginCalls = 0
+  const queries: Array<{ sql: string; params?: unknown[] }> = []
 
   const query = async (sql: string, params?: unknown[]) => {
     statements.push(sql.trim().split('\n')[0].trim())
+    queries.push({ sql, params })
 
-    if (sql.startsWith('BEGIN')) {
-      beginCalls += 1
-      if (config.failBeginOnCall === beginCalls) {
-        throw new Error('connection lost')
-      }
-    }
     if (config.lockUnavailable && sql.startsWith('LOCK TABLE')) {
       throw Object.assign(new Error('could not obtain lock'), { code: '55P03' })
     }
@@ -97,7 +93,7 @@ function fakePool(config: FakePoolConfig = {}): { pool: BackfillPool; statements
     connect: async () => ({ query, release: () => {} })
   } as unknown as BackfillPool
 
-  return { pool, statements }
+  return { pool, statements, queries }
 }
 
 function chart(points: Array<{ timestamp: number; price: number }>, symbol = 'USDC') {
@@ -116,10 +112,6 @@ function fetchChartFrom(coins: Record<string, unknown>): ChartFetch {
 
 function readReport(path: string): BackfillReport {
   return JSON.parse(readFileSync(path, 'utf8')) as BackfillReport
-}
-
-function readCheckpoint(path: string): BackfillCheckpoint {
-  return JSON.parse(readFileSync(path, 'utf8')) as BackfillCheckpoint
 }
 
 describe('groupContiguousRanges', () => {
@@ -469,45 +461,49 @@ describe('runBackfill', () => {
     expect(report.summary.finalizationLockFailures).toBe(1)
     expect(report.summary.finalizationLockRetries).toBe(3)
     expect(report.fatal?.message).toContain('lock')
+    expect(report.fatal).toMatchObject({ committedTargets: 0, failedTargets: 1, unattemptedTargets: 0 })
   })
 
-  it('checkpoints an unfinished run without marking it finished', async () => {
+  it('marks only still-missing days unresolved when a range request fails, without inventorying already priced days', async () => {
     const manifestPath = manifestFile([
       { chainId: 1, token: USDC, eodTimestamp: EOD },
-      { chainId: 1, token: USDC, eodTimestamp: EOD + DAY }
+      { chainId: 1, token: USDC, eodTimestamp: EOD + DAY },
+      { chainId: 1, token: USDC, eodTimestamp: EOD + 2 * DAY },
+      { chainId: 1, token: USDC, eodTimestamp: EOD + 3 * DAY }
     ])
     const reportPath = join(directory, 'report.json')
-    const { pool } = fakePool({ failBeginOnCall: 2 })
+    const { pool, queries } = fakePool({
+      pricedRows: [{ chain: 'ethereum', token: USDC, eodTimestamp: EOD + DAY }]
+    })
 
     const result = await runBackfill(
-      { manifestPath, reportPath, write: true, batchSize: 1 },
+      { manifestPath, reportPath, write: true },
       {
         pool,
         fetchChart: fetchChartFrom({
-          [`ethereum:${USDC.toLowerCase()}`]: chart([
-            { timestamp: EOD, price: 1 },
-            { timestamp: EOD + DAY, price: 1.1 }
-          ])
+          [`ethereum:${USDC.toLowerCase()}`]: new ChartRequestError(3, ['retry_exhausted'])
         })
       }
     )
 
-    expect(result.exitCode).toBe(1)
-
-    const checkpoint = readCheckpoint(checkpointPath(reportPath))
-    expect(checkpoint.finishedAt).toBeNull()
-    expect(checkpoint.summary).toMatchObject({ inserted: 1, pending: 1, unresolved: 0 })
-    expect(checkpoint.progress).toMatchObject({ committed: 1, inFlight: 0 })
-
+    expect(result.exitCode).toBe(2)
     const report = readReport(reportPath)
-    expect(report.finishedAt).not.toBeNull()
-    expect(report.summary).toMatchObject({ pending: 1, unresolved: 0 })
-    expect(report.fatal).toMatchObject({ committedTargets: 1, failedTargets: 1 })
-    expect(existsSync(`${reportPath}.tmp`)).toBe(false)
-    expect(existsSync(`${checkpointPath(reportPath)}.tmp`)).toBe(false)
+    expect(report.targets.find((record) => record.eodTimestamp === EOD + DAY)?.status).toBe('skipped_existing')
+    const stillMissing = [EOD, EOD + 2 * DAY, EOD + 3 * DAY]
+    for (const eodTimestamp of stillMissing) {
+      expect(report.targets.find((record) => record.eodTimestamp === eodTimestamp)?.status).toBe('unresolved')
+    }
+    expect(report.summary).toMatchObject({ alreadyPriced: 1, unresolved: 3 })
+
+    const inventoryUpsert = queries.find((query) => query.sql.includes('INSERT INTO historical_price_gap_inventory'))
+    expect(inventoryUpsert).toBeDefined()
+    const timestamps = (inventoryUpsert?.params ?? []).filter((_, index) => index % 3 === 2)
+    expect([...timestamps].sort()).toEqual(
+      stillMissing.map((eodTimestamp) => new Date(eodTimestamp * 1000).toISOString()).sort()
+    )
   })
 
-  it('removes the checkpoint after a successful run that cleared inventory for already priced targets', async () => {
+  it('runs cleanly to completion when every target is already priced', async () => {
     const manifestPath = manifestFile([{ chainId: 1, token: USDC, eodTimestamp: EOD }])
     const reportPath = join(directory, 'report.json')
     const { pool } = fakePool({ pricedRows: [{ chain: 'ethereum', token: USDC, eodTimestamp: EOD }] })
@@ -518,7 +514,8 @@ describe('runBackfill', () => {
     )
 
     expect(result.exitCode).toBe(0)
-    expect(existsSync(checkpointPath(reportPath))).toBe(false)
+    const report = readReport(reportPath)
+    expect(report.summary).toMatchObject({ alreadyPriced: 1, inserted: 0, unresolved: 0 })
   })
 
   it('exits 2 when a target stays unresolved and records the failure diagnostics', async () => {

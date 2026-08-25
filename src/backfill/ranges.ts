@@ -7,6 +7,10 @@ export interface ContiguousRange<Item> {
   items: Item[]
 }
 
+export function rangeSpanDays(range: { rangeStart: number; rangeEnd: number }): number {
+  return (range.rangeEnd - range.rangeStart) / DAY_SECONDS + 1
+}
+
 export function groupContiguousRanges<Item>(
   items: Item[],
   identifierOf: (item: Item) => string,
