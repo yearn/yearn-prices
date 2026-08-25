@@ -187,7 +187,7 @@ async function readGetDy(
 
 /**
  * Values the coins the market cannot price by quoting one unit of each against
- * the largest priced reserve. The anchor carries the only market price behind
+ * the most valuable priced reserve. The anchor carries the only market price behind
  * every derived leg, so a pool whose anchor holds a negligible share of its
  * value gets no price at all rather than one resting on dust.
  */
@@ -197,23 +197,22 @@ async function deriveMissingLegs(
   coins: CurveCoin[],
   marketPrices: Array<number | null>
 ): Promise<{ prices: number[]; derivedCoins: Record<string, unknown>[] } | null> {
-  const pricedIndexes = marketPrices.flatMap((price, index) => (price == null ? [] : [index]))
-  if (pricedIndexes.length === 0) {
-    return null
-  }
-  let anchorIndex = pricedIndexes[0]
-  let anchorBalance = scaledRaw(coins[anchorIndex].balanceRaw, coins[anchorIndex].decimals)
-  for (const index of pricedIndexes.slice(1)) {
-    const balance = scaledRaw(coins[index].balanceRaw, coins[index].decimals)
-    if (balance > anchorBalance) {
-      anchorIndex = index
-      anchorBalance = balance
+  let anchorIndex = -1
+  let anchorValue = -1
+  marketPrices.forEach((price, index) => {
+    if (price == null || !Number.isFinite(price) || price <= 0) {
+      return
     }
-  }
-  const anchorPrice = marketPrices[anchorIndex]
-  if (anchorPrice == null || !Number.isFinite(anchorPrice) || anchorPrice <= 0) {
+    const value = scaledRaw(coins[index].balanceRaw, coins[index].decimals) * price
+    if (Number.isFinite(value) && value > anchorValue) {
+      anchorIndex = index
+      anchorValue = value
+    }
+  })
+  if (anchorIndex < 0) {
     return null
   }
+  const anchorPrice = marketPrices[anchorIndex] as number
 
   const prices = [...marketPrices]
   const derivedCoins: Record<string, unknown>[] = []
