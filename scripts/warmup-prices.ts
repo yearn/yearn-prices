@@ -11,13 +11,17 @@ import {
   readVaultSharePrice
 } from '../src/clients'
 import { createPool, getBatchHistoricalPrices, getExistingExactTimestamps, insertTokenPrices } from '../src/db'
+import { ApiError } from '../src/http/errors'
 import { createChildMarketSources, marketPriceResolver } from '../src/registries/historical'
-import { RecursiveDependencyError } from '../src/sources/onchain/errors'
+import { createDefiLlamaAliasHistoricalSource } from '../src/sources'
+import { MARKET_PRICE_ADAPTER } from '../src/sources/onchain/engine'
+import { isRetryablePricingError, RecursiveDependencyError } from '../src/sources/onchain/errors'
 import { OnchainPricer } from '../src/sources/onchain/pricer'
 import type {
   MarketPriceResolver,
   PriceInputEvidence,
   PriceResolutionFailure,
+  RecursivePriceTarget,
   ResolvedPricePath
 } from '../src/sources/onchain/types'
 import type { HistoricalRequestTuple, KongVaultListItem, TokenPriceWrite } from '../src/types'
@@ -38,7 +42,7 @@ const stats: WarmupStats = {
   retries: 0,
   failures: 0,
   insertedDirect: 0,
-  insertedOnchain: 0,
+  onchainWrites: 0,
   insertedDerived: 0,
   insertedCurve: 0,
   onchainRetryable: 0,
@@ -70,7 +74,8 @@ export interface WarmupStats {
   retries: number
   failures: number
   insertedDirect: number
-  insertedOnchain: number
+  /** Rows handed to the idempotent insert, not rows the insert actually added. */
+  onchainWrites: number
   insertedDerived: number
   insertedCurve: number
   onchainRetryable: number
@@ -83,13 +88,16 @@ type ResolvedPathNode = ResolvedPricePath | PriceInputEvidence
 
 export type OnchainFailureCategory = 'retryable' | 'invalid' | 'unsupported' | 'not-found'
 
+export type OnchainFailureAttempt = PriceResolutionFailure['attempts'][number] & { token: string }
+
 export interface OnchainFailureReport {
   category: OnchainFailureCategory
   tokenKey: string
   chain: string
   timestamp: number
-  missingUnderlying: string
-  attempts: PriceResolutionFailure['attempts']
+  /** The token at the bottom of the failure chain; the root itself when it has no priced dependency. */
+  deepestFailedToken: string
+  attempts: OnchainFailureAttempt[]
 }
 
 function sleep(milliseconds: number): Promise<void> {
@@ -264,15 +272,22 @@ export function categorizeOnchainFailure(failure: PriceResolutionFailure): Oncha
     return 'invalid'
   }
   const deepest = chain[chain.length - 1]
-  if (chain.length > 1 && deepest.reason === 'unsupported' && deepest.attempts.length === 0) {
+  // A market-source miss is the absence of a price, not an adapter refusing the
+  // token, so it decides 'not-found' rather than 'unsupported'.
+  const adapterAttempts = deepest.attempts.filter((attempt) => attempt.adapter !== MARKET_PRICE_ADAPTER)
+  if (deepest.reason === 'unsupported' && adapterAttempts.length === 0) {
     return 'not-found'
   }
   return 'unsupported'
 }
 
-export function missingUnderlyingToken(failure: PriceResolutionFailure): string {
+export function deepestFailedToken(failure: PriceResolutionFailure): string {
   const chain = failureChain(failure)
   return chain[chain.length - 1].token
+}
+
+export function failureAttempts(failure: PriceResolutionFailure): OnchainFailureAttempt[] {
+  return failureChain(failure).flatMap((link) => link.attempts.map((attempt) => ({ ...attempt, token: link.token })))
 }
 
 function onchainFailureReport(
@@ -286,8 +301,22 @@ function onchainFailureReport(
     tokenKey: `${chain}:${token}`,
     chain,
     timestamp,
-    missingUnderlying: missingUnderlyingToken(failure),
-    attempts: failure.attempts
+    deepestFailedToken: deepestFailedToken(failure),
+    attempts: failureAttempts(failure)
+  }
+}
+
+function inlineOnchainFailureReport(
+  category: OnchainFailureCategory,
+  request: HistoricalRequestTuple
+): OnchainFailureReport {
+  return {
+    category,
+    tokenKey: `${request.chain}:${request.token}`,
+    chain: request.chain,
+    timestamp: request.timestamp,
+    deepestFailedToken: request.token,
+    attempts: []
   }
 }
 
@@ -310,10 +339,10 @@ function printOnchainFailureReport(reports: OnchainFailureReport[]): void {
   console.warn('On-chain resolution failures:')
   for (const report of reports) {
     console.warn(
-      `[${report.category}] token=${report.tokenKey} chain=${report.chain} timestamp=${report.timestamp} missing=${report.missingUnderlying}`
+      `[${report.category}] token=${report.tokenKey} chain=${report.chain} timestamp=${report.timestamp} deepest=${report.deepestFailedToken}`
     )
     for (const attempt of report.attempts) {
-      console.warn(`  ${attempt.adapter} (${attempt.reason}): ${attempt.error}`)
+      console.warn(`  ${attempt.token} ${attempt.adapter} (${attempt.reason}): ${attempt.error}`)
     }
   }
 }
@@ -427,7 +456,22 @@ export interface OnchainWarmupDeps {
   defiLlama: DefiLlamaClient
   getBatch: typeof getBatchHistoricalPrices
   insert: typeof insertTokenPrices
-  makePricer: (resolver: MarketPriceResolver) => Pick<OnchainPricer, 'resolvePath'>
+  makePricer: (resolver: MarketPriceResolver) => Pick<OnchainPricer, 'resolvePath' | 'resolvedPaths'>
+}
+
+/**
+ * A transient alias failure must not reach the engine as absence: the root would
+ * then be reported not-found when the price only failed to load.
+ */
+async function resolveAliasRoot(
+  resolver: MarketPriceResolver,
+  target: RecursivePriceTarget
+): Promise<{ path: ResolvedPricePath | null; retryable: boolean }> {
+  try {
+    return { path: await resolver(target), retryable: false }
+  } catch (error) {
+    return { path: null, retryable: error instanceof ApiError || isRetryablePricingError(error) }
+  }
 }
 
 function defaultOnchainWarmupDeps(): OnchainWarmupDeps {
@@ -459,42 +503,70 @@ export async function warmOnchainPrices(
     if (existingKeys.has(key)) {
       continue
     }
+    // Today's slot ends at a moment that has not happened yet. Resolving it
+    // would price against a future timestamp and report the gap as missing.
+    if (isTodayNormalized(request.timestamp)) {
+      continue
+    }
     if (transientFailures.has(key)) {
       recordOnchainFailure(stats, 'retryable')
-      reports.push({
-        category: 'retryable',
-        tokenKey: `${request.chain}:${request.token}`,
-        chain: request.chain,
-        timestamp: request.timestamp,
-        missingUnderlying: request.token,
-        attempts: []
-      })
+      reports.push(inlineOnchainFailureReport('retryable', request))
       continue
     }
     missing.push(request)
   }
 
   const resolver = marketPriceResolver(createChildMarketSources(llama, db))
+  const aliasResolver = marketPriceResolver([createDefiLlamaAliasHistoricalSource(llama)])
+
+  const persist = async (paths: ResolvedPricePath[]): Promise<void> => {
+    const writes = paths.flatMap(resolvedPathTokenPriceWrites)
+    if (writes.length === 0) {
+      return
+    }
+    await insert(db, writes)
+    stats.onchainWrites += writes.length
+  }
+
+  const fail = (category: OnchainFailureCategory, report: OnchainFailureReport): void => {
+    reports.push(report)
+    recordOnchainFailure(stats, category)
+  }
 
   await runInGroups(missing, async (request) => {
     try {
       const chainId = chainNameToId(request.chain)
       if (chainId === undefined) {
+        fail('unsupported', inlineOnchainFailureReport('unsupported', request))
         return
       }
+      const target = { chainId, token: request.token, timestamp: request.timestamp }
+
+      // The engine skips market sources at depth 0 and the direct phase is
+      // batch-DefiLlama only, so a root has never been tried against the alias.
+      const alias = await resolveAliasRoot(aliasResolver, target)
+      if (alias.path) {
+        await persist([alias.path])
+        return
+      }
+      if (alias.retryable) {
+        fail('retryable', inlineOnchainFailureReport('retryable', request))
+        return
+      }
+
       const pricer = makePricer(resolver)
-      const result = await pricer.resolvePath({ chainId, token: request.token, timestamp: request.timestamp })
+      const result = await pricer.resolvePath(target)
 
       if (!result.path) {
         const report = onchainFailureReport(request.chain, request.token, request.timestamp, result.failure)
-        reports.push(report)
-        recordOnchainFailure(stats, report.category)
+        fail(report.category, report)
+        // Underlyings that did resolve are still prices worth keeping; the next
+        // run reads them from the DB instead of fetching them again.
+        await persist(pricer.resolvedPaths())
         return
       }
 
-      const writes = resolvedPathTokenPriceWrites(result.path)
-      await insert(db, writes)
-      stats.insertedOnchain += writes.length
+      await persist([result.path])
     } catch (error) {
       stats.failures += 1
       console.error(

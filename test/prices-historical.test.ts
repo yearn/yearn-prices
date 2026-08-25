@@ -153,6 +153,7 @@ describe('handleHistorical', () => {
 
     expect(response.status).toBe(200)
     expect(query).toHaveBeenCalledTimes(2)
+    expect(query.mock.calls.map((call) => String(call[0]))).not.toContainEqual(expect.stringMatching(/insert/i))
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(fetchMock.mock.calls[0][0]).toContain(`ethereum:${ONCHAIN_TOKEN}`)
     await expect(response.json()).resolves.toMatchObject({

@@ -10,6 +10,7 @@ interface MarketQuote {
 }
 
 interface MarketSource {
+  name: string
   supports(chainId: number): boolean
 }
 
@@ -23,7 +24,7 @@ export function createMarketPriceResolver(
   resolve: (chainId: number, token: string, timestamp: number | null) => Promise<MarketQuote>,
   options?: { requireTimestamp?: boolean }
 ): MarketPriceResolver {
-  return async (target) => {
+  const resolver: MarketPriceResolver = async (target) => {
     if (options?.requireTimestamp && target.timestamp == null) {
       return null
     }
@@ -55,4 +56,7 @@ export function createMarketPriceResolver(
       throw error
     }
   }
+
+  resolver.sourceNames = marketSources.map((source) => source.name)
+  return resolver
 }

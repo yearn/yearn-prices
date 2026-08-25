@@ -21,7 +21,11 @@ export class DbHistoricalSource extends HistoricalPriceSourceBase {
     if (!chain) {
       return null
     }
-    return getExactHistoricalPrice(this.pool, { chain, token, timestamp })
+    const record = await getExactHistoricalPrice(this.pool, { chain, token, timestamp })
+    if (!record || !this.isUsablePrice(record.price, record.timestamp)) {
+      return null
+    }
+    return record
   }
 }
 

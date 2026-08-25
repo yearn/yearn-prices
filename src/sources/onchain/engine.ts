@@ -23,6 +23,8 @@ import type {
 
 const MAX_ADAPTER_HINTS = 256
 
+export const MARKET_PRICE_ADAPTER = 'market-price'
+
 function setCapped<K, V>(map: Map<K, V>, key: K, value: V, max: number): void {
   if (map.has(key)) {
     map.delete(key)
@@ -184,6 +186,11 @@ export class RecursivePriceEngine {
     return this.resolveAt(normalizeTarget(target), [])
   }
 
+  /** Every path resolved so far, including children of a resolution that failed. */
+  resolvedPaths(): ResolvedPricePath[] {
+    return [...this.successful.values()]
+  }
+
   private async resolveAt(target: RecursivePriceTarget, ancestry: string[]): Promise<RecursivePriceResult> {
     const key = targetKey(target)
     if (ancestry.includes(key)) {
@@ -273,9 +280,16 @@ export class RecursivePriceEngine {
           this.successful.set(key, path)
           return { path, failure: null }
         }
+        // Recorded, not returned: the token may still be priceable on-chain, but
+        // the report has to be able to say which market sources had nothing.
+        attempts.push({
+          adapter: MARKET_PRICE_ADAPTER,
+          reason: 'unsupported',
+          error: `not found in ${this.marketPrice.sourceNames?.join(', ') || 'any market source'}`
+        })
       } catch (error) {
         const reason = classifyError(error)
-        attempts.push({ adapter: 'market-price', reason, error: errorMessage(error), cause: error })
+        attempts.push({ adapter: MARKET_PRICE_ADAPTER, reason, error: errorMessage(error), cause: error })
         if (reason !== 'unsupported') {
           const failure = { reason, token: target.token, attempts }
           this.failed.set(key, failure)

@@ -9,7 +9,7 @@ import { RecursivePriceEngine } from './engine'
 import { RecursiveDependencyError } from './errors'
 import { DEFAULT_MAX_DEPTH, DEFAULT_READ_BUDGET, type OnchainSourceOptions } from './options'
 import { createReadBudget } from './read-budget'
-import type { PriceResolutionFailure, RecursivePriceResult, RecursivePriceTarget } from './types'
+import type { PriceResolutionFailure, RecursivePriceResult, RecursivePriceTarget, ResolvedPricePath } from './types'
 
 /**
  * Digs out the error that actually failed, so an upstream ApiError reaches the
@@ -86,6 +86,10 @@ export class OnchainPricer {
 
   resolvePath(target: RecursivePriceTarget): Promise<RecursivePriceResult> {
     return this.engine.resolve(target)
+  }
+
+  resolvedPaths(): ResolvedPricePath[] {
+    return this.engine.resolvedPaths()
   }
 
   private toResult(result: RecursivePriceResult): SpotPriceResult | null {

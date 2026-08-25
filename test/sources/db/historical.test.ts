@@ -43,4 +43,22 @@ describe('createDbHistoricalSource', () => {
 
     await expect(source.getHistoricalPrice(1, ADDRESS, TIMESTAMP)).resolves.toBeNull()
   })
+
+  it.each(['0', '-1'])('treats a stored %s price as a miss so the next source is tried', async (price) => {
+    const source = createDbHistoricalSource(
+      pool([
+        {
+          chain: 'ethereum',
+          token: ADDRESS,
+          timestamp: new Date(TIMESTAMP * 1000),
+          price,
+          symbol: 'TOKEN',
+          confidence: null,
+          source: 'defillama'
+        }
+      ])
+    )
+
+    await expect(source.getHistoricalPrice(1, ADDRESS, TIMESTAMP)).resolves.toBeNull()
+  })
 })

@@ -1,8 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   categorizeOnchainFailure,
+  deepestFailedToken,
+  failureAttempts,
   flattenResolvedPricePath,
-  missingUnderlyingToken,
   type NormalizedVault,
   type OnchainWarmupDeps,
   resolvedPathTokenPriceWrites,
@@ -105,7 +106,8 @@ describe('warmup on-chain helpers', () => {
     ['unsupported', [{ adapter: 'adapter', reason: 'unsupported', error: 'unsupported' }], 'unsupported'],
     ['cycle', [], 'unsupported'],
     ['max-depth', [], 'unsupported'],
-    ['unsupported', [], 'unsupported']
+    ['unsupported', [], 'not-found'],
+    ['unsupported', [{ adapter: 'market-price', reason: 'unsupported', error: 'not found in db' }], 'not-found']
   ] as const)('maps %s failures to %s', (reason, attempts, category) => {
     expect(categorizeOnchainFailure({ reason, token: ROOT, attempts })).toBe(category)
   })
@@ -161,7 +163,7 @@ describe('warmup on-chain helpers', () => {
     ])
   })
 
-  it('categorizes a dependency with no price as not-found and a bare token as unsupported', () => {
+  it('categorizes a dependency with no price as not-found and an adapter refusal as unsupported', () => {
     const leafFailure: PriceResolutionFailure = { reason: 'unsupported', token: LEAF, attempts: [] }
     const rootFailure: PriceResolutionFailure = {
       reason: 'unsupported',
@@ -177,7 +179,14 @@ describe('warmup on-chain helpers', () => {
     }
 
     expect(categorizeOnchainFailure(rootFailure)).toBe('not-found')
-    expect(categorizeOnchainFailure({ reason: 'unsupported', token: ROOT, attempts: [] })).toBe('unsupported')
+    expect(categorizeOnchainFailure({ reason: 'unsupported', token: ROOT, attempts: [] })).toBe('not-found')
+    expect(
+      categorizeOnchainFailure({
+        reason: 'unsupported',
+        token: ROOT,
+        attempts: [{ adapter: 'lp', reason: 'unsupported', error: 'not an lp' }]
+      })
+    ).toBe('unsupported')
   })
 
   it('lets a nested retryable or invalid failure win over an unsupported root', () => {
@@ -222,7 +231,11 @@ describe('warmup on-chain helpers', () => {
       ]
     }
 
-    expect(missingUnderlyingToken(rootFailure)).toBe(LEAF)
+    expect(deepestFailedToken(rootFailure)).toBe(LEAF)
+    expect(failureAttempts(rootFailure).map((attempt) => [attempt.token, attempt.adapter])).toEqual([
+      [ROOT, 'root'],
+      [INTERMEDIATE, 'intermediate']
+    ])
   })
 })
 
@@ -236,7 +249,7 @@ function makeStats(): WarmupStats {
     retries: 0,
     failures: 0,
     insertedDirect: 0,
-    insertedOnchain: 0,
+    onchainWrites: 0,
     insertedDerived: 0,
     insertedCurve: 0,
     onchainRetryable: 0,
@@ -289,7 +302,8 @@ function makeDeps(over: Partial<OnchainWarmupDeps>): OnchainWarmupDeps {
       resolvePath: async (): Promise<RecursivePriceResult> => ({
         path: null,
         failure: { reason: 'unsupported', token: '', attempts: [] }
-      })
+      }),
+      resolvedPaths: () => []
     }),
     ...over
   }
@@ -316,13 +330,37 @@ describe('warmOnchainPrices orchestration', () => {
           resolvePath: async (target) => {
             priced += 1
             return { path: successPath(target), failure: null }
-          }
+          },
+          resolvedPaths: () => []
         })
       })
     )
     expect(priced).toBe(0)
     expect(inserted).toBe(0)
-    expect(stats.insertedOnchain).toBe(0)
+    expect(stats.onchainWrites).toBe(0)
+  })
+
+  it("skips today's slot instead of resolving a timestamp that has not happened", async () => {
+    const stats = makeStats()
+    let priced = 0
+    await warmOnchainPrices(
+      [makeVault()],
+      [normalizeToEndOfDay(Math.floor(Date.now() / 1000))],
+      stats,
+      new Set(),
+      makeDeps({
+        makePricer: () => ({
+          resolvePath: async (target) => {
+            priced += 1
+            return { path: successPath(target), failure: null }
+          },
+          resolvedPaths: () => []
+        })
+      })
+    )
+    expect(priced).toBe(0)
+    expect(stats.onchainWrites).toBe(0)
+    expect(stats.onchainNotFound + stats.onchainUnsupported + stats.onchainRetryable).toBe(0)
   })
 
   it('reports a transient failure as retryable and never as not-found', async () => {
@@ -340,7 +378,8 @@ describe('warmOnchainPrices orchestration', () => {
           resolvePath: async (target) => {
             priced += 1
             return { path: successPath(target), failure: null }
-          }
+          },
+          resolvedPaths: () => []
         })
       })
     )
@@ -364,12 +403,54 @@ describe('warmOnchainPrices orchestration', () => {
           }
         },
         makePricer: () => ({
-          resolvePath: async (target) => ({ path: successPath(target), failure: null })
+          resolvePath: async (target) => ({ path: successPath(target), failure: null }),
+          resolvedPaths: () => []
         })
       })
     )
     expect(writes.sort()).toEqual([UNDERLYING_TOKEN, VAULT_TOKEN].sort())
-    expect(stats.insertedOnchain).toBe(2)
+    expect(stats.onchainWrites).toBe(2)
     expect(stats.onchainNotFound).toBe(0)
+  })
+
+  it('records a failed resolution in the category stats and the printed report', async () => {
+    const stats = makeStats()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await warmOnchainPrices([makeVault()], timestamps, stats, new Set(), makeDeps({}))
+    const lines = warn.mock.calls.map((call) => String(call[0]))
+    warn.mockRestore()
+
+    expect(stats.onchainNotFound).toBe(2)
+    expect(lines.filter((line) => line.startsWith('[not-found]'))).toHaveLength(2)
+  })
+
+  it('persists underlyings that resolved even when the requested token failed', async () => {
+    const stats = makeStats()
+    const writes: string[] = []
+    const resolvedLeaf = successPath({ chainId: 1, token: LEAF, timestamp: 100 })
+    await warmOnchainPrices(
+      [makeVault()],
+      timestamps,
+      stats,
+      new Set(),
+      makeDeps({
+        getBatch: async () => [existingRecord(VAULT_TOKEN, 100)],
+        insert: async (_pool, batch) => {
+          for (const write of batch) {
+            writes.push(write.token)
+          }
+        },
+        makePricer: () => ({
+          resolvePath: async (): Promise<RecursivePriceResult> => ({
+            path: null,
+            failure: { reason: 'unsupported', token: UNDERLYING_TOKEN, attempts: [] }
+          }),
+          resolvedPaths: () => [resolvedLeaf]
+        })
+      })
+    )
+    expect(writes).toEqual([LEAF])
+    expect(stats.onchainWrites).toBe(1)
+    expect(stats.onchainNotFound).toBe(1)
   })
 })

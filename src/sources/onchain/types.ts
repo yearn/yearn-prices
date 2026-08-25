@@ -95,4 +95,7 @@ export interface RecursivePriceAdapter {
  * engine never reaches back into it, and so recursion always terminates at a
  * market price.
  */
-export type MarketPriceResolver = (target: RecursivePriceTarget) => Promise<ResolvedPricePath | null>
+export type MarketPriceResolver = ((target: RecursivePriceTarget) => Promise<ResolvedPricePath | null>) & {
+  /** Names of the sources behind it, so a miss can be reported per source. */
+  sourceNames?: string[]
+}
