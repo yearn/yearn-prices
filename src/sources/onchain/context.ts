@@ -2,7 +2,13 @@ import { type Address, type PublicClient, parseAbi } from 'viem'
 import { estimateBlockByTimestamp } from '../../clients/rpc'
 import { normalizeTokenAddress } from '../../utils/chains'
 import { erc4626Abi } from './abis'
-import { InvalidPricingError, isRetryablePricingError, ReadBudgetExceededError, RetryablePricingError } from './errors'
+import {
+  InvalidPricingError,
+  isRetryablePricingError,
+  ReadBudgetExceededError,
+  RecursiveDependencyError,
+  RetryablePricingError
+} from './errors'
 import type { RecursivePriceContext, RecursivePriceInput, RecursivePriceTarget, ResolvedPricePath } from './types'
 
 export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
@@ -228,14 +234,33 @@ export async function requireChildren(
   return Promise.all(addresses.map((address) => context.require(childTarget(parent, address, blockNumber), label)))
 }
 
+/**
+ * Prices every constituent of a basket, reporting the unpriceable ones as null
+ * so the caller can value them another way. A transient or budget-capped child
+ * is rethrown instead: it is a read that did not get through, not an absent
+ * price, and substituting a derived value there would publish a different
+ * valuation whenever an RPC is flaky.
+ */
 export async function optionalChildren(
   context: RecursivePriceContext,
   parent: RecursivePriceTarget,
   addresses: string[],
-  blockNumber: number
+  blockNumber: number,
+  label: string
 ): Promise<Array<ResolvedPricePath | null>> {
   const results = await Promise.all(
     addresses.map((address) => context.resolve(childTarget(parent, address, blockNumber)))
   )
-  return results.map((result) => result.path)
+  return results.map((result) => {
+    if (result.path) {
+      return result.path
+    }
+    if (result.failure.reason === 'retryable' || result.failure.reason === 'budget') {
+      throw new RecursiveDependencyError(
+        `${label} ${result.failure.token} is unavailable (${result.failure.reason})`,
+        result.failure
+      )
+    }
+    return null
+  })
 }
