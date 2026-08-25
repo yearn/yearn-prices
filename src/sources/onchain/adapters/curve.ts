@@ -23,6 +23,7 @@ const MAX_REGISTRY_ID = 12
 const MAX_COINS = 8
 /** Smallest share of pool value the priced anchor may hold and still be a price. */
 const MIN_ANCHOR_SHARE = 0.01
+const MAX_QUOTE_RESERVE_SHARE_DIVISOR = 2n
 
 const minterAbi = parseAbi(['function minter() view returns (address)'])
 const poolLpTokenAbi = parseAbi([
@@ -220,6 +221,9 @@ async function deriveMissingLegs(
     const dxRaw = 10n ** BigInt(coins[index].decimals)
     const getDyRaw = await readGetDy(state.client, poolAddress, index, anchorIndex, dxRaw, state.blockNumber)
     if (getDyRaw == null || getDyRaw === 0n) {
+      return null
+    }
+    if (getDyRaw * MAX_QUOTE_RESERVE_SHARE_DIVISOR > coins[anchorIndex].balanceRaw) {
       return null
     }
     const derivedPrice = scaledRaw(getDyRaw, coins[anchorIndex].decimals) * anchorPrice

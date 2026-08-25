@@ -154,6 +154,28 @@ describe('curveAdapter', () => {
     ])
   })
 
+  it('does not derive a leg whose quote drains the anchor reserve', async () => {
+    const thinReads = {
+      [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
+      [CURVE_POOL]: {
+        token: LP,
+        N_COINS: 2n,
+        coins: [TOKEN_A, TOKEN_B],
+        balances: [100n * 10n ** 6n, 5n * 10n ** 17n],
+        get_dy: [
+          [0n, 500_000_000_000_000_000n],
+          [0n, 0n]
+        ]
+      },
+      [TOKEN_A]: { decimals: 6 },
+      [TOKEN_B]: { decimals: 18 }
+    }
+
+    const result = await priceWith(curveAdapter(adapterOptions(thinReads)), { [TOKEN_B]: 2 }, LP)
+
+    expect(result.path).toBeNull()
+  })
+
   it('does not price a missing leg when get_dy reverts', async () => {
     const revertingReads = {
       [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
