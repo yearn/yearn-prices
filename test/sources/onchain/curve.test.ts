@@ -247,6 +247,44 @@ describe('curveAdapter', () => {
     ])
   })
 
+  it('anchors to the most valuable priced reserve, not the largest amount', async () => {
+    const divergentReads = {
+      [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
+      [CURVE_POOL]: {
+        token: LP,
+        N_COINS: 3n,
+        coins: [TOKEN_A, TOKEN_B, TOKEN_C],
+        balances: [1000n * 10n ** 18n, 10n * 10n ** 18n, 50n * 10n ** 18n],
+        get_dy: [
+          [0n, 0n, 0n],
+          [0n, 0n, 0n],
+          [0n, 2n * 10n ** 18n, 0n]
+        ]
+      },
+      [TOKEN_A]: { decimals: 18 },
+      [TOKEN_B]: { decimals: 18 },
+      [TOKEN_C]: { decimals: 18 }
+    }
+
+    const result = await priceWith(
+      curveAdapter(adapterOptions(divergentReads)),
+      { [TOKEN_A]: 0.001, [TOKEN_B]: 100 },
+      LP
+    )
+
+    expect(result.path?.priceUsd).toBeCloseTo(110.01)
+    expect(result.path?.metadata.derivedCoins).toEqual([
+      {
+        coinIndex: 2,
+        address: TOKEN_C,
+        anchorCoinIndex: 1,
+        anchorAddress: TOKEN_B,
+        dxRaw: '1000000000000000000',
+        getDyRaw: '2000000000000000000'
+      }
+    ])
+  })
+
   it('derives every missing leg against one anchor', async () => {
     const multiReads = {
       [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
