@@ -8,6 +8,7 @@ export {
   parseTokenKey,
   SUPPORTED_CHAIN_NAMES
 } from './chains'
+export { chunk, runInGroups } from './collections'
 export { optionalResponseNumber, toResponseNumber } from './format'
 export {
   currentUtcDayEnd,
@@ -18,6 +19,7 @@ export {
   nowUnix,
   parseCliDate,
   pgTimestampToUnix,
+  toFetchTimestamp,
   toUnixSeconds,
   unixToIsoTimestamp
 } from './time'

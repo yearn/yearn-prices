@@ -16,7 +16,8 @@
     "migrate:create": "db-migrate create --config ./database.json --sql-file --env dev",
     "migrate:down": "PGSSLMODE=require db-migrate down --config ./database.json --env dev",
     "warmup": "bun run scripts/warmup-prices.ts",
-    "backfill:token-address-checksums": "bun run scripts/backfill-token-address-checksums.ts"
+    "backfill:token-address-checksums": "bun run scripts/backfill-token-address-checksums.ts",
+    "backfill:defillama-day-alignment": "bun run scripts/backfill-defillama-day-alignment.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "0.10.4",
