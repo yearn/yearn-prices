@@ -7,13 +7,13 @@ import {
   maybe,
   normalizedAddress,
   type OnchainAdapterOptions,
-  optionalChildren,
   rawState,
   recursiveInput,
+  requireChildren,
   tokenDecimals
 } from '../context'
 import { InvalidPricingError } from '../errors'
-import { calculatePoolNavPrice, scaledRaw } from '../math'
+import { calculatePoolNavPrice } from '../math'
 import { WRAPPED_NATIVE } from '../tokens'
 import type { RecursivePriceAdapter, RecursivePriceTarget } from '../types'
 
@@ -21,8 +21,6 @@ const CURVE_ADDRESS_PROVIDER = '0x0000000022D53366457F9d5E68Ec105046FC4383' as A
 const CURVE_NATIVE_TOKEN = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
 const MAX_REGISTRY_ID = 12
 const MAX_COINS = 8
-/** Smallest share of pool value the priced anchor may hold and still be a price. */
-const MIN_ANCHOR_SHARE = 0.01
 
 const minterAbi = parseAbi(['function minter() view returns (address)'])
 const poolLpTokenAbi = parseAbi([
@@ -44,8 +42,6 @@ const coinIntAbi = parseAbi([
   'function coins(int128) view returns (address)',
   'function balances(int128) view returns (uint256)'
 ])
-const getDyUintAbi = parseAbi(['function get_dy(uint256,uint256,uint256) view returns (uint256)'])
-const getDyIntAbi = parseAbi(['function get_dy(int128,int128,uint256) view returns (uint256)'])
 
 interface CurveCoin {
   address: string
@@ -152,97 +148,6 @@ async function readCoinAddress(
   }
   const address = normalizedAddress(intAddress)
   return address ? { address, indexType: 'int128' } : null
-}
-
-async function readGetDy(
-  client: PublicClient,
-  poolAddress: Address,
-  fromIndex: number,
-  toIndex: number,
-  dxRaw: bigint,
-  blockNumber: bigint
-): Promise<bigint | null> {
-  const uintQuote = await maybe(() =>
-    client.readContract({
-      address: poolAddress,
-      abi: getDyUintAbi,
-      functionName: 'get_dy',
-      args: [BigInt(fromIndex), BigInt(toIndex), dxRaw],
-      blockNumber
-    })
-  )
-  if (uintQuote != null) {
-    return uintQuote
-  }
-  return maybe(() =>
-    client.readContract({
-      address: poolAddress,
-      abi: getDyIntAbi,
-      functionName: 'get_dy',
-      args: [BigInt(fromIndex), BigInt(toIndex), dxRaw],
-      blockNumber
-    })
-  )
-}
-
-/**
- * Values the coins the market cannot price by quoting one unit of each against
- * the most valuable priced reserve. The anchor carries the only market price behind
- * every derived leg, so a pool whose anchor holds a negligible share of its
- * value gets no price at all rather than one resting on dust.
- */
-async function deriveMissingLegs(
-  state: ContractContext,
-  poolAddress: Address,
-  coins: CurveCoin[],
-  marketPrices: Array<number | null>
-): Promise<{ prices: number[]; derivedCoins: Record<string, unknown>[] } | null> {
-  let anchorIndex = -1
-  let anchorValue = -1
-  marketPrices.forEach((price, index) => {
-    if (price == null || !Number.isFinite(price) || price <= 0) {
-      return
-    }
-    const value = scaledRaw(coins[index].balanceRaw, coins[index].decimals) * price
-    if (Number.isFinite(value) && value > anchorValue) {
-      anchorIndex = index
-      anchorValue = value
-    }
-  })
-  if (anchorIndex < 0) {
-    return null
-  }
-  const anchorPrice = marketPrices[anchorIndex] as number
-
-  const prices = [...marketPrices]
-  const derivedCoins: Record<string, unknown>[] = []
-  for (const index of marketPrices.flatMap((price, i) => (price == null ? [i] : []))) {
-    const dxRaw = 10n ** BigInt(coins[index].decimals)
-    const getDyRaw = await readGetDy(state.client, poolAddress, index, anchorIndex, dxRaw, state.blockNumber)
-    if (getDyRaw == null || getDyRaw === 0n) {
-      return null
-    }
-    const derivedPrice = scaledRaw(getDyRaw, coins[anchorIndex].decimals) * anchorPrice
-    if (!Number.isFinite(derivedPrice) || derivedPrice <= 0) {
-      return null
-    }
-    prices[index] = derivedPrice
-    derivedCoins.push({
-      coinIndex: index,
-      address: coins[index].address,
-      anchorCoinIndex: anchorIndex,
-      anchorAddress: coins[anchorIndex].address,
-      dxRaw: rawState(dxRaw),
-      getDyRaw: rawState(getDyRaw)
-    })
-  }
-
-  const values = coins.map((coin, index) => scaledRaw(coin.balanceRaw, coin.decimals) * (prices[index] as number))
-  const totalValue = values.reduce((sum, value) => sum + value, 0)
-  if (!Number.isFinite(totalValue) || totalValue <= 0 || values[anchorIndex] / totalValue < MIN_ANCHOR_SHARE) {
-    return null
-  }
-  return { prices: prices as number[], derivedCoins }
 }
 
 function validCoinCount(value: bigint): number | null {
@@ -401,7 +306,7 @@ export function curveAdapter(options: OnchainAdapterOptions): RecursivePriceAdap
           functionName: 'totalSupply',
           blockNumber: state.blockNumber
         }),
-        optionalChildren(
+        requireChildren(
           context,
           target,
           coins.map((coin) => coin.address),
@@ -409,22 +314,12 @@ export function curveAdapter(options: OnchainAdapterOptions): RecursivePriceAdap
           'Curve constituent'
         )
       ])
-
-      const marketPrices = inputs.map((path) => path?.priceUsd ?? null)
-      const derived = marketPrices.some((price) => price == null)
-        ? await deriveMissingLegs(state, poolAddress as Address, coins, marketPrices)
-        : { prices: marketPrices as number[], derivedCoins: [] }
-      if (!derived) {
-        return null
-      }
-      const { prices, derivedCoins } = derived
-
       const metadata = {
         ...blockEvidence(state, target),
         poolAddress,
         coinCount: coinCount.count,
         coinCountSource: coinCount.source,
-        valuationRule: derivedCoins.length === 0 ? 'all-constituents-required' : 'get-dy-derived-constituents',
+        valuationRule: 'all-constituents-required',
         totalSupplyRaw: rawState(totalSupplyRaw),
         poolDecimals,
         coins: coins.map((coin) => ({
@@ -432,26 +327,21 @@ export function curveAdapter(options: OnchainAdapterOptions): RecursivePriceAdap
           onchainAddress: coin.onchainAddress,
           decimals: coin.decimals,
           balanceRaw: rawState(coin.balanceRaw)
-        })),
-        ...(derivedCoins.length > 0 ? { derivedCoins } : {})
+        }))
       }
       return {
         priceUsd: calculatePoolNavPrice(
-          coins.map((coin, index) => ({ ...coin, priceUsd: prices[index] })),
+          coins.map((coin, index) => ({ ...coin, priceUsd: inputs[index].priceUsd })),
           totalSupplyRaw,
           poolDecimals
         ),
         blockNumber: state.numericBlockNumber,
-        inputs: inputs.flatMap((path, index) =>
-          path
-            ? [
-                recursiveInput(path, {
-                  method: 'curve-reserve-nav',
-                  balanceRaw: rawState(coins[index].balanceRaw),
-                  decimals: coins[index].decimals
-                })
-              ]
-            : []
+        inputs: inputs.map((path, index) =>
+          recursiveInput(path, {
+            method: 'curve-reserve-nav',
+            balanceRaw: rawState(coins[index].balanceRaw),
+            decimals: coins[index].decimals
+          })
         ),
         metadata
       }
