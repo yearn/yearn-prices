@@ -57,6 +57,7 @@ const stats: WarmupStats = {
 let pool: ReturnType<typeof createPool>
 let defiLlama: DefiLlamaClient
 
+const DEFI_LLAMA_ALIAS_ADAPTER = 'defillama-alias'
 const REQUEST_GROUP_SIZE = 5
 const REQUEST_GROUP_DELAY_MS = 200
 
@@ -294,7 +295,8 @@ function onchainFailureReport(
 
 function inlineOnchainFailureReport(
   category: OnchainFailureCategory,
-  request: HistoricalRequestTuple
+  request: HistoricalRequestTuple,
+  attempts: OnchainFailureAttempt[] = []
 ): OnchainFailureReport {
   return {
     category,
@@ -302,7 +304,7 @@ function inlineOnchainFailureReport(
     chain: request.chain,
     timestamp: request.timestamp,
     deepestFailedToken: request.token,
-    attempts: []
+    attempts
   }
 }
 
@@ -350,14 +352,27 @@ function groupMissingRequests(requests: HistoricalRequestTuple[], existing: Set<
   return grouped
 }
 
-async function warmDirectPrices(
+export interface DirectWarmupDeps {
+  pool: typeof pool
+  defiLlama: DefiLlamaClient
+  getExisting: typeof getExistingExactTimestamps
+  insert: typeof insertTokenPrices
+}
+
+function defaultDirectWarmupDeps(): DirectWarmupDeps {
+  return { pool, defiLlama, getExisting: getExistingExactTimestamps, insert: insertTokenPrices }
+}
+
+export async function warmDirectPrices(
   vaults: NormalizedVault[],
   timestamps: number[],
   stats: WarmupStats,
-  transientFailures: Set<string>
+  transientFailures: Set<string>,
+  deps: DirectWarmupDeps = defaultDirectWarmupDeps()
 ): Promise<void> {
+  const { pool: db, defiLlama: llama, getExisting, insert } = deps
   const requests = buildDirectRequests(vaults, timestamps)
-  const existing = await getExistingExactTimestamps(pool, requests, 'defillama')
+  const existing = await getExisting(db, requests, 'defillama')
   stats.cacheHits += [...existing].filter((key) => {
     const timestamp = Number(key.slice(key.lastIndexOf(':') + 1))
     return !isTodayNormalized(timestamp)
@@ -369,7 +384,7 @@ async function warmDirectPrices(
   await runInGroups(payloads, REQUEST_GROUP_SIZE, REQUEST_GROUP_DELAY_MS, async (payload) => {
     stats.apiCalls += 1
     try {
-      const response = await defiLlama.getBatchHistorical(payload)
+      const response = await llama.getBatchHistorical(payload)
       const writes: TokenPriceWrite[] = []
 
       for (const [tokenKey, requestedTimestamps] of Object.entries(payload)) {
@@ -381,7 +396,7 @@ async function warmDirectPrices(
         }
       }
 
-      await insertTokenPrices(pool, writes)
+      await insert(db, writes)
       stats.insertedDirect += writes.length
     } catch (error) {
       stats.failures += 1
@@ -410,12 +425,32 @@ export interface OnchainWarmupDeps {
 export async function resolveAliasRoot(
   resolver: MarketPriceResolver,
   target: RecursivePriceTarget
-): Promise<{ path: ResolvedPricePath | null; retryable: boolean }> {
+): Promise<{ path: ResolvedPricePath | null; retryable: boolean; error?: unknown }> {
   try {
     return { path: await resolver(target), retryable: false }
   } catch (error) {
-    return { path: null, retryable: error instanceof ApiError || isRetryablePricingError(error) }
+    console.error(
+      'Alias lookup failed',
+      { chainId: target.chainId, token: target.token, timestamp: target.timestamp },
+      error
+    )
+    return { path: null, retryable: error instanceof ApiError || isRetryablePricingError(error), error }
   }
+}
+
+function aliasFailureAttempts(token: string, retryable: boolean, error: unknown): OnchainFailureAttempt[] {
+  if (error === undefined) {
+    return []
+  }
+  return [
+    {
+      token,
+      adapter: DEFI_LLAMA_ALIAS_ADAPTER,
+      reason: retryable ? 'retryable' : 'unsupported',
+      error: error instanceof Error ? error.message : String(error),
+      cause: error
+    }
+  ]
 }
 
 function defaultOnchainWarmupDeps(): OnchainWarmupDeps {
@@ -493,8 +528,9 @@ export async function warmOnchainPrices(
         await persist([alias.path])
         return
       }
+      const aliasAttempts = aliasFailureAttempts(request.token, alias.retryable, alias.error)
       if (alias.retryable) {
-        fail('retryable', inlineOnchainFailureReport('retryable', request))
+        fail('retryable', inlineOnchainFailureReport('retryable', request, aliasAttempts))
         return
       }
 
@@ -503,7 +539,7 @@ export async function warmOnchainPrices(
 
       if (!result.path) {
         const report = onchainFailureReport(request.chain, request.token, request.timestamp, result.failure)
-        fail(report.category, report)
+        fail(report.category, { ...report, attempts: [...aliasAttempts, ...report.attempts] })
         // Underlyings that did resolve are still prices worth keeping; the next
         // run reads them from the DB instead of fetching them again.
         await persist(pricer.resolvedPaths(), false)

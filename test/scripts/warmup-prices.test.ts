@@ -11,6 +11,7 @@ import {
   resolvedPathTokenPriceWrites,
   type WarmupStats,
   warmCurveFallbackPrices,
+  warmDirectPrices,
   warmOnchainPrices
 } from '../../scripts/warmup-prices'
 import { ApiError } from '../../src/http/errors'
@@ -508,12 +509,15 @@ describe('resolveAliasRoot', () => {
     [new ApiError('RATE_LIMITED', 'boom'), true],
     [new RetryablePricingError('rpc down'), true],
     [new Error('bug'), false]
-  ])('classifies %s as retryable=%s', async (error, retryable) => {
+  ])('classifies %s as retryable=%s and logs it', async (error, retryable) => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
     await expect(
       resolveAliasRoot(async () => {
         throw error
       }, target)
-    ).resolves.toEqual({ path: null, retryable })
+    ).resolves.toEqual({ path: null, retryable, error })
+    expect(logged).toHaveBeenCalledWith('Alias lookup failed', { chainId: 1, token: ROOT, timestamp: 100 }, error)
+    logged.mockRestore()
   })
 })
 
@@ -548,5 +552,62 @@ describe('warmCurveFallbackPrices', () => {
 
   it('fills every slot when nothing is stored', async () => {
     expect(await run(new Set())).toBe(2)
+  })
+})
+
+describe('transient failure keys', () => {
+  it('writes keys that warmOnchainPrices reads back as retryable', async () => {
+    const day = normalizeToEndOfDay(1_700_000_000)
+    const today = normalizeToEndOfDay(Math.floor(Date.now() / 1000))
+    const transientFailures = new Set<string>()
+    const stats = makeStats()
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const warns = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const directDeps: DirectWarmupDeps = {
+      pool: {} as DirectWarmupDeps['pool'],
+      defiLlama: {
+        getBatchHistorical: async () => {
+          throw new Error('defillama down')
+        }
+      } as unknown as DirectWarmupDeps['defiLlama'],
+      getExisting: async () => new Set<string>(),
+      insert: async () => {}
+    }
+    await warmDirectPrices([makeVault()], [day, today], stats, transientFailures, directDeps)
+
+    // Today's slot is fetched at `now`, so its key only matches what
+    // warmOnchainPrices reads if the write side normalizes it back to the day.
+    expect([...transientFailures].sort()).toEqual(
+      [
+        `ethereum:${VAULT_TOKEN}:${day}`,
+        `ethereum:${UNDERLYING_TOKEN}:${day}`,
+        `ethereum:${VAULT_TOKEN}:${today}`,
+        `ethereum:${UNDERLYING_TOKEN}:${today}`
+      ].sort()
+    )
+
+    let priced = 0
+    await warmOnchainPrices(
+      [makeVault()],
+      [day],
+      stats,
+      transientFailures,
+      makeDeps({
+        makePricer: () => ({
+          resolvePath: async (target) => {
+            priced += 1
+            return { path: successPath(target), failure: null }
+          },
+          resolvedPaths: () => []
+        })
+      })
+    )
+    errors.mockRestore()
+    warns.mockRestore()
+
+    expect(priced).toBe(0)
+    expect(stats.onchainRetryable).toBe(2)
+    expect(stats.onchainNotFound).toBe(0)
   })
 })
