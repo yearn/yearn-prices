@@ -62,6 +62,7 @@ export async function getBatchHistoricalPrices(
        AND tp.token = r.token
        AND tp.timestamp = r.timestamp
       WHERE tp.source = $${sourceIndex}
+        AND tp.price > 0
       ORDER BY tp.chain, tp.token, tp.timestamp
     `
   } else {
@@ -73,6 +74,7 @@ export async function getBatchHistoricalPrices(
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp = r.timestamp
+      WHERE tp.price > 0
       ORDER BY tp.chain, tp.token, tp.timestamp, ${buildSourceCaseExpression()}
     `
   }
@@ -120,6 +122,7 @@ export async function getRangeHistoricalPrices(
        AND tp.token = r.token
        AND tp.timestamp BETWEEN r.start_timestamp AND r.end_timestamp
       WHERE tp.source = $${sourceIndex}
+        AND tp.price > 0
       ORDER BY tp.chain, tp.token, tp.timestamp
     `
   } else {
@@ -131,6 +134,7 @@ export async function getRangeHistoricalPrices(
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp BETWEEN r.start_timestamp AND r.end_timestamp
+      WHERE tp.price > 0
       ORDER BY tp.chain, tp.token, tp.timestamp, ${buildSourceCaseExpression()}
     `
   }
