@@ -1,0 +1,23 @@
+name: Claude code review
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  review:
+    # Coarse trigger filter, not a security gate: the reusable workflow keeps
+    # all four gates and still enforces write access; the author_association
+    # check here is only a coarse pre-filter. It matches the two accepted
+    # commands exactly so a near-miss comment cannot claim the concurrency
+    # group and cancel a review in flight.
+    if: ${{ github.event.issue.pull_request && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) && (github.event.comment.body == '/review' || github.event.comment.body == '/review-workflow' || startsWith(github.event.comment.body, '/review ') || startsWith(github.event.comment.body, '/review-workflow ')) }}
+    concurrency:
+      group: claude-review-${{ github.event.issue.number }}
+      cancel-in-progress: true
+    uses: yearn/yearn-gha/.github/workflows/claude-code-review.yml@83bcb6d810e9e53f29e334ae200ab19f125d13bd
