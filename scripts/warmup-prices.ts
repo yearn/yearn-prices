@@ -402,7 +402,7 @@ export interface OnchainWarmupDeps {
  * A transient alias failure must not reach the engine as absence: the root would
  * then be reported not-found when the price only failed to load.
  */
-async function resolveAliasRoot(
+export async function resolveAliasRoot(
   resolver: MarketPriceResolver,
   target: RecursivePriceTarget
 ): Promise<{ path: ResolvedPricePath | null; retryable: boolean }> {
@@ -543,13 +543,12 @@ async function warmCurveFallbackPrices(
     }
   }
 
-  const [existingDefillama, existingCurve] = await Promise.all([
-    getExistingExactTimestamps(pool, requests, 'defillama'),
-    getExistingExactTimestamps(pool, requests, 'curve')
-  ])
+  // Any source counts: warmOnchainPrices may already have priced this LP token
+  // (derived, alias, oracle...), and re-fetching it burns RPC and API calls.
+  const existing = await getExistingExactTimestamps(pool, requests)
   const missing = requests.filter((request) => {
     const key = `${request.chain}:${request.token}:${request.timestamp}`
-    return isTodayNormalized(request.timestamp) || (!existingDefillama.has(key) && !existingCurve.has(key))
+    return isTodayNormalized(request.timestamp) || !existing.has(key)
   })
 
   await runInGroups(missing, REQUEST_GROUP_SIZE, REQUEST_GROUP_DELAY_MS, async (request) => {

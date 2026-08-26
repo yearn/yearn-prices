@@ -142,7 +142,7 @@ export async function getRangeHistoricalPrices(
 export async function getExistingExactTimestamps(
   pool: Pool,
   requests: HistoricalRequestTuple[],
-  source: PriceSource
+  source?: PriceSource
 ): Promise<Set<string>> {
   if (requests.length === 0) {
     return new Set()

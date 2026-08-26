@@ -6,11 +6,13 @@ import {
   flattenResolvedPricePath,
   type NormalizedVault,
   type OnchainWarmupDeps,
+  resolveAliasRoot,
   resolvedPathTokenPriceWrites,
   type WarmupStats,
   warmOnchainPrices
 } from '../../scripts/warmup-prices'
-import { RecursiveDependencyError } from '../../src/sources/onchain/errors'
+import { ApiError } from '../../src/http/errors'
+import { RecursiveDependencyError, RetryablePricingError } from '../../src/sources/onchain/errors'
 import type {
   PriceResolutionFailure,
   RecursivePriceResult,
@@ -452,5 +454,30 @@ describe('warmOnchainPrices orchestration', () => {
     expect(writes).toEqual([LEAF])
     expect(stats.onchainWrites).toBe(1)
     expect(stats.onchainNotFound).toBe(1)
+  })
+})
+
+describe('resolveAliasRoot', () => {
+  const target: RecursivePriceTarget = { chainId: 1, token: ROOT, timestamp: 100 }
+
+  it('returns the path when the alias resolves', async () => {
+    const resolved = successPath(target)
+    expect(await resolveAliasRoot(async () => resolved, target)).toEqual({ path: resolved, retryable: false })
+  })
+
+  it('returns a non-retryable miss when the alias has no price', async () => {
+    expect(await resolveAliasRoot(async () => null, target)).toEqual({ path: null, retryable: false })
+  })
+
+  it.each([
+    [new ApiError('RATE_LIMITED', 'boom'), true],
+    [new RetryablePricingError('rpc down'), true],
+    [new Error('bug'), false]
+  ])('classifies %s as retryable=%s', async (error, retryable) => {
+    await expect(
+      resolveAliasRoot(async () => {
+        throw error
+      }, target)
+    ).resolves.toEqual({ path: null, retryable })
   })
 })
