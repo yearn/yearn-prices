@@ -428,6 +428,39 @@ describe('warmOnchainPrices orchestration', () => {
     expect(lines.filter((line) => line.startsWith('[not-found]'))).toHaveLength(2)
   })
 
+  it('dates a standalone resolved child by its observed day, not the requested one', async () => {
+    const stats = makeStats()
+    const writes: { token: string; timestamp: number }[] = []
+    const observed = normalizeToEndOfDay(1_700_000_000 - 86_400)
+    const resolvedLeaf: ResolvedPricePath = {
+      ...successPath({ chainId: 1, token: LEAF, timestamp: 100 }),
+      observedTimestamp: observed,
+      source: 'defillama'
+    }
+    await warmOnchainPrices(
+      [makeVault()],
+      timestamps,
+      stats,
+      new Set(),
+      makeDeps({
+        getBatch: async () => [existingRecord(VAULT_TOKEN, 100)],
+        insert: async (_pool, batch) => {
+          for (const write of batch) {
+            writes.push({ token: write.token, timestamp: write.timestamp })
+          }
+        },
+        makePricer: () => ({
+          resolvePath: async (): Promise<RecursivePriceResult> => ({
+            path: null,
+            failure: { reason: 'unsupported', token: UNDERLYING_TOKEN, attempts: [] }
+          }),
+          resolvedPaths: () => [resolvedLeaf]
+        })
+      })
+    )
+    expect(writes).toEqual([{ token: LEAF, timestamp: observed }])
+  })
+
   it('persists underlyings that resolved even when the requested token failed', async () => {
     const stats = makeStats()
     const writes: string[] = []

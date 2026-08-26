@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { RecursivePriceEngine } from '../../../src/sources/onchain/engine'
-import { InvalidPricingError, RetryablePricingError } from '../../../src/sources/onchain/errors'
+import { MARKET_PRICE_ADAPTER, RecursivePriceEngine } from '../../../src/sources/onchain/engine'
+import {
+  InvalidPricingError,
+  RecursiveDependencyError,
+  RetryablePricingError
+} from '../../../src/sources/onchain/errors'
 import type { MarketPriceResolver, RecursivePriceAdapter, ResolvedPricePath } from '../../../src/sources/onchain/types'
 
 const SHARE = '0x1111111111111111111111111111111111111111'
@@ -364,5 +368,44 @@ describe('RecursivePriceEngine', () => {
 
     expect(result.failure).toBeNull()
     expect(result.path?.priceUsd).toBe(7)
+  })
+
+  it('keeps a resolved child path when the root fails afterward', async () => {
+    const OTHER = '0xdddddddddddddddddddddddddddddddddddddddd'
+    const root: RecursivePriceAdapter = {
+      name: 'root',
+      async resolve(target, context) {
+        if (target.token.toLowerCase() !== SHARE) return null
+        const child = await context.require({ ...target, token: UNDERLYING }, 'child')
+        await context.require({ ...target, token: OTHER }, 'other')
+        return { priceUsd: child.priceUsd, inputs: [{ path: child }], metadata: {} }
+      }
+    }
+    const engine = new RecursivePriceEngine(marketFor({ [UNDERLYING]: 2 }), [root])
+
+    const result = await engine.resolve({ chainId: 1, token: SHARE, timestamp: null })
+
+    expect(result.path).toBeNull()
+    expect(result.failure).not.toBeNull()
+    const paths = engine.resolvedPaths()
+    expect(paths).toHaveLength(1)
+    expect(paths[0]).toMatchObject({ token: UNDERLYING, priceUsd: 2 })
+  })
+
+  it('reports the market source names when a child market lookup misses', async () => {
+    const wrapper = wrapperAdapter(1.5)
+    const resolver: MarketPriceResolver = marketFor({})
+    resolver.sourceNames = ['db', 'defillama']
+    const engine = new RecursivePriceEngine(resolver, [wrapper])
+
+    const result = await engine.resolve({ chainId: 1, token: SHARE, timestamp: null })
+
+    const outerCause = result.failure?.attempts[0]?.cause
+    expect(outerCause).toBeInstanceOf(RecursiveDependencyError)
+    const childFailure = (outerCause as RecursiveDependencyError).failure
+    const marketAttempt = childFailure.attempts.find((entry) => entry.adapter === MARKET_PRICE_ADAPTER)
+    expect(marketAttempt?.reason).toBe('unsupported')
+    expect(marketAttempt?.error).toContain('db')
+    expect(marketAttempt?.error).toContain('defillama')
   })
 })

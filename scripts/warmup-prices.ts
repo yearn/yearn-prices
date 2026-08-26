@@ -198,7 +198,12 @@ export function flattenResolvedPricePath(path: ResolvedPricePath): ResolvedPathN
   return nodes
 }
 
-export function resolvedPathTokenPriceWrites(path: ResolvedPricePath): TokenPriceWrite[] {
+/**
+ * `rootFillsRequestedDay` is false for a child persisted on its own after the
+ * requested token failed: it is not the gap being filled, so it keeps the day
+ * its market source observed instead of the requested one.
+ */
+export function resolvedPathTokenPriceWrites(path: ResolvedPricePath, rootFillsRequestedDay = true): TokenPriceWrite[] {
   const writes = new Map<string, TokenPriceWrite>()
   const requestedTimestamp = path.requestedTimestamp ?? path.observedTimestamp
 
@@ -210,7 +215,7 @@ export function resolvedPathTokenPriceWrites(path: ResolvedPricePath): TokenPric
     if (!chain) {
       continue
     }
-    const marketSourced = node !== path && node.source !== 'derived'
+    const marketSourced = (node !== path || !rootFillsRequestedDay) && node.source !== 'derived'
     const timestamp = marketSourced ? normalizeToEndOfDay(node.observedTimestamp) : requestedTimestamp
     const key = `${chain}:${node.token.toLowerCase()}:${timestamp}`
     if (writes.has(key)) {
@@ -458,8 +463,8 @@ export async function warmOnchainPrices(
   const resolver = marketPriceResolver(createChildMarketSources(llama, db))
   const aliasResolver = marketPriceResolver([createDefiLlamaAliasHistoricalSource(llama)])
 
-  const persist = async (paths: ResolvedPricePath[]): Promise<void> => {
-    const writes = paths.flatMap(resolvedPathTokenPriceWrites)
+  const persist = async (paths: ResolvedPricePath[], rootFillsRequestedDay = true): Promise<void> => {
+    const writes = paths.flatMap((path) => resolvedPathTokenPriceWrites(path, rootFillsRequestedDay))
     if (writes.length === 0) {
       return
     }
@@ -501,7 +506,7 @@ export async function warmOnchainPrices(
         fail(report.category, report)
         // Underlyings that did resolve are still prices worth keeping; the next
         // run reads them from the DB instead of fetching them again.
-        await persist(pricer.resolvedPaths())
+        await persist(pricer.resolvedPaths(), false)
         return
       }
 
