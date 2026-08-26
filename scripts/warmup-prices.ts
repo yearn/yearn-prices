@@ -383,8 +383,24 @@ export async function warmDirectPrices(
 
   await runInGroups(payloads, REQUEST_GROUP_SIZE, REQUEST_GROUP_DELAY_MS, async (payload) => {
     stats.apiCalls += 1
+    let response: Awaited<ReturnType<DefiLlamaClient['getBatchHistorical']>>
     try {
-      const response = await llama.getBatchHistorical(payload)
+      response = await llama.getBatchHistorical(payload)
+    } catch (error) {
+      // Only a fetch failure leaves the price unknown. A write failure must not
+      // mark the request transient, or the on-chain phase skips a token it
+      // could still price this run.
+      stats.failures += 1
+      for (const [tokenKey, fetchTimestamps] of Object.entries(payload)) {
+        for (const fetchTimestamp of fetchTimestamps) {
+          transientFailures.add(`${tokenKey}:${normalizeToEndOfDay(fetchTimestamp)}`)
+        }
+      }
+      console.error('DeFiLlama batch failed', payload, error)
+      return
+    }
+
+    try {
       const writes: TokenPriceWrite[] = []
 
       for (const [tokenKey, requestedTimestamps] of Object.entries(payload)) {
@@ -400,12 +416,7 @@ export async function warmDirectPrices(
       stats.insertedDirect += writes.length
     } catch (error) {
       stats.failures += 1
-      for (const [tokenKey, fetchTimestamps] of Object.entries(payload)) {
-        for (const fetchTimestamp of fetchTimestamps) {
-          transientFailures.add(`${tokenKey}:${normalizeToEndOfDay(fetchTimestamp)}`)
-        }
-      }
-      console.error('DeFiLlama batch failed', payload, error)
+      console.error('DeFiLlama write failed', payload, error)
     }
   })
 }

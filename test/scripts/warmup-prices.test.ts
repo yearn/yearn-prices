@@ -785,3 +785,28 @@ describe('warmDerivedVaultPrices', () => {
     expect(reads).toBe(0)
   })
 })
+
+describe('warmDirectPrices write failures', () => {
+  it('does not mark a request transient when only the insert fails', async () => {
+    const day = normalizeToEndOfDay(1_700_000_000)
+    const transientFailures = new Set<string>()
+    const stats = makeStats()
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const warns = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await warmDirectPrices([makeVault()], [day], stats, transientFailures, {
+      pool: {} as DirectWarmupDeps['pool'],
+      defiLlama: {
+        getBatchHistorical: async () => ({ coins: {} })
+      } as unknown as DirectWarmupDeps['defiLlama'],
+      getExisting: async () => new Set<string>(),
+      insert: async () => {
+        throw new Error('connection terminated unexpectedly')
+      }
+    })
+    errors.mockRestore()
+    warns.mockRestore()
+
+    expect([...transientFailures]).toEqual([])
+    expect(stats.failures).toBe(1)
+  })
+})
