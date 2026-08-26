@@ -10,6 +10,20 @@ function pool(rows: unknown[]): Pool {
 }
 
 describe('createDbHistoricalSource', () => {
+  it('surfaces a query failure as retryable instead of an absent price', async () => {
+    const failing = {
+      query: vi.fn(async () => {
+        throw new Error('connection terminated unexpectedly')
+      })
+    } as unknown as Pool
+    const source = createDbHistoricalSource(failing)
+
+    await expect(source.getHistoricalPrice(1, ADDRESS, TIMESTAMP)).rejects.toMatchObject({
+      name: 'ApiError',
+      code: 'UNAVAILABLE'
+    })
+  })
+
   it('returns a stored price with its original source', async () => {
     const source = createDbHistoricalSource(
       pool([
