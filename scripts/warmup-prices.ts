@@ -568,12 +568,24 @@ export async function warmOnchainPrices(
 
 export interface CurveWarmupDeps {
   pool: typeof pool
+  defiLlama: DefiLlamaClient
   getExisting: typeof getExistingExactTimestamps
   getClient: typeof getChainClient
+  estimateBlock: typeof estimateBlockByTimestamp
+  priceLp: typeof priceCurveLpUsd
+  insert: typeof insertTokenPrices
 }
 
 function defaultCurveWarmupDeps(): CurveWarmupDeps {
-  return { pool, getExisting: getExistingExactTimestamps, getClient: getChainClient }
+  return {
+    pool,
+    defiLlama,
+    getExisting: getExistingExactTimestamps,
+    getClient: getChainClient,
+    estimateBlock: estimateBlockByTimestamp,
+    priceLp: priceCurveLpUsd,
+    insert: insertTokenPrices
+  }
 }
 
 export async function warmCurveFallbackPrices(
@@ -582,7 +594,7 @@ export async function warmCurveFallbackPrices(
   stats: WarmupStats,
   deps: CurveWarmupDeps = defaultCurveWarmupDeps()
 ): Promise<void> {
-  const { pool: db, getExisting, getClient } = deps
+  const { pool: db, defiLlama: llama, getExisting, getClient, estimateBlock, priceLp, insert } = deps
   // Underlying tokens DefiLlama can't price (e.g. old Curve LP tokens) leave a
   // gap that cascades into derived vault prices. Fill those from the Curve
   // pool's on-chain virtual price.
@@ -620,12 +632,12 @@ export async function warmCurveFallbackPrices(
         return
       }
 
-      const blockNumber = await estimateBlockByTimestamp(client, underlying.chainId, request.timestamp)
+      const blockNumber = await estimateBlock(client, underlying.chainId, request.timestamp)
 
-      const price = await priceCurveLpUsd(client, underlying.chainId, underlying.token, blockNumber, async (coin) => {
+      const price = await priceLp(client, underlying.chainId, underlying.token, blockNumber, async (coin) => {
         const coinKey = `${request.chain}:${coin}`
         stats.apiCalls += 1
-        const response = await defiLlama.getHistorical(toFetchTimestamp(request.timestamp, nowUnix()), [coinKey])
+        const response = await llama.getHistorical(toFetchTimestamp(request.timestamp, nowUnix()), [coinKey])
         return response.coins[coinKey]?.price ?? null
       })
 
@@ -634,7 +646,7 @@ export async function warmCurveFallbackPrices(
         return
       }
 
-      await insertTokenPrices(db, [
+      await insert(db, [
         {
           chain: request.chain,
           token: request.token,
@@ -653,11 +665,35 @@ export async function warmCurveFallbackPrices(
   })
 }
 
-async function warmDerivedVaultPrices(
+export interface DerivedWarmupDeps {
+  pool: typeof pool
+  getExisting: typeof getExistingExactTimestamps
+  getBatch: typeof getBatchHistoricalPrices
+  getClient: typeof getChainClient
+  estimateBlock: typeof estimateBlockByTimestamp
+  readSharePrice: typeof readVaultSharePrice
+  insert: typeof insertTokenPrices
+}
+
+function defaultDerivedWarmupDeps(): DerivedWarmupDeps {
+  return {
+    pool,
+    getExisting: getExistingExactTimestamps,
+    getBatch: getBatchHistoricalPrices,
+    getClient: getChainClient,
+    estimateBlock: estimateBlockByTimestamp,
+    readSharePrice: readVaultSharePrice,
+    insert: insertTokenPrices
+  }
+}
+
+export async function warmDerivedVaultPrices(
   vaults: NormalizedVault[],
   timestamps: number[],
-  stats: WarmupStats
+  stats: WarmupStats,
+  deps: DerivedWarmupDeps = defaultDerivedWarmupDeps()
 ): Promise<void> {
+  const { pool: db, getExisting, getBatch, getClient, estimateBlock, readSharePrice, insert } = deps
   const derivedRequests: HistoricalRequestTuple[] = []
   for (const vault of vaults) {
     for (const timestamp of timestamps) {
@@ -669,7 +705,7 @@ async function warmDerivedVaultPrices(
     }
   }
 
-  const existingDerived = await getExistingExactTimestamps(pool, derivedRequests, 'derived')
+  const existingDerived = await getExisting(db, derivedRequests, 'derived')
   const missingVaults = vaults.flatMap((vault) => {
     return timestamps
       .filter(
@@ -685,7 +721,7 @@ async function warmDerivedVaultPrices(
     timestamp
   }))
 
-  const underlyingPrices = await getBatchHistoricalPrices(pool, underlyingRequests)
+  const underlyingPrices = await getBatch(db, underlyingRequests)
   const underlyingMap = new Map(
     underlyingPrices.map((price) => [`${price.chain}:${price.token}:${price.timestamp}`, price])
   )
@@ -698,24 +734,18 @@ async function warmDerivedVaultPrices(
         return
       }
 
-      const client = getChainClient(vault.chainId)
+      const client = getClient(vault.chainId)
       if (!client) {
         console.warn(`gap:missing-rpc chainId=${vault.chainId}`)
         return
       }
 
-      const blockNumber = await estimateBlockByTimestamp(client, vault.chainId, timestamp)
+      const blockNumber = await estimateBlock(client, vault.chainId, timestamp)
 
-      const sharePrice = await readVaultSharePrice(
-        client,
-        vault.vaultToken,
-        vault.decimals,
-        vault.apiVersion,
-        blockNumber
-      )
+      const sharePrice = await readSharePrice(client, vault.vaultToken, vault.decimals, vault.apiVersion, blockNumber)
 
       const derivedPrice = underlying.price * sharePrice
-      await insertTokenPrices(pool, [
+      await insert(db, [
         {
           chain: vault.chain,
           token: vault.vaultToken,

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   type CurveWarmupDeps,
   categorizeOnchainFailure,
+  type DerivedWarmupDeps,
   type DirectWarmupDeps,
   deepestFailedToken,
   failureAttempts,
@@ -12,6 +13,7 @@ import {
   resolvedPathTokenPriceWrites,
   type WarmupStats,
   warmCurveFallbackPrices,
+  warmDerivedVaultPrices,
   warmDirectPrices,
   warmOnchainPrices
 } from '../../scripts/warmup-prices'
@@ -24,6 +26,7 @@ import type {
   RecursivePriceTarget,
   ResolvedPricePath
 } from '../../src/sources/onchain/types'
+import type { TokenPriceWrite } from '../../src/types'
 import { normalizeToEndOfDay } from '../../src/utils'
 
 const ROOT = '0x1111111111111111111111111111111111111111'
@@ -528,6 +531,18 @@ describe('resolveAliasRoot', () => {
   })
 })
 
+function curveDeps(): CurveWarmupDeps {
+  return {
+    pool: {} as CurveWarmupDeps['pool'],
+    defiLlama: {} as CurveWarmupDeps['defiLlama'],
+    getExisting: async () => new Set<string>(),
+    getClient: () => null,
+    estimateBlock: async () => 0n,
+    priceLp: async () => null,
+    insert: async () => {}
+  }
+}
+
 describe('warmCurveFallbackPrices', () => {
   const PRICED = 100
   const UNPRICED = 200
@@ -537,7 +552,7 @@ describe('warmCurveFallbackPrices', () => {
     let clients = 0
     const sources: (string | undefined)[] = []
     const deps: CurveWarmupDeps = {
-      pool: {} as CurveWarmupDeps['pool'],
+      ...curveDeps(),
       getExisting: async (_pool, _requests, source) => {
         sources.push(source)
         return existing
@@ -674,5 +689,99 @@ describe('alias lookup failures', () => {
     expect(stats.onchainRetryable).toBe(1)
     expect(stats.onchainNotFound).toBe(0)
     expect(lines.some((line) => line.includes('defillama-alias') && line.includes('slow down'))).toBe(true)
+  })
+})
+
+describe('warmCurveFallbackPrices insert path', () => {
+  it('prices an LP from the chain and inserts it as a curve price', async () => {
+    const stats = makeStats()
+    const inserted: TokenPriceWrite[] = []
+    const client = {} as ReturnType<CurveWarmupDeps['getClient']>
+    let coinPrice: number | null = null
+    await warmCurveFallbackPrices([makeVault()], [100], stats, {
+      ...curveDeps(),
+      defiLlama: {
+        getHistorical: async () => ({ coins: { 'ethereum:0xcoin': { price: 4 } } })
+      } as unknown as CurveWarmupDeps['defiLlama'],
+      getClient: () => client,
+      estimateBlock: async () => 7n,
+      priceLp: async (_client, _chainId, _token, blockNumber, priceCoin) => {
+        expect(blockNumber).toBe(7n)
+        coinPrice = await priceCoin('0xcoin')
+        return 1.5
+      },
+      insert: async (_pool, rows) => {
+        inserted.push(...rows)
+      }
+    })
+
+    expect(coinPrice).toBe(4)
+    expect(inserted).toEqual([
+      {
+        chain: 'ethereum',
+        token: UNDERLYING_TOKEN,
+        timestamp: 100,
+        price: 1.5,
+        symbol: null,
+        confidence: null,
+        source: 'curve'
+      }
+    ])
+    expect(stats.insertedCurve).toBe(1)
+    expect(stats.apiCalls).toBe(1)
+  })
+})
+
+describe('warmDerivedVaultPrices', () => {
+  function derivedDeps(): DerivedWarmupDeps {
+    return {
+      pool: {} as DerivedWarmupDeps['pool'],
+      getExisting: async () => new Set<string>(),
+      getBatch: async () => [],
+      getClient: () => ({}) as ReturnType<DerivedWarmupDeps['getClient']>,
+      estimateBlock: async () => 0n,
+      readSharePrice: async () => 1,
+      insert: async () => {}
+    }
+  }
+
+  it('multiplies the underlying price by the share price and writes it as derived', async () => {
+    const stats = makeStats()
+    const inserted: TokenPriceWrite[] = []
+    await warmDerivedVaultPrices([makeVault()], [100], stats, {
+      ...derivedDeps(),
+      getBatch: async () => [{ ...existingRecord(UNDERLYING_TOKEN, 100), price: 3 }],
+      readSharePrice: async () => 2,
+      insert: async (_pool, rows) => {
+        inserted.push(...rows)
+      }
+    })
+
+    expect(inserted).toEqual([
+      {
+        chain: 'ethereum',
+        token: VAULT_TOKEN,
+        timestamp: 100,
+        price: 6,
+        symbol: 'VLT',
+        confidence: null,
+        source: 'derived'
+      }
+    ])
+  })
+
+  it('skips a vault already priced as derived', async () => {
+    const stats = makeStats()
+    let reads = 0
+    await warmDerivedVaultPrices([makeVault()], [100], stats, {
+      ...derivedDeps(),
+      getExisting: async () => new Set([`ethereum:${VAULT_TOKEN}:100`]),
+      readSharePrice: async () => {
+        reads += 1
+        return 2
+      }
+    })
+
+    expect(reads).toBe(0)
   })
 })
