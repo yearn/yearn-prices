@@ -5,6 +5,7 @@ import { createChainlinkHistoricalSource } from '../../../src/sources/chainlink/
 import { fakeClient } from '../onchain/helpers'
 
 const TOKEN = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
+const ARBITRUM_USDC_TOKEN = '0xaf88d065e77c8cc2239327c5edb3a432268e5831'
 const FEED = getChainlinkFeed(1, TOKEN)
 
 if (!FEED) {
@@ -132,6 +133,71 @@ describe('ChainlinkHistoricalSource', () => {
         HISTORICAL_TIMESTAMP
       )
     ).rejects.toThrow()
+  })
+
+  it('scales a bigint decimals value into a concrete price', async () => {
+    await expect(source(123_456_789n, 1_700_000_000n, 8n).getHistoricalPrice(1, TOKEN, 1_700_000_000)).resolves.toEqual(
+      {
+        price: 1.23456789,
+        timestamp: 1_700_000_000,
+        symbol: 'ETH',
+        confidence: null
+      }
+    )
+  })
+
+  it('rejects when the block lookup fails on transport, instead of reading as no price', async () => {
+    const client = {
+      async getBlockNumber() {
+        return LATEST_BLOCK
+      },
+      async getBlock() {
+        throw Object.assign(new Error('HTTP request failed'), { name: 'HttpRequestError' })
+      },
+      async readContract() {
+        return 8
+      }
+    } as unknown as PublicClient
+
+    await expect(
+      createChainlinkHistoricalSource({ clientForChain: () => client }).getHistoricalPrice(
+        1,
+        TOKEN,
+        HISTORICAL_TIMESTAMP
+      )
+    ).rejects.toThrow()
+  })
+
+  it('prices a non-mainnet chain end to end', async () => {
+    const arbFeed = getChainlinkFeed(42161, ARBITRUM_USDC_TOKEN)
+    if (!arbFeed) {
+      throw new Error('Arbitrum USDC feed is not configured')
+    }
+
+    readBlocks = []
+    const client = historicalClient({
+      [arbFeed.address.toLowerCase()]: {
+        latestRoundData: [1n, 100_010_000n, BigInt(HISTORICAL_TIMESTAMP), BigInt(HISTORICAL_TIMESTAMP), 1n],
+        decimals: 8
+      }
+    })
+
+    const chainIds: number[] = []
+    const result = await createChainlinkHistoricalSource({
+      clientForChain: (chainId) => {
+        chainIds.push(chainId)
+        return client
+      }
+    }).getHistoricalPrice(42161, ARBITRUM_USDC_TOKEN, HISTORICAL_TIMESTAMP)
+
+    expect(chainIds).toContain(42161)
+    expect(result).toEqual({
+      price: 1.0001,
+      timestamp: HISTORICAL_TIMESTAMP,
+      symbol: 'USDC',
+      confidence: null
+    })
+    expect(new Set(readBlocks)).toEqual(new Set([LATEST_BLOCK / 2n]))
   })
 
   it('returns null when the feed reverts at that block', async () => {

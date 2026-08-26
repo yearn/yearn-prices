@@ -48,20 +48,21 @@ export class ChainlinkHistoricalSource extends HistoricalPriceSourceBase {
 
     const blockNumber = await estimateBlockByTimestamp(client, chainId, timestamp)
 
+    const block = await client.getBlock({ blockNumber })
+
     // A feed that reverts at this block is not deployed yet: let another
     // source answer instead of failing the whole request.
     const reads = await maybe(() =>
       Promise.all([
         client.readContract({ address: feed.address, abi: FEED_ABI, functionName: 'latestRoundData', blockNumber }),
-        client.readContract({ address: feed.address, abi: FEED_ABI, functionName: 'decimals', blockNumber }),
-        client.getBlock({ blockNumber })
+        client.readContract({ address: feed.address, abi: FEED_ABI, functionName: 'decimals', blockNumber })
       ])
     )
     if (!reads) {
       return null
     }
 
-    const [roundData, decimals, block] = reads
+    const [roundData, decimals] = reads
 
     const updatedAt = Number(roundData[3])
     if (updatedAt + MAX_STALENESS_SECONDS < Number(block.timestamp)) {
