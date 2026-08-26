@@ -1,8 +1,8 @@
-import { type PublicClient, parseAbi } from 'viem'
+import { parseAbi } from 'viem'
 import { estimateBlockByTimestamp, getChainClient } from '../../clients/rpc'
 import type { Env } from '../../types'
 import { HistoricalPriceSourceBase } from '../base'
-import { maybe } from '../onchain/context'
+import { type ClientForChain, maybe } from '../onchain/context'
 import type { HistoricalPriceResult } from '../types'
 import { getChainlinkFeed, hasChainlinkFeeds } from './feeds'
 
@@ -13,7 +13,7 @@ const FEED_ABI = parseAbi([
   'function decimals() view returns (uint8)'
 ])
 
-export type ChainlinkClientForChain = (chainId: number) => PublicClient | null
+export type ChainlinkClientForChain = ClientForChain
 
 export interface ChainlinkHistoricalSourceOptions {
   clientForChain?: ChainlinkClientForChain
@@ -68,7 +68,7 @@ export class ChainlinkHistoricalSource extends HistoricalPriceSourceBase {
       return null
     }
 
-    const price = Number(roundData[1]) / 10 ** decimals
+    const price = Number(roundData[1]) / 10 ** Number(decimals)
     if (!this.isUsablePrice(price, updatedAt)) {
       return null
     }

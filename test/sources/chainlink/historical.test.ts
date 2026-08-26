@@ -11,7 +11,7 @@ if (!FEED) {
   throw new Error('Ethereum WETH feed is not configured')
 }
 
-function source(answer: bigint, updatedAt = 1_700_000_000n, decimals = 8) {
+function source(answer: bigint, updatedAt = 1_700_000_000n, decimals: number | bigint = 8n) {
   return createChainlinkHistoricalSource({
     clientForChain: () =>
       fakeClient({
@@ -69,6 +69,18 @@ describe('ChainlinkHistoricalSource', () => {
   it('returns null for a non-positive answer', async () => {
     await expect(source(0n).getHistoricalPrice(1, TOKEN, 1_700_000_000)).resolves.toBeNull()
     await expect(source(-1n).getHistoricalPrice(1, TOKEN, 1_700_000_000)).resolves.toBeNull()
+  })
+
+  it('supports a chain with feeds and a client', () => {
+    expect(source(1n).supports(1)).toBe(true)
+  })
+
+  it('does not support a chain without feeds', () => {
+    expect(source(1n).supports(999_999)).toBe(false)
+  })
+
+  it('does not support a chain without an rpc client', () => {
+    expect(createChainlinkHistoricalSource({ clientForChain: () => null }).supports(1)).toBe(false)
   })
 
   it('scales the answer by feed decimals', async () => {
