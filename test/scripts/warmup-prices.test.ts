@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  type CurveWarmupDeps,
   categorizeOnchainFailure,
   deepestFailedToken,
   failureAttempts,
@@ -9,6 +10,7 @@ import {
   resolveAliasRoot,
   resolvedPathTokenPriceWrites,
   type WarmupStats,
+  warmCurveFallbackPrices,
   warmOnchainPrices
 } from '../../scripts/warmup-prices'
 import { ApiError } from '../../src/http/errors'
@@ -479,5 +481,39 @@ describe('resolveAliasRoot', () => {
         throw error
       }, target)
     ).resolves.toEqual({ path: null, retryable })
+  })
+})
+
+describe('warmCurveFallbackPrices', () => {
+  const PRICED = 100
+  const UNPRICED = 200
+
+  async function run(existing: Set<string>): Promise<number> {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    let clients = 0
+    const sources: (string | undefined)[] = []
+    const deps: CurveWarmupDeps = {
+      pool: {} as CurveWarmupDeps['pool'],
+      getExisting: async (_pool, _requests, source) => {
+        sources.push(source)
+        return existing
+      },
+      getClient: () => {
+        clients += 1
+        return null
+      }
+    }
+    await warmCurveFallbackPrices([makeVault()], [PRICED, UNPRICED], makeStats(), deps)
+    warn.mockRestore()
+    expect(sources).toEqual([undefined])
+    return clients
+  }
+
+  it('skips an underlying already priced by any source and still fills the unpriced one', async () => {
+    expect(await run(new Set([`ethereum:${UNDERLYING_TOKEN}:${PRICED}`]))).toBe(1)
+  })
+
+  it('fills every slot when nothing is stored', async () => {
+    expect(await run(new Set())).toBe(2)
   })
 })

@@ -519,11 +519,23 @@ export async function warmOnchainPrices(
   printOnchainFailureReport(reports)
 }
 
-async function warmCurveFallbackPrices(
+export interface CurveWarmupDeps {
+  pool: typeof pool
+  getExisting: typeof getExistingExactTimestamps
+  getClient: typeof getChainClient
+}
+
+function defaultCurveWarmupDeps(): CurveWarmupDeps {
+  return { pool, getExisting: getExistingExactTimestamps, getClient: getChainClient }
+}
+
+export async function warmCurveFallbackPrices(
   vaults: NormalizedVault[],
   timestamps: number[],
-  stats: WarmupStats
+  stats: WarmupStats,
+  deps: CurveWarmupDeps = defaultCurveWarmupDeps()
 ): Promise<void> {
+  const { pool: db, getExisting, getClient } = deps
   // Underlying tokens DefiLlama can't price (e.g. old Curve LP tokens) leave a
   // gap that cascades into derived vault prices. Fill those from the Curve
   // pool's on-chain virtual price.
@@ -545,7 +557,7 @@ async function warmCurveFallbackPrices(
 
   // Any source counts: warmOnchainPrices may already have priced this LP token
   // (derived, alias, oracle...), and re-fetching it burns RPC and API calls.
-  const existing = await getExistingExactTimestamps(pool, requests)
+  const existing = await getExisting(db, requests)
   const missing = requests.filter((request) => {
     const key = `${request.chain}:${request.token}:${request.timestamp}`
     return isTodayNormalized(request.timestamp) || !existing.has(key)
@@ -555,7 +567,7 @@ async function warmCurveFallbackPrices(
     try {
       const underlying = underlyings.get(`${request.chain}:${request.token}`)!
 
-      const client = getChainClient(underlying.chainId)
+      const client = getClient(underlying.chainId)
       if (!client) {
         console.warn(`gap:missing-rpc chainId=${underlying.chainId}`)
         return
@@ -575,7 +587,7 @@ async function warmCurveFallbackPrices(
         return
       }
 
-      await insertTokenPrices(pool, [
+      await insertTokenPrices(db, [
         {
           chain: request.chain,
           token: request.token,
