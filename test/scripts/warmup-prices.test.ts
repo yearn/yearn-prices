@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   type CurveWarmupDeps,
   categorizeOnchainFailure,
+  type DirectWarmupDeps,
   deepestFailedToken,
   failureAttempts,
   flattenResolvedPricePath,
@@ -17,6 +18,7 @@ import {
 import { ApiError } from '../../src/http/errors'
 import { RecursiveDependencyError, RetryablePricingError } from '../../src/sources/onchain/errors'
 import type {
+  PriceResolutionAttempt,
   PriceResolutionFailure,
   RecursivePriceResult,
   RecursivePriceTarget,
@@ -105,7 +107,7 @@ describe('warmup on-chain helpers', () => {
   })
 
   it.each([
-    ['retryable', [], 'retryable'],
+    ['retryable', [] as PriceResolutionAttempt[], 'retryable'],
     ['budget', [], 'retryable'],
     ['invalid', [], 'invalid'],
     ['unsupported', [{ adapter: 'adapter', reason: 'unsupported', error: 'unsupported' }], 'unsupported'],
@@ -113,8 +115,8 @@ describe('warmup on-chain helpers', () => {
     ['max-depth', [], 'unsupported'],
     ['unsupported', [], 'not-found'],
     ['unsupported', [{ adapter: 'market-price', reason: 'unsupported', error: 'not found in db' }], 'not-found']
-  ] as const)('maps %s failures to %s', (reason, attempts, category) => {
-    expect(categorizeOnchainFailure({ reason, token: ROOT, attempts })).toBe(category)
+  ])('maps %s failures to %s', (reason, attempts, category) => {
+    expect(categorizeOnchainFailure({ reason, token: ROOT, attempts } as PriceResolutionFailure)).toBe(category)
   })
 
   it('writes market-sourced leaves under their own observed day and adapter nodes under the requested day', () => {
@@ -277,7 +279,7 @@ function makeVault(): NormalizedVault {
 }
 
 function existingRecord(token: string, timestamp: number) {
-  return { chain: 'ethereum', token, timestamp, price: 1, confidence: null, source: 'db' as const, symbol: null }
+  return { chain: 'ethereum', token, timestamp, price: 1, confidence: null, source: 'defillama' as const, symbol: null }
 }
 
 function successPath(target: RecursivePriceTarget): ResolvedPricePath {
@@ -297,10 +299,15 @@ function successPath(target: RecursivePriceTarget): ResolvedPricePath {
   }
 }
 
+function aliasSource(getHistoricalPrice: OnchainWarmupDeps['aliasSource']['getHistoricalPrice']) {
+  return { name: 'defillama-alias', priority: 30, supports: () => true, getHistoricalPrice }
+}
+
 function makeDeps(over: Partial<OnchainWarmupDeps>): OnchainWarmupDeps {
   return {
     pool: {} as OnchainWarmupDeps['pool'],
     defiLlama: {} as OnchainWarmupDeps['defiLlama'],
+    aliasSource: aliasSource(async () => null),
     getBatch: async () => [],
     insert: async () => {},
     makePricer: () => ({
@@ -609,5 +616,63 @@ describe('transient failure keys', () => {
     expect(priced).toBe(0)
     expect(stats.onchainRetryable).toBe(2)
     expect(stats.onchainNotFound).toBe(0)
+  })
+})
+
+describe('alias lookup failures', () => {
+  it('still resolves on-chain when the alias lookup fails transiently', async () => {
+    const stats = makeStats()
+    const writes: string[] = []
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    await warmOnchainPrices(
+      [makeVault()],
+      [100],
+      stats,
+      new Set(),
+      makeDeps({
+        getBatch: async () => [existingRecord(VAULT_TOKEN, 100)],
+        aliasSource: aliasSource(async () => {
+          throw new ApiError('RATE_LIMITED', 'slow down')
+        }),
+        insert: async (_pool, batch) => {
+          for (const write of batch) {
+            writes.push(write.token)
+          }
+        },
+        makePricer: () => ({
+          resolvePath: async (target) => ({ path: successPath(target), failure: null }),
+          resolvedPaths: () => []
+        })
+      })
+    )
+    errors.mockRestore()
+
+    expect(writes).toEqual([UNDERLYING_TOKEN])
+    expect(stats.onchainRetryable).toBe(0)
+  })
+
+  it('reports a transient alias failure as retryable when on-chain also fails', async () => {
+    const stats = makeStats()
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const warns = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await warmOnchainPrices(
+      [makeVault()],
+      [100],
+      stats,
+      new Set(),
+      makeDeps({
+        getBatch: async () => [existingRecord(VAULT_TOKEN, 100)],
+        aliasSource: aliasSource(async () => {
+          throw new ApiError('RATE_LIMITED', 'slow down')
+        })
+      })
+    )
+    const lines = warns.mock.calls.map((call) => String(call[0]))
+    errors.mockRestore()
+    warns.mockRestore()
+
+    expect(stats.onchainRetryable).toBe(1)
+    expect(stats.onchainNotFound).toBe(0)
+    expect(lines.some((line) => line.includes('defillama-alias') && line.includes('slow down'))).toBe(true)
   })
 })

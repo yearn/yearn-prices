@@ -12,7 +12,7 @@ const quote = {
   source: 'enso'
 }
 
-const mainnetOnly = [{ supports: (chainId: number) => chainId === 1 }]
+const mainnetOnly = [{ name: 'enso', supports: (chainId: number) => chainId === 1 }]
 
 describe('createMarketPriceResolver', () => {
   it('maps a market quote onto a resolved price path', async () => {

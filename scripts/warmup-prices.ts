@@ -26,6 +26,7 @@ import type {
   RecursivePriceTarget,
   ResolvedPricePath
 } from '../src/sources/onchain/types'
+import type { HistoricalPriceSource } from '../src/sources/types'
 import type { HistoricalRequestTuple, KongVaultListItem, TokenPriceWrite } from '../src/types'
 import {
   chainIdToName,
@@ -57,7 +58,6 @@ const stats: WarmupStats = {
 let pool: ReturnType<typeof createPool>
 let defiLlama: DefiLlamaClient
 
-const DEFI_LLAMA_ALIAS_ADAPTER = 'defillama-alias'
 const REQUEST_GROUP_SIZE = 5
 const REQUEST_GROUP_DELAY_MS = 200
 
@@ -413,6 +413,7 @@ export async function warmDirectPrices(
 export interface OnchainWarmupDeps {
   pool: typeof pool
   defiLlama: DefiLlamaClient
+  aliasSource: HistoricalPriceSource
   getBatch: typeof getBatchHistoricalPrices
   insert: typeof insertTokenPrices
   makePricer: (resolver: MarketPriceResolver) => Pick<OnchainPricer, 'resolvePath' | 'resolvedPaths'>
@@ -438,14 +439,19 @@ export async function resolveAliasRoot(
   }
 }
 
-function aliasFailureAttempts(token: string, retryable: boolean, error: unknown): OnchainFailureAttempt[] {
+function aliasFailureAttempts(
+  adapter: string,
+  token: string,
+  retryable: boolean,
+  error: unknown
+): OnchainFailureAttempt[] {
   if (error === undefined) {
     return []
   }
   return [
     {
       token,
-      adapter: DEFI_LLAMA_ALIAS_ADAPTER,
+      adapter,
       reason: retryable ? 'retryable' : 'unsupported',
       error: error instanceof Error ? error.message : String(error),
       cause: error
@@ -457,6 +463,7 @@ function defaultOnchainWarmupDeps(): OnchainWarmupDeps {
   return {
     pool,
     defiLlama,
+    aliasSource: createDefiLlamaAliasHistoricalSource(defiLlama),
     getBatch: getBatchHistoricalPrices,
     insert: insertTokenPrices,
     makePricer: (resolver) => new OnchainPricer({ marketPrice: resolver, clientForChain: getChainClient })
@@ -470,7 +477,7 @@ export async function warmOnchainPrices(
   transientFailures: Set<string>,
   deps: OnchainWarmupDeps = defaultOnchainWarmupDeps()
 ): Promise<void> {
-  const { pool: db, defiLlama: llama, getBatch, insert, makePricer } = deps
+  const { pool: db, defiLlama: llama, aliasSource, getBatch, insert, makePricer } = deps
   const requests = buildDirectRequests(vaults, timestamps)
   const existing = await getBatch(db, requests)
   const existingKeys = new Set(existing.map((price) => `${price.chain}:${price.token}:${price.timestamp}`))
@@ -496,7 +503,7 @@ export async function warmOnchainPrices(
   }
 
   const resolver = marketPriceResolver(createChildMarketSources(llama, db))
-  const aliasResolver = marketPriceResolver([createDefiLlamaAliasHistoricalSource(llama)])
+  const aliasResolver = marketPriceResolver([aliasSource])
 
   const persist = async (paths: ResolvedPricePath[], rootFillsRequestedDay = true): Promise<void> => {
     const writes = paths.flatMap((path) => resolvedPathTokenPriceWrites(path, rootFillsRequestedDay))
@@ -528,18 +535,17 @@ export async function warmOnchainPrices(
         await persist([alias.path])
         return
       }
-      const aliasAttempts = aliasFailureAttempts(request.token, alias.retryable, alias.error)
-      if (alias.retryable) {
-        fail('retryable', inlineOnchainFailureReport('retryable', request, aliasAttempts))
-        return
-      }
+      // A transient alias miss says nothing about the on-chain adapters, so the
+      // resolution still runs; only its own failure is reported as retryable.
+      const aliasAttempts = aliasFailureAttempts(aliasSource.name, request.token, alias.retryable, alias.error)
 
       const pricer = makePricer(resolver)
       const result = await pricer.resolvePath(target)
 
       if (!result.path) {
         const report = onchainFailureReport(request.chain, request.token, request.timestamp, result.failure)
-        fail(report.category, { ...report, attempts: [...aliasAttempts, ...report.attempts] })
+        const category = alias.retryable ? 'retryable' : report.category
+        fail(category, { ...report, category, attempts: [...aliasAttempts, ...report.attempts] })
         // Underlyings that did resolve are still prices worth keeping; the next
         // run reads them from the DB instead of fetching them again.
         await persist(pricer.resolvedPaths(), false)
