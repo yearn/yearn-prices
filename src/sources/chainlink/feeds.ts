@@ -5,6 +5,26 @@ export interface ChainlinkFeed {
   symbol: string
 }
 
+const OPTIMISM_USDC: ChainlinkFeed = {
+  address: '0x16a9FA2FDa030272Ce99B29CF780dFA30361E0f3',
+  symbol: 'USDC'
+}
+
+const GNOSIS_DAI: ChainlinkFeed = {
+  address: '0x678df3415fc31947dA4324eC63212874be5a82f8',
+  symbol: 'DAI'
+}
+
+const ARBITRUM_USDC: ChainlinkFeed = {
+  address: '0x50834F3163758fcC1Df9973b6e91f0F0F0434aD3',
+  symbol: 'USDC'
+}
+
+const KATANA_ETH: ChainlinkFeed = {
+  address: '0x7BdBDB772f4a073BadD676A567C6ED82049a8eEE',
+  symbol: 'ETH'
+}
+
 export const CHAINLINK_FEEDS: Readonly<Record<number, Readonly<Record<string, ChainlinkFeed>>>> = {
   1: {
     '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2': {
@@ -37,14 +57,8 @@ export const CHAINLINK_FEEDS: Readonly<Record<number, Readonly<Record<string, Ch
       address: '0xD702DD976Fb76Fffc2D3963D037dfDae5b04E593',
       symbol: 'BTC'
     },
-    '0x7f5c764cbc14f9669b88837ca1490cca17c31607': {
-      address: '0x16a9FA2FDa030272Ce99B29CF780dFA30361E0f3',
-      symbol: 'USDC'
-    },
-    '0x0b2c639c533813f4aa9d7837caf62653d097ff85': {
-      address: '0x16a9FA2FDa030272Ce99B29CF780dFA30361E0f3',
-      symbol: 'USDC'
-    },
+    '0x7f5c764cbc14f9669b88837ca1490cca17c31607': OPTIMISM_USDC,
+    '0x0b2c639c533813f4aa9d7837caf62653d097ff85': OPTIMISM_USDC,
     '0x94b008aa00579c1307b0ef2c499ad98a8ce58e58': {
       address: '0xECef79E109e997bCA29c1c0897ec9d7b03647F5E',
       symbol: 'USDT'
@@ -55,10 +69,7 @@ export const CHAINLINK_FEEDS: Readonly<Record<number, Readonly<Record<string, Ch
     }
   },
   100: {
-    '0xe91d153e0b41518a2ce8dd3d7944fa863463a97d': {
-      address: '0x678df3415fc31947dA4324eC63212874be5a82f8',
-      symbol: 'DAI'
-    },
+    '0xe91d153e0b41518a2ce8dd3d7944fa863463a97d': GNOSIS_DAI,
     '0x6a023ccd1ff6f2045c3309768ead9e68f978f6e1': {
       address: '0xa767f745331D267c7751297D982b050c93985627',
       symbol: 'ETH'
@@ -71,10 +82,7 @@ export const CHAINLINK_FEEDS: Readonly<Record<number, Readonly<Record<string, Ch
       address: '0x68811D7DF835B1c33e6EEae8E7C141eF48d48cc7',
       symbol: 'USDT'
     },
-    '0x44fa8e6f47987339850636f88629646662444217': {
-      address: '0x678df3415fc31947dA4324eC63212874be5a82f8',
-      symbol: 'DAI'
-    }
+    '0x44fa8e6f47987339850636f88629646662444217': GNOSIS_DAI
   },
   137: {
     '0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270': {
@@ -151,14 +159,8 @@ export const CHAINLINK_FEEDS: Readonly<Record<number, Readonly<Record<string, Ch
       address: '0x6ce185860a4963106506C203335A2910413708e9',
       symbol: 'BTC'
     },
-    '0xaf88d065e77c8cc2239327c5edb3a432268e5831': {
-      address: '0x50834F3163758fcC1Df9973b6e91f0F0F0434aD3',
-      symbol: 'USDC'
-    },
-    '0xff970a61a04b1ca14834a43f5de4533ebddb5cc8': {
-      address: '0x50834F3163758fcC1Df9973b6e91f0F0F0434aD3',
-      symbol: 'USDC'
-    },
+    '0xaf88d065e77c8cc2239327c5edb3a432268e5831': ARBITRUM_USDC,
+    '0xff970a61a04b1ca14834a43f5de4533ebddb5cc8': ARBITRUM_USDC,
     '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9': {
       address: '0x3f3f5dF88dC9F13eac63DF89EC16ef6e7E25DdE7',
       symbol: 'USDT'
@@ -169,14 +171,8 @@ export const CHAINLINK_FEEDS: Readonly<Record<number, Readonly<Record<string, Ch
     }
   },
   747474: {
-    '0x4200000000000000000000000000000000000006': {
-      address: '0x7BdBDB772f4a073BadD676A567C6ED82049a8eEE',
-      symbol: 'ETH'
-    },
-    '0xee7d8bcfb72bc1880d0cf19822eb0a2e6577ab62': {
-      address: '0x7BdBDB772f4a073BadD676A567C6ED82049a8eEE',
-      symbol: 'ETH'
-    },
+    '0x4200000000000000000000000000000000000006': KATANA_ETH,
+    '0xee7d8bcfb72bc1880d0cf19822eb0a2e6577ab62': KATANA_ETH,
     '0x0913da6da4b42f538b445599b46bb4622342cf52': {
       address: '0x0D03E26E0B5D09E24E5a45696D0FcA12E9648FBB',
       symbol: 'WBTC'

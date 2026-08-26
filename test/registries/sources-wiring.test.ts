@@ -21,6 +21,13 @@ describe('source wiring', () => {
     expect(spy.mock.calls[0][0].map((source) => source.name)).not.toContain('derived')
   })
 
+  it('exposes chainlink in the historical registry and to the child resolver', () => {
+    const sources = createHistoricalSources(env)
+
+    expect(sources.map((source) => source.name)).toEqual(['defillama', 'chainlink', 'defillama-alias', 'derived'])
+    expect(spy.mock.calls[0][0].map((source) => source.name)).toContain('chainlink')
+  })
+
   it('never lets the historical child resolver see the on-chain source', () => {
     const sources = createHistoricalSources(env)
 
