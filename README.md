@@ -36,6 +36,12 @@ bun run dev
 | `bun run migrate:down` | Roll back the last migration |
 | `bun run warmup` | Pre-populate today's prices for known vaults/tokens |
 | `bun run backfill:token-address-checksums` | One-off backfill of checksummed token addresses |
+| `bun run backfill:defillama-day-alignment` | One-off repair of DeFiLlama prices stored against the wrong day |
+
+`backfill:defillama-day-alignment` takes a phase (`prices`, `derived`, `verify`, `cleanup`, default `all`) and
+`--out <file>` (report path, default `backfill-report.json`), `--retry[=db|<file>]` (retry only tokens that failed,
+from the progress table or a prior report), `--concurrency <n>` (tokens in flight, default 4). `verify` samples a
+fixed YFI/WBTC 2025-08-16..21 window. Pause the hourly warmup workflow while `prices`/`derived` run.
 
 ## API
 

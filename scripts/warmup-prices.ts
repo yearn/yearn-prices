@@ -14,6 +14,8 @@ import { createPool, getBatchHistoricalPrices, getExistingExactTimestamps, inser
 import { ApiError } from '../src/http/errors'
 import { createChildMarketSources, marketPriceResolver } from '../src/registries/historical'
 import { createDefiLlamaAliasHistoricalSource } from '../src/sources'
+import { buildDefiLlamaPayloads } from '../src/sources/defillama/batch'
+import { buildDefiLlamaWrites } from '../src/sources/defillama/match'
 import { MARKET_PRICE_ADAPTER } from '../src/sources/onchain/engine'
 import { isRetryablePricingError, RecursiveDependencyError } from '../src/sources/onchain/errors'
 import { OnchainPricer } from '../src/sources/onchain/pricer'
@@ -33,7 +35,9 @@ import {
   normalizeToEndOfDay,
   normalizeTokenAddress,
   nowUnix,
-  parseCliDate
+  parseCliDate,
+  runInGroups,
+  toFetchTimestamp
 } from '../src/utils'
 
 const stats: WarmupStats = {
@@ -55,8 +59,6 @@ let defiLlama: DefiLlamaClient
 
 const REQUEST_GROUP_SIZE = 5
 const REQUEST_GROUP_DELAY_MS = 200
-const DEFI_LLAMA_TOKEN_BATCH = 5
-const DEFI_LLAMA_TIMESTAMP_BATCH = 20
 
 export interface NormalizedVault {
   chain: string
@@ -98,10 +100,6 @@ export interface OnchainFailureReport {
   /** The token at the bottom of the failure chain; the root itself when it has no priced dependency. */
   deepestFailedToken: string
   attempts: OnchainFailureAttempt[]
-}
-
-function sleep(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds))
 }
 
 function parseArgs(argv: string[]): { start: number; end: number } {
@@ -160,23 +158,6 @@ async function fetchYearnVaults(): Promise<NormalizedVault[]> {
 
 function buildDailyTimestamps(start: number, end: number): number[] {
   return normalizedDaysInRange(start, end)
-}
-
-function chunk<T>(items: T[], size: number): T[][] {
-  const result: T[][] = []
-  for (let index = 0; index < items.length; index += size) {
-    result.push(items.slice(index, index + size))
-  }
-  return result
-}
-
-async function runInGroups<T>(items: T[], worker: (item: T) => Promise<void>): Promise<void> {
-  for (const group of chunk(items, REQUEST_GROUP_SIZE)) {
-    await Promise.all(group.map((item) => worker(item)))
-    if (group.length === REQUEST_GROUP_SIZE) {
-      await sleep(REQUEST_GROUP_DELAY_MS)
-    }
-  }
 }
 
 function buildDirectRequests(vaults: NormalizedVault[], timestamps: number[]): HistoricalRequestTuple[] {
@@ -364,30 +345,6 @@ function groupMissingRequests(requests: HistoricalRequestTuple[], existing: Set<
   return grouped
 }
 
-function toFetchTimestamp(timestamp: number, currentTimestamp: number): number {
-  return isTodayNormalized(timestamp, currentTimestamp) ? currentTimestamp : timestamp
-}
-
-function buildDefiLlamaPayloads(
-  grouped: Record<string, number[]>,
-  currentTimestamp = nowUnix()
-): Array<Record<string, number[]>> {
-  const tokenChunks: Array<{ tokenKey: string; timestamps: number[] }> = []
-  for (const [tokenKey, timestamps] of Object.entries(grouped)) {
-    const fetchTimestamps = timestamps.map((timestamp) => toFetchTimestamp(timestamp, currentTimestamp))
-    for (const timestampChunk of chunk(
-      [...new Set(fetchTimestamps)].sort((left, right) => left - right),
-      DEFI_LLAMA_TIMESTAMP_BATCH
-    )) {
-      tokenChunks.push({ tokenKey, timestamps: timestampChunk })
-    }
-  }
-
-  return chunk(tokenChunks, DEFI_LLAMA_TOKEN_BATCH).map((group) => {
-    return Object.fromEntries(group.map((item) => [item.tokenKey, item.timestamps]))
-  })
-}
-
 async function warmDirectPrices(
   vaults: NormalizedVault[],
   timestamps: number[],
@@ -404,36 +361,18 @@ async function warmDirectPrices(
   const groupedMissing = groupMissingRequests(requests, existing)
   const payloads = buildDefiLlamaPayloads(groupedMissing)
 
-  await runInGroups(payloads, async (payload) => {
+  await runInGroups(payloads, REQUEST_GROUP_SIZE, REQUEST_GROUP_DELAY_MS, async (payload) => {
     stats.apiCalls += 1
     try {
       const response = await defiLlama.getBatchHistorical(payload)
       const writes: TokenPriceWrite[] = []
 
       for (const [tokenKey, requestedTimestamps] of Object.entries(payload)) {
-        const responseCoin = response.coins[tokenKey]
-        const returnedTimestamps = new Set<number>()
-
-        if (responseCoin) {
-          for (const price of responseCoin.prices) {
-            returnedTimestamps.add(normalizeToEndOfDay(price.timestamp))
-            const [chain, token] = tokenKey.split(':')
-            writes.push({
-              chain,
-              token,
-              timestamp: normalizeToEndOfDay(price.timestamp),
-              price: price.price,
-              symbol: responseCoin.symbol ?? null,
-              confidence: price.confidence ?? null,
-              source: 'defillama'
-            })
-          }
-        }
-
-        for (const requestedTimestamp of requestedTimestamps) {
-          if (!returnedTimestamps.has(normalizeToEndOfDay(requestedTimestamp))) {
-            console.warn(`gap:defillama ${tokenKey} ${requestedTimestamp}`)
-          }
+        const [chain, token] = tokenKey.split(':')
+        const built = buildDefiLlamaWrites(chain, token, requestedTimestamps, response.coins[tokenKey])
+        writes.push(...built.writes)
+        for (const requestedTimestamp of built.missing) {
+          console.warn(`gap:defillama ${tokenKey} ${requestedTimestamp}`)
         }
       }
 
@@ -533,7 +472,7 @@ export async function warmOnchainPrices(
     recordOnchainFailure(stats, category)
   }
 
-  await runInGroups(missing, async (request) => {
+  await runInGroups(missing, REQUEST_GROUP_SIZE, REQUEST_GROUP_DELAY_MS, async (request) => {
     try {
       const chainId = chainNameToId(request.chain)
       if (chainId === undefined) {
@@ -613,7 +552,7 @@ async function warmCurveFallbackPrices(
     return isTodayNormalized(request.timestamp) || (!existingDefillama.has(key) && !existingCurve.has(key))
   })
 
-  await runInGroups(missing, async (request) => {
+  await runInGroups(missing, REQUEST_GROUP_SIZE, REQUEST_GROUP_DELAY_MS, async (request) => {
     try {
       const underlying = underlyings.get(`${request.chain}:${request.token}`)!
 
@@ -693,7 +632,7 @@ async function warmDerivedVaultPrices(
     underlyingPrices.map((price) => [`${price.chain}:${price.token}:${price.timestamp}`, price])
   )
 
-  await runInGroups(missingVaults, async ({ vault, timestamp }) => {
+  await runInGroups(missingVaults, REQUEST_GROUP_SIZE, REQUEST_GROUP_DELAY_MS, async ({ vault, timestamp }) => {
     try {
       const underlying = underlyingMap.get(`${vault.chain}:${vault.underlyingToken}:${timestamp}`)
       if (!underlying) {

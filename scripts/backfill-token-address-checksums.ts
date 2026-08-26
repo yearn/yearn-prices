@@ -4,6 +4,7 @@ loadEnv()
 
 import { getAddress } from 'viem'
 import { createPool } from '../src/db'
+import { chunk } from '../src/utils'
 
 const databaseUrl = process.env.DATABASE_URL
 if (!databaseUrl) {
@@ -50,14 +51,6 @@ function parseArgs(argv: string[]): Args {
     batchSize,
     dryRun: options.get('--dry-run') === true
   }
-}
-
-function chunk<T>(items: T[], size: number): T[][] {
-  const result: T[][] = []
-  for (let index = 0; index < items.length; index += size) {
-    result.push(items.slice(index, index + size))
-  }
-  return result
 }
 
 const pool = createPool(databaseUrl)
