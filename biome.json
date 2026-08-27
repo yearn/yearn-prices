@@ -10,6 +10,10 @@
           "correctness": { "noUnusedVariables": "off" }
         }
       }
+    },
+    {
+      "includes": ["test/fixtures/defillama-chart/**"],
+      "formatter": { "enabled": false }
     }
   ]
 }
