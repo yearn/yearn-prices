@@ -1,5 +1,6 @@
-import { parseAbi } from 'viem'
+import { type Address, type PublicClient, parseAbi } from 'viem'
 import { estimateBlockByTimestamp, getChainClient } from '../../clients/rpc'
+import { ApiError } from '../../http/errors'
 import type { Env } from '../../types'
 import { HistoricalPriceSourceBase } from '../base'
 import { type ClientForChain, maybe } from '../onchain/context'
@@ -46,6 +47,21 @@ export class ChainlinkHistoricalSource extends HistoricalPriceSourceBase {
       return null
     }
 
+    // A transport failure must not escape raw: its message embeds the RPC url,
+    // api key included, and the worker logs it and answers 500 instead of 503.
+    try {
+      return await this.readFeed(client, chainId, feed, timestamp)
+    } catch (error) {
+      throw new ApiError('UNAVAILABLE', `Chainlink read failed on chain ${chainId} (${errorName(error)})`)
+    }
+  }
+
+  private async readFeed(
+    client: PublicClient,
+    chainId: number,
+    feed: Address,
+    timestamp: number
+  ): Promise<HistoricalPriceResult | null> {
     const blockNumber = await estimateBlockByTimestamp(client, chainId, timestamp)
 
     const block = await client.getBlock({ blockNumber })
@@ -54,8 +70,8 @@ export class ChainlinkHistoricalSource extends HistoricalPriceSourceBase {
     // source answer instead of failing the whole request.
     const reads = await maybe(() =>
       Promise.all([
-        client.readContract({ address: feed.address, abi: FEED_ABI, functionName: 'latestRoundData', blockNumber }),
-        client.readContract({ address: feed.address, abi: FEED_ABI, functionName: 'decimals', blockNumber })
+        client.readContract({ address: feed, abi: FEED_ABI, functionName: 'latestRoundData', blockNumber }),
+        client.readContract({ address: feed, abi: FEED_ABI, functionName: 'decimals', blockNumber })
       ])
     )
     if (!reads) {
@@ -74,8 +90,14 @@ export class ChainlinkHistoricalSource extends HistoricalPriceSourceBase {
       return null
     }
 
-    return { price, timestamp: updatedAt, symbol: feed.symbol, confidence: null }
+    // The feed prices an asset, not this token key: naming its base asset here
+    // would relabel WPOL as MATIC depending on which source answered.
+    return { price, timestamp: updatedAt, symbol: null, confidence: null }
   }
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : 'unknown error'
 }
 
 export function createChainlinkHistoricalSource(

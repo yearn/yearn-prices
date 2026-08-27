@@ -1,5 +1,6 @@
 import type { PublicClient } from 'viem'
 import { describe, expect, it } from 'vitest'
+import { ApiError } from '../../../src/http/errors'
 import { CHAINLINK_FEEDS, getChainlinkFeed } from '../../../src/sources/chainlink/feeds'
 import { createChainlinkHistoricalSource } from '../../../src/sources/chainlink/historical'
 import { fakeClient } from '../onchain/helpers'
@@ -16,7 +17,7 @@ function source(answer: bigint, updatedAt = 1_700_000_000n, decimals: number | b
   return createChainlinkHistoricalSource({
     clientForChain: () =>
       fakeClient({
-        [FEED.address.toLowerCase()]: {
+        [FEED.toLowerCase()]: {
           latestRoundData: [1n, answer, updatedAt, updatedAt, 1n],
           decimals
         }
@@ -26,6 +27,7 @@ function source(answer: bigint, updatedAt = 1_700_000_000n, decimals: number | b
 
 let readBlocks: bigint[] = []
 
+const RPC_URL = 'https://rpc.example/v2/secret-key'
 const HISTORICAL_TIMESTAMP = 1_600_000_000
 const LATEST_BLOCK = 1_000n
 const SECONDS_PER_BLOCK = 12
@@ -88,7 +90,7 @@ describe('ChainlinkHistoricalSource', () => {
     await expect(source(123_456_789n, 1_700_000_000n, 8).getHistoricalPrice(1, TOKEN, 1_700_000_000)).resolves.toEqual({
       price: 1.23456789,
       timestamp: 1_700_000_000,
-      symbol: 'ETH',
+      symbol: null,
       confidence: null
     })
   })
@@ -96,7 +98,7 @@ describe('ChainlinkHistoricalSource', () => {
   it('reads the feed at the estimated historical block, not latest', async () => {
     readBlocks = []
     const client = historicalClient({
-      [FEED.address.toLowerCase()]: {
+      [FEED.toLowerCase()]: {
         latestRoundData: [1n, 200_000_000_000n, BigInt(HISTORICAL_TIMESTAMP), BigInt(HISTORICAL_TIMESTAMP), 1n],
         decimals: 8
       }
@@ -132,7 +134,7 @@ describe('ChainlinkHistoricalSource', () => {
         TOKEN,
         HISTORICAL_TIMESTAMP
       )
-    ).rejects.toThrow()
+    ).rejects.toThrow(ApiError)
   })
 
   it('scales a bigint decimals value into a concrete price', async () => {
@@ -140,7 +142,7 @@ describe('ChainlinkHistoricalSource', () => {
       {
         price: 1.23456789,
         timestamp: 1_700_000_000,
-        symbol: 'ETH',
+        symbol: null,
         confidence: null
       }
     )
@@ -152,20 +154,20 @@ describe('ChainlinkHistoricalSource', () => {
         return LATEST_BLOCK
       },
       async getBlock() {
-        throw Object.assign(new Error('HTTP request failed'), { name: 'HttpRequestError' })
+        throw Object.assign(new Error(`HTTP request failed. URL: ${RPC_URL}`), { name: 'HttpRequestError' })
       },
       async readContract() {
         return 8
       }
     } as unknown as PublicClient
 
-    await expect(
-      createChainlinkHistoricalSource({ clientForChain: () => client }).getHistoricalPrice(
-        1,
-        TOKEN,
-        HISTORICAL_TIMESTAMP
-      )
-    ).rejects.toThrow()
+    const error = await createChainlinkHistoricalSource({ clientForChain: () => client })
+      .getHistoricalPrice(1, TOKEN, HISTORICAL_TIMESTAMP)
+      .catch((thrown: unknown) => thrown)
+
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).code).toBe('UNAVAILABLE')
+    expect((error as ApiError).message).not.toContain(RPC_URL)
   })
 
   it('prices a non-mainnet chain end to end', async () => {
@@ -176,7 +178,7 @@ describe('ChainlinkHistoricalSource', () => {
 
     readBlocks = []
     const client = historicalClient({
-      [arbFeed.address.toLowerCase()]: {
+      [arbFeed.toLowerCase()]: {
         latestRoundData: [1n, 100_010_000n, BigInt(HISTORICAL_TIMESTAMP), BigInt(HISTORICAL_TIMESTAMP), 1n],
         decimals: 8
       }
@@ -194,10 +196,33 @@ describe('ChainlinkHistoricalSource', () => {
     expect(result).toEqual({
       price: 1.0001,
       timestamp: HISTORICAL_TIMESTAMP,
-      symbol: 'USDC',
+      symbol: null,
       confidence: null
     })
     expect(new Set(readBlocks)).toEqual(new Set([LATEST_BLOCK / 2n]))
+  })
+
+  it('does not name the feed asset when the token symbol differs', async () => {
+    const polygonWpol = '0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270'
+    const wpolFeed = getChainlinkFeed(137, polygonWpol)
+    if (!wpolFeed) {
+      throw new Error('Polygon WPOL feed is not configured')
+    }
+
+    const client = historicalClient({
+      [wpolFeed.toLowerCase()]: {
+        latestRoundData: [1n, 50_000_000n, BigInt(HISTORICAL_TIMESTAMP), BigInt(HISTORICAL_TIMESTAMP), 1n],
+        decimals: 8
+      }
+    })
+
+    const result = await createChainlinkHistoricalSource({ clientForChain: () => client }).getHistoricalPrice(
+      137,
+      polygonWpol,
+      HISTORICAL_TIMESTAMP
+    )
+
+    expect(result).toEqual({ price: 0.5, timestamp: HISTORICAL_TIMESTAMP, symbol: null, confidence: null })
   })
 
   it('returns null when the feed reverts at that block', async () => {

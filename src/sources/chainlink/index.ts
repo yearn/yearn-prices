@@ -1,6 +1,5 @@
 export {
   CHAINLINK_FEEDS,
-  type ChainlinkFeed,
   getChainlinkFeed,
   hasChainlinkFeeds
 } from './feeds'
