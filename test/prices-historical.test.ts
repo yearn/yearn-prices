@@ -242,6 +242,13 @@ describe('handleHistorical', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  it.each(['chainlink', 'defillama-alias'])('returns NOT_FOUND for live-only source %s', async (source) => {
+    await expect(handleHistorical(request(source), ENV, pool([]), String(TIMESTAMP), TOKEN_KEY)).rejects.toMatchObject({
+      code: 'NOT_FOUND'
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('returns NOT_FOUND when both DB and the fallback miss', async () => {
     fetchMock.mockResolvedValue(defillamaResponse(200, { coins: {} }))
 

@@ -1,5 +1,6 @@
 export const SOURCE_PRIORITY = [
   'defillama',
+  'chainlink',
   'on-chain-oracle',
   'bobs-api',
   'curve',
