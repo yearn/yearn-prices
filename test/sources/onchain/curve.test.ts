@@ -12,6 +12,12 @@ const CURVE_PROVIDER = '0x0000000022d53366457f9d5e68ec105046fc4383'
 const CURVE_POOL = '0x4444444444444444444444444444444444444444'
 const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
 
+/** Quotes dy proportionally to dx, so a whole-reserve quote matches the one-unit rate. */
+const linearGetDy =
+  (unitDy: bigint[][], decimals: number[]) =>
+  (from: bigint, to: bigint, dx: bigint): bigint =>
+    ((unitDy[Number(from)]?.[Number(to)] ?? 0n) * dx) / 10n ** BigInt(decimals[Number(from)])
+
 const reads = {
   [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
   [CURVE_POOL]: { token: LP, N_COINS: 2n, coins: TOKEN_A, balances: 100n * 10n ** 6n },
@@ -129,10 +135,13 @@ describe('curveAdapter', () => {
         N_COINS: 2n,
         coins: [TOKEN_A, TOKEN_B],
         balances: [100n * 10n ** 6n, 200n * 10n ** 18n],
-        get_dy: [
-          [0n, 500_000_000_000_000_000n],
-          [0n, 0n]
-        ]
+        get_dy: linearGetDy(
+          [
+            [0n, 500_000_000_000_000_000n],
+            [0n, 0n]
+          ],
+          [6, 18]
+        )
       },
       [TOKEN_A]: { decimals: 6 },
       [TOKEN_B]: { decimals: 18 }
@@ -149,7 +158,9 @@ describe('curveAdapter', () => {
         anchorCoinIndex: 1,
         anchorAddress: TOKEN_B,
         dxRaw: '1000000',
-        getDyRaw: '500000000000000000'
+        getDyRaw: '500000000000000000',
+        executableDxRaw: '100000000',
+        executableDyRaw: '50000000000000000000'
       }
     ])
   })
@@ -221,11 +232,14 @@ describe('curveAdapter', () => {
         N_COINS: 3n,
         coins: [TOKEN_A, TOKEN_B, TOKEN_C],
         balances: [10n * 10n ** 6n, 300n * 10n ** 18n, 50n * 10n ** 18n],
-        get_dy: [
-          [0n, 0n, 0n],
-          [0n, 0n, 0n],
-          [0n, 2n * 10n ** 18n, 0n]
-        ]
+        get_dy: linearGetDy(
+          [
+            [0n, 0n, 0n],
+            [0n, 0n, 0n],
+            [0n, 2n * 10n ** 18n, 0n]
+          ],
+          [6, 18, 18]
+        )
       },
       [TOKEN_A]: { decimals: 6 },
       [TOKEN_B]: { decimals: 18 },
@@ -242,7 +256,9 @@ describe('curveAdapter', () => {
         anchorCoinIndex: 1,
         anchorAddress: TOKEN_B,
         dxRaw: '1000000000000000000',
-        getDyRaw: '2000000000000000000'
+        getDyRaw: '2000000000000000000',
+        executableDxRaw: '50000000000000000000',
+        executableDyRaw: '100000000000000000000'
       }
     ])
   })
@@ -255,11 +271,14 @@ describe('curveAdapter', () => {
         N_COINS: 3n,
         coins: [TOKEN_A, TOKEN_B, TOKEN_C],
         balances: [1000n * 10n ** 18n, 10n * 10n ** 18n, 50n * 10n ** 18n],
-        get_dy: [
-          [0n, 0n, 0n],
-          [0n, 0n, 0n],
-          [0n, 2n * 10n ** 18n, 0n]
-        ]
+        get_dy: linearGetDy(
+          [
+            [0n, 0n, 0n],
+            [0n, 0n, 0n],
+            [0n, 2n * 10n ** 18n, 0n]
+          ],
+          [18, 18, 18]
+        )
       },
       [TOKEN_A]: { decimals: 18 },
       [TOKEN_B]: { decimals: 18 },
@@ -280,7 +299,9 @@ describe('curveAdapter', () => {
         anchorCoinIndex: 1,
         anchorAddress: TOKEN_B,
         dxRaw: '1000000000000000000',
-        getDyRaw: '2000000000000000000'
+        getDyRaw: '2000000000000000000',
+        executableDxRaw: '50000000000000000000',
+        executableDyRaw: '100000000000000000000'
       }
     ])
   })
@@ -293,11 +314,14 @@ describe('curveAdapter', () => {
         N_COINS: 3n,
         coins: [TOKEN_A, TOKEN_B, TOKEN_C],
         balances: [100n * 10n ** 6n, 200n * 10n ** 18n, 50n * 10n ** 18n],
-        get_dy: [
-          [0n, 5n * 10n ** 17n, 0n],
-          [0n, 0n, 0n],
-          [0n, 3n * 10n ** 18n, 0n]
-        ]
+        get_dy: linearGetDy(
+          [
+            [0n, 5n * 10n ** 17n, 0n],
+            [0n, 0n, 0n],
+            [0n, 3n * 10n ** 18n, 0n]
+          ],
+          [6, 18, 18]
+        )
       },
       [TOKEN_A]: { decimals: 6 },
       [TOKEN_B]: { decimals: 18 },
@@ -319,16 +343,71 @@ describe('curveAdapter', () => {
         N_COINS: 2n,
         coins: [TOKEN_A, TOKEN_B],
         balances: [10n * 10n ** 18n, 990n * 10n ** 18n],
-        get_dy: [
-          [0n, 1_000_000n * 10n ** 18n],
-          [0n, 0n]
-        ]
+        get_dy: linearGetDy(
+          [
+            [0n, 1_000_000n * 10n ** 18n],
+            [0n, 0n]
+          ],
+          [18, 18]
+        )
       },
       [TOKEN_A]: { decimals: 18 },
       [TOKEN_B]: { decimals: 18 }
     }
 
     const result = await priceWith(curveAdapter(adapterOptions(dustReads)), { [TOKEN_B]: 0.0001 }, LP)
+
+    expect(result.path).toBeNull()
+  })
+
+  /**
+   * A pegged pool: the one-unit rate stays flat as the anchor drains, so the
+   * whole-reserve quote is the only read that sees the depletion.
+   */
+  const pegPool = (unpricedRaw: bigint, anchorRaw: bigint, rateNum: bigint, rateDen: bigint) => ({
+    [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
+    [CURVE_POOL]: {
+      token: LP,
+      N_COINS: 2n,
+      coins: [TOKEN_A, TOKEN_B],
+      balances: [unpricedRaw, anchorRaw],
+      get_dy: (_from: bigint, _to: bigint, dx: bigint) => {
+        const out = (dx * rateNum) / rateDen
+        return out < anchorRaw ? out : anchorRaw
+      }
+    },
+    [TOKEN_A]: { decimals: 18 },
+    [TOKEN_B]: { decimals: 18 }
+  })
+
+  it('never grows more permissive as the anchor reserve drains', async () => {
+    const unpriced = 1_000_000n * 10n ** 18n
+    const anchors = [1_000_000n, 600_000n, 500_000n, 400_000n, 100_000n, 10_000n, 1_000n, 1n]
+    const outcomes: Array<{ anchor: bigint; priceUsd: number | null }> = []
+    for (const anchor of anchors) {
+      const result = await priceWith(
+        curveAdapter(adapterOptions(pegPool(unpriced, anchor * 10n ** 18n, 1n, 1n))),
+        { [TOKEN_B]: 1 },
+        LP
+      )
+      outcomes.push({ anchor, priceUsd: result.path?.priceUsd ?? null })
+    }
+
+    const firstReject = outcomes.findIndex((outcome) => outcome.priceUsd == null)
+    expect(firstReject).toBeGreaterThan(0)
+    expect(outcomes.slice(firstReject).every((outcome) => outcome.priceUsd == null)).toBe(true)
+    for (const outcome of outcomes.slice(0, firstReject)) {
+      const anchorValue = Number(outcome.anchor)
+      expect(outcome.priceUsd as number).toBeLessThanOrEqual((3 * anchorValue) / 100)
+    }
+  })
+
+  it('returns no price when the whole unpriced reserve cannot settle against the anchor', async () => {
+    const result = await priceWith(
+      curveAdapter(adapterOptions(pegPool(1_000_000n * 10n ** 18n, 5_000n * 10n ** 18n, 36n, 1000n))),
+      { [TOKEN_B]: 1 },
+      LP
+    )
 
     expect(result.path).toBeNull()
   })
@@ -341,10 +420,13 @@ describe('curveAdapter', () => {
         N_COINS: 2n,
         coins: [TOKEN_A, TOKEN_B],
         balances: [100n * 10n ** 6n, 200n * 10n ** 18n],
-        get_dy: [
-          [0n, 500_000_000_000_000_000n],
-          [0n, 0n]
-        ]
+        get_dy: linearGetDy(
+          [
+            [0n, 500_000_000_000_000_000n],
+            [0n, 0n]
+          ],
+          [6, 18]
+        )
       },
       [TOKEN_A]: { decimals: 6 },
       [TOKEN_B]: { decimals: 18 }
