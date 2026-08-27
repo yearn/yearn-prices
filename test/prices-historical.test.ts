@@ -166,6 +166,39 @@ describe('handleHistorical', () => {
     })
   })
 
+  it('resolves current-day requests at now, not the future end-of-day', async () => {
+    const now = 1787911200
+    vi.useFakeTimers()
+    vi.setSystemTime(now * 1000)
+
+    fetchMock.mockResolvedValue(
+      defillamaResponse(200, {
+        coins: {
+          [`ethereum:${RAW_ADDR}`]: {
+            price: 27052,
+            symbol: 'WBTC',
+            timestamp: now,
+            confidence: 0.99
+          }
+        }
+      })
+    )
+
+    const response = await handleHistorical(
+      request(),
+      ENV,
+      pool([]),
+      String(now - 600),
+      TOKEN_KEY
+    )
+
+    vi.useRealTimers()
+
+    expect(response.status).toBe(200)
+    const url = String(fetchMock.mock.calls[0][0])
+    expect(url).toContain(`/prices/historical/${now}/`)
+  })
+
   it('does not fall back when an explicit source is requested', async () => {
     await expect(handleHistorical(request('enso'), ENV, pool([]), String(TIMESTAMP), TOKEN_KEY)).rejects.toMatchObject({
       code: 'NOT_FOUND'
