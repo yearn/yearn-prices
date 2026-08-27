@@ -184,13 +184,7 @@ describe('handleHistorical', () => {
       })
     )
 
-    const response = await handleHistorical(
-      request(),
-      ENV,
-      pool([]),
-      String(now - 600),
-      TOKEN_KEY
-    )
+    const response = await handleHistorical(request(), ENV, pool([]), String(now - 600), TOKEN_KEY)
 
     vi.useRealTimers()
 
