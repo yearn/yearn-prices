@@ -9,7 +9,8 @@ import {
   isTodayNormalized,
   parseOptionalSource,
   parseTimestampSegment,
-  parseTokenKey
+  parseTokenKey,
+  toFetchTimestamp
 } from '../../utils'
 
 export async function handleHistorical(
@@ -29,7 +30,7 @@ export async function handleHistorical(
     const chainId = chainNameToId(chain)
     if (chainId !== undefined) {
       try {
-        const historical = await registry.resolve(chainId, token, timestamp)
+        const historical = await registry.resolve(chainId, token, toFetchTimestamp(timestamp))
 
         return jsonResponse(
           {
