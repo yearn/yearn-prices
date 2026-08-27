@@ -41,6 +41,9 @@ export function fakeClient(reads: ContractReads): PublicClient {
         throw new ContractRevert(address, functionName)
       }
       let value = contract[functionName]
+      if (typeof value === 'function') {
+        value = (value as (...callArgs: unknown[]) => unknown)(...(args ?? []))
+      }
       if (
         Array.isArray(value) &&
         (functionName === 'coins' || functionName === 'balances' || functionName === 'get_dy')

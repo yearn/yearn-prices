@@ -23,6 +23,14 @@ const MAX_REGISTRY_ID = 12
 const MAX_COINS = 8
 /** Smallest share of pool value the priced anchor may hold and still be a price. */
 const MIN_ANCHOR_SHARE = 0.01
+/**
+ * Smallest share of a derived leg's marked value the pool must actually pay out
+ * when the whole leg is swapped into the anchor. A one-unit quote says nothing
+ * about depth, so a drained or skewed pool marks a reserve far above what it
+ * could settle; requiring half the marked value bounds the published NAV at
+ * twice the liquidation value and refuses the pool once the gap widens past it.
+ */
+const MIN_EXECUTABLE_SHARE = 0.5
 
 const minterAbi = parseAbi(['function minter() view returns (address)'])
 const poolLpTokenAbi = parseAbi([
@@ -189,7 +197,9 @@ async function readGetDy(
  * Values the coins the market cannot price by quoting one unit of each against
  * the most valuable priced reserve. The anchor carries the only market price behind
  * every derived leg, so a pool whose anchor holds a negligible share of its
- * value gets no price at all rather than one resting on dust.
+ * value gets no price at all rather than one resting on dust, and every derived
+ * leg must also be executable against the anchor at close to the rate it is
+ * marked at.
  */
 async function deriveMissingLegs(
   state: ContractContext,
@@ -226,6 +236,20 @@ async function deriveMissingLegs(
     if (!Number.isFinite(derivedPrice) || derivedPrice <= 0) {
       return null
     }
+    const balanceRaw = coins[index].balanceRaw
+    const markedValue = scaledRaw(balanceRaw, coins[index].decimals) * derivedPrice
+    let executableDyRaw: bigint | null = null
+    if (markedValue > 0) {
+      executableDyRaw = await readGetDy(state.client, poolAddress, index, anchorIndex, balanceRaw, state.blockNumber)
+      if (executableDyRaw == null) {
+        return null
+      }
+      const executableValue = scaledRaw(executableDyRaw, coins[anchorIndex].decimals) * anchorPrice
+      if (!Number.isFinite(executableValue) || executableValue < MIN_EXECUTABLE_SHARE * markedValue) {
+        return null
+      }
+    }
+
     prices[index] = derivedPrice
     derivedCoins.push({
       coinIndex: index,
@@ -233,7 +257,9 @@ async function deriveMissingLegs(
       anchorCoinIndex: anchorIndex,
       anchorAddress: coins[anchorIndex].address,
       dxRaw: rawState(dxRaw),
-      getDyRaw: rawState(getDyRaw)
+      getDyRaw: rawState(getDyRaw),
+      executableDxRaw: rawState(balanceRaw),
+      executableDyRaw: executableDyRaw == null ? null : rawState(executableDyRaw)
     })
   }
 
