@@ -69,6 +69,15 @@ describe('ChainlinkHistoricalSource', () => {
     await expect(source(100_000_000n, 1_699_800_000n).getHistoricalPrice(1, TOKEN, 1_700_000_000)).resolves.toBeNull()
   })
 
+  it('prices a round aged past one heartbeat but inside the staleness bound', async () => {
+    await expect(source(100_000_000n, 1_699_900_000n).getHistoricalPrice(1, TOKEN, 1_700_000_000)).resolves.toEqual({
+      price: 1,
+      timestamp: 1_699_900_000,
+      symbol: null,
+      confidence: null
+    })
+  })
+
   it('returns null for a non-positive answer', async () => {
     await expect(source(0n).getHistoricalPrice(1, TOKEN, 1_700_000_000)).resolves.toBeNull()
     await expect(source(-1n).getHistoricalPrice(1, TOKEN, 1_700_000_000)).resolves.toBeNull()

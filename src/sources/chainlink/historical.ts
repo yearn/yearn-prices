@@ -7,7 +7,9 @@ import { type ClientForChain, maybe } from '../onchain/context'
 import type { HistoricalPriceResult } from '../types'
 import { getChainlinkFeed, hasChainlinkFeeds } from './feeds'
 
-const MAX_STALENESS_SECONDS = 86_400
+// 2x the longest heartbeat among the feeds in feeds.ts (86,400s daily USD
+// feeds): a healthy feed reaches its heartbeat age before the next update.
+const MAX_STALENESS_SECONDS = 172_800
 
 const FEED_ABI = parseAbi([
   'function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)',
