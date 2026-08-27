@@ -46,7 +46,7 @@ Full route reference, request/response shapes, error codes, and caching behavior
 Prices are fetched through a pluggable source layer that tries providers in priority order until one returns a result. Currently:
 
 - **Spot prices**: Enso (live prices for any token on supported chains)
-- **Historical prices**: DefiLlama (single-token lookups on DB miss; fallback to upstream only when DB has no record)
+- **Historical prices**: DefiLlama → Chainlink → derived (on-chain) → DefiLlama alias, tried in that order on single-token lookups when the DB has no record
 
 Batch and range historical endpoints remain DB-only (a registry fallback inside a large batch would generate many upstream requests).
 
