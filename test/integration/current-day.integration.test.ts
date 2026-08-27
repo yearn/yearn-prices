@@ -27,9 +27,10 @@ function request(): Request {
 function stubDefiLlamaSemantics(): void {
   fetchMock.mockImplementation(async (rawUrl: unknown) => {
     const requested = Number(String(rawUrl).match(/\/prices\/historical\/(\d+)\//)?.[1])
-    const coins = requested <= nowUnix()
-      ? { [TOKEN_KEY]: { price: 3421.5, symbol: 'WETH', timestamp: requested, confidence: 0.99 } }
-      : {}
+    const coins =
+      requested <= nowUnix()
+        ? { [TOKEN_KEY]: { price: 3421.5, symbol: 'WETH', timestamp: requested, confidence: 0.99 } }
+        : {}
     return { ok: true, status: 200, json: async () => ({ coins }) }
   })
 }
