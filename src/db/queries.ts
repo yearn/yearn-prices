@@ -11,6 +11,15 @@ import { SOURCE_PRIORITY } from '../types'
 import { optionalResponseNumber, toResponseNumber } from '../utils/format'
 import { isTodayNormalized, pgTimestampToUnix, unixToIsoTimestamp } from '../utils/time'
 
+/**
+ * Minimal read surface shared by the Neon pool and the backfill's checked-out
+ * client. Keeps the source-agnostic gap read decoupled from the concrete driver
+ * without erasing types through an `as unknown as Pool` cast.
+ */
+export interface QueryExecutor {
+  query<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<{ rows: R[] }>
+}
+
 export interface Queryable {
   query(text: string, values?: unknown[]): Promise<{ rows: unknown[]; rowCount: number | null }>
 }
@@ -29,7 +38,7 @@ export async function getExactHistoricalPrice(
 }
 
 export async function getBatchHistoricalPrices(
-  pool: Pool,
+  pool: QueryExecutor,
   requests: HistoricalRequestTuple[],
   source?: PriceSource
 ): Promise<ExactPriceRecord[]> {

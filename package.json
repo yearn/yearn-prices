@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:integration": "vitest run --config ./vitest.integration.config.ts",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
@@ -17,6 +18,8 @@
     "migrate:down": "PGSSLMODE=require db-migrate down --config ./database.json --env dev",
     "warmup": "bun run scripts/warmup-prices.ts",
     "backfill:token-address-checksums": "bun run scripts/backfill-token-address-checksums.ts",
+    "backfill:historical-gaps": "bun run scripts/backfill-historical-gaps.ts",
+    "replay:historical-gaps": "bun run scripts/replay-historical-gaps.ts",
     "backfill:defillama-day-alignment": "bun run scripts/backfill-defillama-day-alignment.ts"
   },
   "dependencies": {
@@ -28,6 +31,7 @@
     "@biomejs/biome": "2.5.4",
     "@cloudflare/workers-types": "4.20260329.1",
     "@types/node": "22.19.15",
+    "@types/pg": "8.21.0",
     "db-migrate": "0.11.14",
     "db-migrate-pg": "1.5.2",
     "pg": "8.20.0",
