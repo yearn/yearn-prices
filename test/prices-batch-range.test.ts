@@ -207,6 +207,26 @@ describe('handleBatchHistorical', () => {
     expect(body.coins[CHECKSUM_KEY].prices).toHaveLength(1)
   })
 
+  it('does not persist a future-day resolved miss', async () => {
+    const queryPool = pool([])
+    const future = TODAY + 86_400
+
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [CHECKSUM_KEY]: [future] }),
+      ENV,
+      queryPool,
+      resolvingRegistry(2)
+    )
+
+    expect(response.status).toBe(200)
+    const insertCall = (queryPool.query as ReturnType<typeof vi.fn>).mock.calls.find(([sql]) =>
+      String(sql).includes('INSERT INTO token_prices')
+    )
+    expect(insertCall).toBeUndefined()
+    const body = (await response.json()) as { coins: Record<string, { prices: unknown[] }> }
+    expect(body.coins[CHECKSUM_KEY].prices).toHaveLength(1)
+  })
+
   it('does not resolve misses upstream when an explicit source is requested', async () => {
     const registry = resolvingRegistry(2)
 

@@ -2,18 +2,20 @@ import type { Pool } from '@neondatabase/serverless'
 import { insertTokenPrices } from '../../db'
 import { ensure } from '../../http'
 import type { BatchHistoricalResponseCoin, ExactPriceRecord, HistoricalRequestTuple, RangeRequest } from '../../types'
-import { isTodayNormalized, normalizedDaysInRange, parseTokenKey } from '../../utils'
+import { currentUtcDayEnd, normalizeToEndOfDay, normalizedDaysInRange, parseTokenKey } from '../../utils'
 
 /**
- * Best-effort request-path persistence. Today-keyed rows are skipped: the value
- * was resolved intraday, and writing it under the day-end key would freeze it
- * as the day's permanent close once the row turns immutable at midnight (the
- * invariant src/routes/spot.ts documents). A write failure is logged and
- * swallowed — the response already holds the prices, and a persistence fault
- * must not turn a serveable 200 into a 500.
+ * Best-effort request-path persistence. Only closed past days are written:
+ * a current- or future-day key was resolved at "now", and writing it under the
+ * day-end key would freeze that intraday value as the day's permanent close
+ * once the row turns immutable at midnight (the invariant src/routes/spot.ts
+ * documents). A write failure is logged and swallowed — the response already
+ * holds the prices, and a persistence fault must not turn a serveable 200 into
+ * a 500.
  */
 export async function persistResolvedPrices(pool: Pool, records: ExactPriceRecord[]): Promise<void> {
-  const rows = records.filter((record) => !isTodayNormalized(record.timestamp))
+  const closedBefore = currentUtcDayEnd()
+  const rows = records.filter((record) => normalizeToEndOfDay(record.timestamp) < closedBefore)
   if (rows.length === 0) {
     return
   }
