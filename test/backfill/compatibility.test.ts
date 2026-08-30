@@ -13,6 +13,7 @@ describe('backfill spec-13 compatibility', () => {
   it('keeps SOURCE_PRIORITY order untouched', () => {
     expect([...SOURCE_PRIORITY]).toEqual([
       'defillama',
+      'chainlink',
       'on-chain-oracle',
       'bobs-api',
       'curve',

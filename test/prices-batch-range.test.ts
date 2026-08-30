@@ -261,6 +261,17 @@ describe('handleBatchHistorical', () => {
     expect(queryPool.query.mock.calls[0][1]).toContain('enso')
   })
 
+  it('returns an empty batch for a live-only source instead of failing', async () => {
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE] }, '&source=chainlink'),
+      ENV,
+      pool([])
+    )
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({ coins: {} })
+  })
+
   it('rejects an unsupported source', async () => {
     await expect(
       handleBatchHistorical(

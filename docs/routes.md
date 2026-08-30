@@ -58,20 +58,28 @@ For example, any timestamp on `2024-01-01` UTC is queried as `2024-01-01T23:59:5
 Price routes accept an optional `source` query parameter. Supported values are:
 
 - `defillama`
+- `chainlink`
 - `on-chain-oracle`
 - `bobs-api`
 - `curve`
 - `derived`
+- `defillama-alias`
 - `enso`
+
+`source` filters the stored price rows only. `chainlink` and `defillama-alias` are resolved live and never written
+to storage, so filtering on either matches no row today: the single-token route returns `404`, while
+`batchHistorical` and `rangeHistorical` return `200` with an empty `coins` object.
 
 When `source` is omitted, the API returns the first available row by priority:
 
 1. `defillama`
-2. `on-chain-oracle`
-3. `bobs-api`
-4. `curve`
-5. `derived`
-6. `enso`
+2. `chainlink`
+3. `on-chain-oracle`
+4. `bobs-api`
+5. `curve`
+6. `derived`
+7. `defillama-alias`
+8. `enso`
 
 ## `GET /api/health`
 
