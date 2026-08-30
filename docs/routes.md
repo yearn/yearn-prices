@@ -66,9 +66,7 @@ Price routes accept an optional `source` query parameter. Supported values are:
 - `defillama-alias`
 - `enso`
 
-`source` filters the stored price rows only. `chainlink` and `defillama-alias` are resolved live and never written
-to storage, so filtering on either matches no row today: the single-token route returns `404`, while
-`batchHistorical` and `rangeHistorical` return `200` with an empty `coins` object.
+`source` filters the stored price rows only. `chainlink` and `defillama-alias` are resolved live. When request-path persistence fills a gap for a closed past day, the result is stored under the resolving source's name, so filters match those rows afterward. Before any such fill, filtering returns `404` for the single-token route and `200` with an empty `coins` object for `batchHistorical` and `rangeHistorical`.
 
 When `source` is omitted, the API returns the first available row by priority:
 
