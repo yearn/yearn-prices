@@ -46,6 +46,19 @@ describe('estimateBlockByTimestamp', () => {
     expect(getBlock.mock.calls.length).toBeLessThanOrEqual(7)
   })
 
+  it('coalesces concurrent searches for the same chain and timestamp', async () => {
+    const { client, getBlock } = uniformChainClient()
+    const timestamp = GENESIS_TS + 777_777 * BLOCK_SECONDS
+    const chainId = nextChainId++
+
+    const blocks = await Promise.all(
+      Array.from({ length: 10 }, () => estimateBlockByTimestamp(client, chainId, timestamp))
+    )
+
+    expect(new Set(blocks)).toEqual(new Set([777_777n]))
+    expect(getBlock.mock.calls.length).toBeLessThanOrEqual(7)
+  })
+
   it('returns the head block for a timestamp at or past the head', async () => {
     const { client, getBlock } = uniformChainClient()
     const timestamp = GENESIS_TS + Number(HEAD) * BLOCK_SECONDS + 999
