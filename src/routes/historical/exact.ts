@@ -1,6 +1,6 @@
 import type { Pool } from '@neondatabase/serverless'
 import { CACHE_CONTROL_PARTIAL, CACHE_CONTROL_TODAY, cacheControlForHistorical } from '../../cache'
-import { getExactHistoricalPrice, insertTokenPrices } from '../../db'
+import { getExactHistoricalPrice } from '../../db'
 import { ApiError, jsonResponse } from '../../http'
 import { type HistoricalSourceRegistry, historicalSourceRegistry } from '../../registries'
 import type { Env, PriceSource } from '../../types'
@@ -12,6 +12,7 @@ import {
   parseTokenKey,
   toFetchTimestamp
 } from '../../utils'
+import { persistResolvedPrices } from './shared'
 
 export async function handleHistorical(
   request: Request,
@@ -34,7 +35,7 @@ export async function handleHistorical(
 
         // Persist under the normalized day key so the next request — and the
         // batch route — is a table hit instead of another upstream resolution.
-        await insertTokenPrices(pool, [
+        await persistResolvedPrices(pool, [
           {
             chain,
             token,

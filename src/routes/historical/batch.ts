@@ -1,11 +1,11 @@
 import type { Pool } from '@neondatabase/serverless'
 import { cacheControlForBatch } from '../../cache'
-import { getBatchHistoricalPrices, insertTokenPrices } from '../../db'
+import { getBatchHistoricalPrices } from '../../db'
 import { jsonResponse } from '../../http'
 import { type HistoricalSourceRegistry, historicalSourceRegistry } from '../../registries'
 import type { Env, ExactPriceRecord, HistoricalRequestTuple, PriceSource } from '../../types'
 import { chainNameToId, parseBatchCoins, parseOptionalSource, toFetchTimestamp } from '../../utils'
-import { buildOriginalKeyMap, groupRowsByToken, toExactKey } from './shared'
+import { buildOriginalKeyMap, groupRowsByToken, persistResolvedPrices, toExactKey } from './shared'
 
 // Bounds the per-request upstream work (DeFiLlama + on-chain reads) so a batch
 // full of gaps cannot push the Worker past its time budget. Leftover misses
@@ -56,11 +56,20 @@ export async function handleBatchHistorical(
 
   if (!source) {
     const resolvedKeys = new Set(rows.map(toExactKey))
-    const misses = requests.filter((entry) => !resolvedKeys.has(toExactKey(entry)))
-    if (misses.length > 0) {
-      const resolved = await resolveMisses(registry ?? historicalSourceRegistry(env), misses)
+    // Deduped by exact key: distinct coins entries can normalize to the same
+    // chain/token/day (address casing, chain-name casing), and each duplicate
+    // would burn a resolution slot and double its price point in the response.
+    const missByKey = new Map<string, HistoricalRequestTuple>()
+    for (const entry of requests) {
+      const key = toExactKey(entry)
+      if (!resolvedKeys.has(key) && !missByKey.has(key)) {
+        missByKey.set(key, entry)
+      }
+    }
+    if (missByKey.size > 0) {
+      const resolved = await resolveMisses(registry ?? historicalSourceRegistry(env), [...missByKey.values()])
       if (resolved.length > 0) {
-        await insertTokenPrices(pool, resolved)
+        await persistResolvedPrices(pool, resolved)
         rows.push(...resolved)
       }
     }

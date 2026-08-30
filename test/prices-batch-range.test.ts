@@ -150,6 +150,63 @@ describe('handleBatchHistorical', () => {
     expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
   })
 
+  it('resolves duplicate-cased keys for the same token once and keeps the immutable header', async () => {
+    const queryPool = pool([])
+    const registry = resolvingRegistry(2)
+
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE], [CHECKSUM_KEY]: [DAY_ONE] }),
+      ENV,
+      queryPool,
+      registry
+    )
+
+    expect(registry.resolve).toHaveBeenCalledTimes(1)
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+    const body = (await response.json()) as { coins: Record<string, { prices: unknown[] }> }
+    expect(Object.values(body.coins)).toHaveLength(1)
+    expect(Object.values(body.coins)[0].prices).toHaveLength(1)
+  })
+
+  it('still returns 200 with resolved prices when the persistence write fails', async () => {
+    const queryPool = {
+      query: vi.fn(async (sql: string) => {
+        if (String(sql).includes('INSERT INTO token_prices')) throw new Error('write failed')
+        return { rows: [row(DAY_ONE, '1')], rowCount: 1 }
+      })
+    } as unknown as Pool
+
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [CHECKSUM_KEY]: [DAY_ONE, DAY_TWO] }),
+      ENV,
+      queryPool,
+      resolvingRegistry(2)
+    )
+
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as { coins: Record<string, { prices: unknown[] }> }
+    expect(body.coins[CHECKSUM_KEY].prices).toHaveLength(2)
+  })
+
+  it('does not persist a today-resolved miss', async () => {
+    const queryPool = pool([])
+
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [CHECKSUM_KEY]: [TODAY] }),
+      ENV,
+      queryPool,
+      resolvingRegistry(2)
+    )
+
+    expect(response.status).toBe(200)
+    const insertCall = (queryPool.query as ReturnType<typeof vi.fn>).mock.calls.find(([sql]) =>
+      String(sql).includes('INSERT INTO token_prices')
+    )
+    expect(insertCall).toBeUndefined()
+    const body = (await response.json()) as { coins: Record<string, { prices: unknown[] }> }
+    expect(body.coins[CHECKSUM_KEY].prices).toHaveLength(1)
+  })
+
   it('does not resolve misses upstream when an explicit source is requested', async () => {
     const registry = resolvingRegistry(2)
 
