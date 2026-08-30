@@ -1,4 +1,4 @@
-import { isTodayNormalized } from '../utils/time'
+import { isClosedDay, isTodayNormalized } from '../utils/time'
 
 export const CACHE_CONTROL_IMMUTABLE = 'public, max-age=31536000, immutable'
 // Today's value changes intraday as warmup (hourly) backfills it. s-maxage=300 lets the
@@ -21,7 +21,7 @@ export function cacheControlForHistorical(timestamp: number): string {
 }
 
 export function cacheControlForBatch(timestamps: number[], allResolved: boolean): string {
-  if (timestamps.some((timestamp) => isTodayNormalized(timestamp))) {
+  if (timestamps.some((timestamp) => !isClosedDay(timestamp))) {
     return CACHE_CONTROL_TODAY
   }
 

@@ -227,6 +227,45 @@ describe('handleBatchHistorical', () => {
     expect(body.coins[CHECKSUM_KEY].prices).toHaveLength(1)
   })
 
+  it('never marks a batch touching a future day immutable', async () => {
+    const future = TODAY + 86_400
+
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [CHECKSUM_KEY]: [future] }),
+      ENV,
+      pool([]),
+      resolvingRegistry(2)
+    )
+
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_TODAY)
+  })
+
+  it('spreads the resolution budget across tokens so a starving token still resolves', async () => {
+    const OTHER_ADDR = '0x6b175474e89094c44da98b954eedeac495271d0f'
+    const OTHER_KEY = `ethereum:${OTHER_ADDR}`
+    const blockedDays = Array.from({ length: 12 }, (_, index) => DAY_ONE - index * 86_400)
+    const registry = {
+      resolve: vi.fn(async (_chainId: number, token: string, timestamp: number) => {
+        if (token.toLowerCase() !== OTHER_ADDR) {
+          throw new Error('defillama 503')
+        }
+        return { price: 7, timestamp, symbol: 'DAI', confidence: 0.99, source: 'defillama' }
+      })
+    } as unknown as HistoricalSourceRegistry
+
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [CHECKSUM_KEY]: blockedDays, [OTHER_KEY]: [DAY_TWO] }),
+      ENV,
+      pool([]),
+      registry
+    )
+
+    const body = (await response.json()) as { coins: Record<string, { prices: { price: number }[] }> }
+    expect(body.coins[OTHER_KEY].prices).toEqual([
+      { timestamp: DAY_TWO, price: 7, confidence: 0.99, source: 'defillama' }
+    ])
+  })
+
   it('does not resolve misses upstream when an explicit source is requested', async () => {
     const registry = resolvingRegistry(2)
 

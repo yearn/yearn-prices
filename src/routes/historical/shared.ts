@@ -2,7 +2,7 @@ import type { Pool } from '@neondatabase/serverless'
 import { insertTokenPrices } from '../../db'
 import { ensure } from '../../http'
 import type { BatchHistoricalResponseCoin, ExactPriceRecord, HistoricalRequestTuple, RangeRequest } from '../../types'
-import { currentUtcDayEnd, normalizedDaysInRange, normalizeToEndOfDay, parseTokenKey } from '../../utils'
+import { isClosedDay, normalizedDaysInRange, parseTokenKey } from '../../utils'
 
 /**
  * Best-effort request-path persistence. Only closed past days are written:
@@ -14,8 +14,7 @@ import { currentUtcDayEnd, normalizedDaysInRange, normalizeToEndOfDay, parseToke
  * a 500.
  */
 export async function persistResolvedPrices(pool: Pool, records: ExactPriceRecord[]): Promise<void> {
-  const closedBefore = currentUtcDayEnd()
-  const rows = records.filter((record) => normalizeToEndOfDay(record.timestamp) < closedBefore)
+  const rows = records.filter((record) => isClosedDay(record.timestamp))
   if (rows.length === 0) {
     return
   }

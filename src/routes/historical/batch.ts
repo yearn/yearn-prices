@@ -5,20 +5,46 @@ import { jsonResponse } from '../../http'
 import { type HistoricalSourceRegistry, historicalSourceRegistry } from '../../registries'
 import type { Env, ExactPriceRecord, HistoricalRequestTuple, PriceSource } from '../../types'
 import { chainNameToId, parseBatchCoins, parseOptionalSource, toFetchTimestamp } from '../../utils'
-import { buildOriginalKeyMap, groupRowsByToken, persistResolvedPrices, toExactKey } from './shared'
+import { buildOriginalKeyMap, buildTokenKey, groupRowsByToken, persistResolvedPrices, toExactKey } from './shared'
 
 // Bounds the per-request upstream work (DeFiLlama + on-chain reads) so a batch
 // full of gaps cannot push the Worker past its time budget. Leftover misses
 // stay absent, exactly as before — and land on later requests once the
-// resolved rows persist.
+// resolved rows persist. The budget is spread round-robin across tokens so a
+// leading token whose misses never resolve cannot starve the rest forever.
 const MAX_UPSTREAM_RESOLUTIONS = 10
+
+function interleaveByToken(misses: HistoricalRequestTuple[]): HistoricalRequestTuple[] {
+  const byToken = new Map<string, HistoricalRequestTuple[]>()
+  for (const miss of misses) {
+    const key = buildTokenKey(miss.chain, miss.token)
+    const bucket = byToken.get(key)
+    if (bucket) {
+      bucket.push(miss)
+    } else {
+      byToken.set(key, [miss])
+    }
+  }
+
+  const interleaved: HistoricalRequestTuple[] = []
+  for (let index = 0; interleaved.length < misses.length; index += 1) {
+    for (const bucket of byToken.values()) {
+      const miss = bucket[index]
+      if (miss) {
+        interleaved.push(miss)
+      }
+    }
+  }
+  return interleaved
+}
 
 async function resolveMisses(
   registry: HistoricalSourceRegistry,
   misses: HistoricalRequestTuple[]
 ): Promise<ExactPriceRecord[]> {
+  const budgeted = interleaveByToken(misses).slice(0, MAX_UPSTREAM_RESOLUTIONS)
   const settled = await Promise.allSettled(
-    misses.slice(0, MAX_UPSTREAM_RESOLUTIONS).map(async (miss): Promise<ExactPriceRecord | null> => {
+    budgeted.map(async (miss): Promise<ExactPriceRecord | null> => {
       const chainId = chainNameToId(miss.chain)
       if (chainId === undefined) return null
       const historical = await registry.resolve(chainId, miss.token, toFetchTimestamp(miss.timestamp))

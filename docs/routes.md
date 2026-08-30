@@ -382,7 +382,7 @@ Common error cases:
 Price responses set cache headers based on the requested timestamps and whether every requested value was found.
 
 - Historical non-today exact price: `public, max-age=31536000, immutable`
-- Requests involving today's UTC day: `public, s-maxage=300, max-age=3600, stale-while-revalidate=14400`
+- Requests involving today's UTC day, or a batch pair whose day has not closed yet: `public, s-maxage=300, max-age=3600, stale-while-revalidate=14400`
 - Fully resolved batch or range for past days: `public, max-age=31536000, immutable`
 - Partially resolved batch or range for past days: `public, max-age=3600`
 - Historical not found responses: `public, max-age=3600, stale-while-revalidate=14400`
