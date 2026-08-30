@@ -186,6 +186,31 @@ describe('handleBatchHistorical', () => {
     expect(response.status).toBe(200)
     const body = (await response.json()) as { coins: Record<string, { prices: unknown[] }> }
     expect(body.coins[CHECKSUM_KEY].prices).toHaveLength(2)
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
+  })
+
+  it('does not mark a batch immutable when a resolution falls outside the observation window', async () => {
+    const registry = {
+      resolve: vi.fn(async (_chainId: number, _token: string, timestamp: number) => ({
+        price: 2,
+        timestamp: timestamp - 86_400,
+        symbol: 'WETH',
+        confidence: 0.99,
+        source: 'defillama'
+      }))
+    } as unknown as HistoricalSourceRegistry
+
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [CHECKSUM_KEY]: [DAY_ONE, DAY_TWO] }),
+      ENV,
+      pool([row(DAY_ONE, '1')]),
+      registry
+    )
+
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as { coins: Record<string, { prices: unknown[] }> }
+    expect(body.coins[CHECKSUM_KEY].prices).toHaveLength(2)
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
   })
 
   it('does not persist a today-resolved miss', async () => {

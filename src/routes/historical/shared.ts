@@ -34,13 +34,14 @@ function isWithinObservationWindow(record: ResolvedPriceRecord): boolean {
  * holds the prices, and a persistence fault must not turn a serveable 200 into
  * a 500.
  */
-export async function persistResolvedPrices(pool: Pool, records: ResolvedPriceRecord[]): Promise<void> {
+export async function persistResolvedPrices(pool: Pool, records: ResolvedPriceRecord[]): Promise<number> {
   const rows = records.filter((record) => isClosedDay(record.timestamp) && isWithinObservationWindow(record))
   if (rows.length === 0) {
-    return
+    return 0
   }
   try {
     await insertTokenPrices(pool, rows)
+    return rows.length
   } catch (error) {
     console.warn(
       JSON.stringify({
@@ -49,6 +50,7 @@ export async function persistResolvedPrices(pool: Pool, records: ResolvedPriceRe
         error: error instanceof Error ? error.message : String(error)
       })
     )
+    return 0
   }
 }
 

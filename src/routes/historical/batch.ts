@@ -87,6 +87,7 @@ export async function handleBatchHistorical(
   const requests = parseBatchCoins(rawCoins)
   const originalKeyMap = buildOriginalKeyMap(rawCoins!)
   const rows = await getBatchHistoricalPrices(pool, requests, source)
+  let allPersisted = true
 
   if (!source) {
     const resolvedKeys = new Set(rows.map(toExactKey))
@@ -103,7 +104,7 @@ export async function handleBatchHistorical(
     if (missByKey.size > 0) {
       const resolved = await resolveMisses(registry ?? historicalSourceRegistry(env), [...missByKey.values()])
       if (resolved.length > 0) {
-        await persistResolvedPrices(pool, resolved)
+        allPersisted = (await persistResolvedPrices(pool, resolved)) === resolved.length
         rows.push(...resolved)
       }
     }
@@ -112,7 +113,7 @@ export async function handleBatchHistorical(
   const coins = groupRowsByToken(rows, originalKeyMap)
 
   const requestedKeyCount = new Set(requests.map(toExactKey)).size
-  const allResolved = rows.length === requestedKeyCount
+  const allResolved = rows.length === requestedKeyCount && allPersisted
   return jsonResponse(
     { coins: Object.fromEntries(coins.entries()) },
     {
