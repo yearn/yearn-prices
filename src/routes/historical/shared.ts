@@ -2,7 +2,7 @@ import type { Pool } from '@neondatabase/serverless'
 import { insertTokenPrices } from '../../db'
 import { ensure } from '../../http'
 import type { BatchHistoricalResponseCoin, ExactPriceRecord, HistoricalRequestTuple, RangeRequest } from '../../types'
-import { currentUtcDayEnd, normalizeToEndOfDay, normalizedDaysInRange, parseTokenKey } from '../../utils'
+import { currentUtcDayEnd, normalizedDaysInRange, normalizeToEndOfDay, parseTokenKey } from '../../utils'
 
 /**
  * Best-effort request-path persistence. Only closed past days are written:
