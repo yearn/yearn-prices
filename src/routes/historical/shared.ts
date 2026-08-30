@@ -17,8 +17,10 @@ export interface ResolvedPriceRecord extends ExactPriceRecord {
  * skipped the bound would freeze an out-of-window observation as that day's
  * permanent close. A derived on-chain path inherits the observation timestamp of
  * the market leaf it prices against, so it carries the same drift and is bounded
- * too. Chainlink alone is exempt: its observation is the feed's own updatedAt at
- * the resolved block, which a heartbeat feed leaves stale between updates by
+ * too — except for a chainlink leaf, which reports the requested time instead of
+ * its heartbeat age (src/registries/market-price.ts). Chainlink resolved directly
+ * is exempt here for the same reason: its observation is the feed's own updatedAt
+ * at the resolved block, which a heartbeat feed leaves stale between updates by
  * design.
  */
 function isWithinObservationWindow(record: ResolvedPriceRecord): boolean {

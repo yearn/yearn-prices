@@ -2,11 +2,15 @@ import type { Pool } from '@neondatabase/serverless'
 import { describe, expect, it, vi } from 'vitest'
 import { CACHE_CONTROL_IMMUTABLE, CACHE_CONTROL_PARTIAL, CACHE_CONTROL_TODAY } from '../src/cache'
 import { ApiError } from '../src/http'
-import type { HistoricalSourceRegistry } from '../src/registries'
+import { HistoricalSourceRegistry } from '../src/registries'
+import { createMarketPriceResolver } from '../src/registries/market-price'
 import { handleBatchHistorical } from '../src/routes/historical/batch'
 import { handleRangeHistorical } from '../src/routes/historical/range'
+import { createOnchainHistoricalSource } from '../src/sources/onchain'
+import type { HistoricalPriceSource } from '../src/sources/types'
 import type { Env } from '../src/types'
 import { normalizeToEndOfDay } from '../src/utils'
+import { BLOCK_TIMESTAMP, fakeClient } from './sources/onchain/helpers'
 
 const RAW_ADDR = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
 const CHECKSUM_ADDR = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'
@@ -268,6 +272,49 @@ describe('handleBatchHistorical', () => {
     )
     expect(insertCall).toBeDefined()
     expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+  })
+
+  it('persists a derived price whose chainlink leaf is older than the search window', async () => {
+    const vault = '0x5555555555555555555555555555555555555555'
+    const day = normalizeToEndOfDay(BLOCK_TIMESTAMP)
+    const chainlink: HistoricalPriceSource = {
+      name: 'chainlink',
+      priority: 15,
+      supports: (chainId) => chainId === 1,
+      getHistoricalPrice: async (_chainId, token, timestamp) =>
+        token.toLowerCase() === RAW_ADDR
+          ? { price: 1000, timestamp: timestamp - 7 * 3_600, symbol: null, confidence: null }
+          : null
+    }
+    const sources = [chainlink]
+    const registry = new HistoricalSourceRegistry(sources)
+    const derived = createOnchainHistoricalSource({
+      marketPrice: createMarketPriceResolver(
+        sources,
+        (chainId, token, timestamp) => registry.resolve(chainId, token, timestamp as number),
+        { requireTimestamp: true }
+      ),
+      clientForChain: () =>
+        fakeClient({
+          [vault]: { asset: RAW_ADDR, decimals: 18, convertToAssets: 2n * 10n ** 18n },
+          [RAW_ADDR]: { decimals: 18 }
+        })
+    })
+    const queryPool = pool([])
+
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [`Ethereum:${vault}`]: [day] }),
+      ENV,
+      queryPool,
+      new HistoricalSourceRegistry([chainlink, derived])
+    )
+
+    const body = (await response.json()) as { coins: Record<string, { prices: { source: string }[] }> }
+    expect(body.coins[`Ethereum:${vault}`].prices[0].source).toBe('derived')
+    const insertCall = (queryPool.query as ReturnType<typeof vi.fn>).mock.calls.find(([sql]) =>
+      String(sql).includes('INSERT INTO token_prices')
+    )
+    expect(insertCall).toBeDefined()
   })
 
   it('does not persist a today-resolved miss', async () => {

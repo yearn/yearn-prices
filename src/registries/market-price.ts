@@ -18,6 +18,11 @@ interface MarketSource {
  * Turns a market-source registry resolve into the on-chain engine's
  * MarketPriceResolver. Spot and historical share this mapping so neither
  * resolver ever sees the on-chain source.
+ *
+ * A chainlink leaf reports the requested time as its observation: the feed's
+ * own updatedAt is a heartbeat age, stale by design, and a derived path takes
+ * the minimum observation of its leaves — passing updatedAt through would date
+ * the whole path hours behind the block it was actually read at.
  */
 export function createMarketPriceResolver(
   marketSources: MarketSource[],
@@ -38,7 +43,7 @@ export function createMarketPriceResolver(
         chainId: target.chainId,
         token: target.token,
         requestedTimestamp: target.timestamp,
-        observedTimestamp: price.timestamp,
+        observedTimestamp: price.source === 'chainlink' ? (target.timestamp ?? price.timestamp) : price.timestamp,
         priceUsd: price.price,
         symbol: price.symbol,
         confidence: price.confidence,

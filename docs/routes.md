@@ -135,7 +135,7 @@ Response:
 }
 ```
 
-If no stored row exists for the normalized timestamp and no `source` filter was given, the route falls back to the live historical source registry for that day. A fallback resolved for a closed past day is stored in `token_prices` under the normalized day key, so the next request is a table hit; current-day and future-day results are never persisted. A `source` filter disables the fallback: the route answers from stored rows only.
+If no stored row exists for the normalized timestamp and no `source` filter was given, the route falls back to the live historical source registry for that day. A fallback resolved for a closed past day is stored in `token_prices` under the normalized day key, so the next request is a table hit; current-day and future-day results are never persisted. A non-chainlink resolution is stored only when its underlying observation falls within the DeFiLlama search width of the day key; an out-of-window result is served but not stored, so it resolves upstream again on the next cache miss. A `source` filter disables the fallback: the route answers from stored rows only.
 
 If the fallback upstream is degraded, the request fails with `INTERNAL_ERROR` (`500`, `no-store`) rather than `NOT_FOUND` — a not-found response is cached for an hour, so a transient blip must not be recorded as "no price exists".
 
@@ -279,7 +279,7 @@ Response:
 }
 ```
 
-When no `source` filter is given, up to `10` pairs missing from the table are resolved through the source registry; results for closed past days are stored in `token_prices` and returned in the same response. A `source` filter disables that resolution: the route answers from stored rows only.
+When no `source` filter is given, up to `10` pairs missing from the table are resolved through the source registry; results for closed past days are stored in `token_prices` and returned in the same response. A non-chainlink resolution is stored only when its underlying observation falls within the DeFiLlama search width of the day key; an out-of-window result is served but not stored, so it resolves upstream again on the next cache miss. A `source` filter disables that resolution: the route answers from stored rows only.
 
 Only found prices are returned. Pairs that upstream cannot resolve, and misses past the `10` per-request limit, are omitted from the response.
 
