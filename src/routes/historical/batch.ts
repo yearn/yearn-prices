@@ -4,7 +4,7 @@ import { getBatchHistoricalPrices } from '../../db'
 import { jsonResponse } from '../../http'
 import { type HistoricalSourceRegistry, historicalSourceRegistry } from '../../registries'
 import type { Env, HistoricalRequestTuple, PriceSource } from '../../types'
-import { chainNameToId, parseBatchCoins, parseOptionalSource, toFetchTimestamp } from '../../utils'
+import { chainNameToId, isClosedDay, parseBatchCoins, parseOptionalSource, toFetchTimestamp } from '../../utils'
 import {
   buildOriginalKeyMap,
   buildTokenKey,
@@ -49,7 +49,10 @@ async function resolveMisses(
   registry: HistoricalSourceRegistry,
   misses: HistoricalRequestTuple[]
 ): Promise<ResolvedPriceRecord[]> {
-  const budgeted = interleaveByToken(misses).slice(0, MAX_UPSTREAM_RESOLUTIONS)
+  const budgeted = [
+    ...interleaveByToken(misses.filter((miss) => isClosedDay(miss.timestamp))),
+    ...interleaveByToken(misses.filter((miss) => !isClosedDay(miss.timestamp)))
+  ].slice(0, MAX_UPSTREAM_RESOLUTIONS)
   const settled = await Promise.allSettled(
     budgeted.map(async (miss): Promise<ResolvedPriceRecord | null> => {
       const chainId = chainNameToId(miss.chain)

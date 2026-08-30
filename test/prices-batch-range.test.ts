@@ -213,6 +213,63 @@ describe('handleBatchHistorical', () => {
     expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
   })
 
+  it('serves but does not persist a derived observation outside the search window', async () => {
+    const queryPool = pool([])
+    const registry = {
+      resolve: vi.fn(async (_chainId: number, _token: string, timestamp: number) => ({
+        price: 2,
+        timestamp: timestamp - 2 * 86_400,
+        symbol: 'WETH',
+        confidence: 0.99,
+        source: 'derived'
+      }))
+    } as unknown as HistoricalSourceRegistry
+
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [CHECKSUM_KEY]: [DAY_ONE] }),
+      ENV,
+      queryPool,
+      registry
+    )
+
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as { coins: Record<string, { prices: unknown[] }> }
+    expect(body.coins[CHECKSUM_KEY].prices).toEqual([
+      { timestamp: DAY_ONE, price: 2, confidence: 0.99, source: 'derived' }
+    ])
+    const insertCall = (queryPool.query as ReturnType<typeof vi.fn>).mock.calls.find(([sql]) =>
+      String(sql).includes('INSERT INTO token_prices')
+    )
+    expect(insertCall).toBeUndefined()
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
+  })
+
+  it('persists a chainlink observation older than the search window', async () => {
+    const queryPool = pool([])
+    const registry = {
+      resolve: vi.fn(async (_chainId: number, _token: string, timestamp: number) => ({
+        price: 2,
+        timestamp: timestamp - 2 * 86_400,
+        symbol: 'WETH',
+        confidence: 0.99,
+        source: 'chainlink'
+      }))
+    } as unknown as HistoricalSourceRegistry
+
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [CHECKSUM_KEY]: [DAY_ONE] }),
+      ENV,
+      queryPool,
+      registry
+    )
+
+    const insertCall = (queryPool.query as ReturnType<typeof vi.fn>).mock.calls.find(([sql]) =>
+      String(sql).includes('INSERT INTO token_prices')
+    )
+    expect(insertCall).toBeDefined()
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+  })
+
   it('does not persist a today-resolved miss', async () => {
     const queryPool = pool([])
 
@@ -289,6 +346,24 @@ describe('handleBatchHistorical', () => {
     expect(body.coins[OTHER_KEY].prices).toEqual([
       { timestamp: DAY_TWO, price: 7, confidence: 0.99, source: 'defillama' }
     ])
+  })
+
+  it('spends the budget on closed-day misses before unclosed-day ones', async () => {
+    const coins = Object.fromEntries(
+      Array.from({ length: 12 }, (_, index) => [`ethereum:0x${String(index + 1).padStart(40, '0')}`, [TODAY, DAY_ONE]])
+    )
+    const queryPool = pool([])
+    const registry = resolvingRegistry(3)
+
+    await handleBatchHistorical(url('batchHistorical', coins), ENV, queryPool, registry)
+
+    const resolved = (registry.resolve as ReturnType<typeof vi.fn>).mock.calls
+    expect(resolved).toHaveLength(10)
+    expect(resolved.map((call) => call[2])).toEqual(Array(10).fill(DAY_ONE))
+    const insertCall = (queryPool.query as ReturnType<typeof vi.fn>).mock.calls.find(([sql]) =>
+      String(sql).includes('INSERT INTO token_prices')
+    )
+    expect(insertCall).toBeDefined()
   })
 
   it('does not resolve misses upstream when an explicit source is requested', async () => {

@@ -15,11 +15,14 @@ export interface ResolvedPriceRecord extends ExactPriceRecord {
  * for some markets: a thin token's "price" can be days from the requested day.
  * The warmup writer bounds those to searchWidth, and a request-path row that
  * skipped the bound would freeze an out-of-window observation as that day's
- * permanent close. Sources whose observation is the resolved block's own state
- * (chainlink, on-chain) are in-window by construction and are not bounded here.
+ * permanent close. A derived on-chain path inherits the observation timestamp of
+ * the market leaf it prices against, so it carries the same drift and is bounded
+ * too. Chainlink alone is exempt: its observation is the feed's own updatedAt at
+ * the resolved block, which a heartbeat feed leaves stale between updates by
+ * design.
  */
 function isWithinObservationWindow(record: ResolvedPriceRecord): boolean {
-  if (!record.source.startsWith('defillama')) {
+  if (record.source === 'chainlink') {
     return true
   }
   return Math.abs(record.observedAt - record.timestamp) <= DEFI_LLAMA_SEARCH_WIDTH_SECONDS
