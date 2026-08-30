@@ -3,9 +3,16 @@ import { cacheControlForBatch } from '../../cache'
 import { getBatchHistoricalPrices } from '../../db'
 import { jsonResponse } from '../../http'
 import { type HistoricalSourceRegistry, historicalSourceRegistry } from '../../registries'
-import type { Env, ExactPriceRecord, HistoricalRequestTuple, PriceSource } from '../../types'
+import type { Env, HistoricalRequestTuple, PriceSource } from '../../types'
 import { chainNameToId, parseBatchCoins, parseOptionalSource, toFetchTimestamp } from '../../utils'
-import { buildOriginalKeyMap, buildTokenKey, groupRowsByToken, persistResolvedPrices, toExactKey } from './shared'
+import {
+  buildOriginalKeyMap,
+  buildTokenKey,
+  groupRowsByToken,
+  persistResolvedPrices,
+  type ResolvedPriceRecord,
+  toExactKey
+} from './shared'
 
 // Bounds the per-request upstream work (DeFiLlama + on-chain reads) so a batch
 // full of gaps cannot push the Worker past its time budget. Leftover misses
@@ -41,10 +48,10 @@ function interleaveByToken(misses: HistoricalRequestTuple[]): HistoricalRequestT
 async function resolveMisses(
   registry: HistoricalSourceRegistry,
   misses: HistoricalRequestTuple[]
-): Promise<ExactPriceRecord[]> {
+): Promise<ResolvedPriceRecord[]> {
   const budgeted = interleaveByToken(misses).slice(0, MAX_UPSTREAM_RESOLUTIONS)
   const settled = await Promise.allSettled(
-    budgeted.map(async (miss): Promise<ExactPriceRecord | null> => {
+    budgeted.map(async (miss): Promise<ResolvedPriceRecord | null> => {
       const chainId = chainNameToId(miss.chain)
       if (chainId === undefined) return null
       const historical = await registry.resolve(chainId, miss.token, toFetchTimestamp(miss.timestamp))
@@ -55,16 +62,17 @@ async function resolveMisses(
         price: historical.price,
         symbol: historical.symbol,
         confidence: historical.confidence,
-        source: historical.source as PriceSource
+        source: historical.source as PriceSource,
+        observedAt: historical.timestamp
       }
     })
   )
   // A failed resolution stays a plain absence: callers already handle missing
   // entries, and one bad token must not fail the other 49.
   return settled
-    .filter((entry): entry is PromiseFulfilledResult<ExactPriceRecord | null> => entry.status === 'fulfilled')
+    .filter((entry): entry is PromiseFulfilledResult<ResolvedPriceRecord | null> => entry.status === 'fulfilled')
     .map((entry) => entry.value)
-    .filter((record): record is ExactPriceRecord => record !== null)
+    .filter((record): record is ResolvedPriceRecord => record !== null)
 }
 
 export async function handleBatchHistorical(

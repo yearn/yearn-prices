@@ -9,7 +9,7 @@ const MAX_SAMPLES_PER_CHAIN = 64
 const MAX_CLIENT_CACHE = 64
 
 const blockCache = new Map<string, bigint>()
-const blockSearchInflight = new Map<string, Promise<bigint>>()
+const blockSearchInflight = new WeakMap<PublicClient, Map<string, Promise<bigint>>>()
 const blockSamples = new Map<number, Array<{ number: bigint; timestamp: number }>>()
 const clientCache = new Map<string, PublicClient>()
 
@@ -193,18 +193,24 @@ export async function estimateBlockByTimestamp(
     return cached
   }
 
-  const inflight = blockSearchInflight.get(cacheKey)
+  let inflightForClient = blockSearchInflight.get(client)
+  if (!inflightForClient) {
+    inflightForClient = new Map()
+    blockSearchInflight.set(client, inflightForClient)
+  }
+
+  const inflight = inflightForClient.get(cacheKey)
   if (inflight) {
     return inflight
   }
 
   const search = searchBlockByTimestamp(client, chainId, timestamp, cacheKey)
-  blockSearchInflight.set(cacheKey, search)
+  inflightForClient.set(cacheKey, search)
   try {
     return await search
   } finally {
-    if (blockSearchInflight.get(cacheKey) === search) {
-      blockSearchInflight.delete(cacheKey)
+    if (inflightForClient.get(cacheKey) === search) {
+      inflightForClient.delete(cacheKey)
     }
   }
 }

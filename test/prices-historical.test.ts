@@ -256,6 +256,33 @@ describe('handleHistorical', () => {
     expect(insertCall?.[1]).toContain('defillama')
   })
 
+  it('serves but does not persist an observation outside the DeFiLlama search window', async () => {
+    fetchMock.mockResolvedValue(
+      defillamaResponse(200, {
+        coins: {
+          [`ethereum:${RAW_ADDR}`]: {
+            price: 27052,
+            symbol: 'WBTC',
+            timestamp: TIMESTAMP - 2 * 86400,
+            confidence: 0.99
+          }
+        }
+      })
+    )
+    const queryPool = pool([])
+
+    const response = await handleHistorical(request(), ENV, queryPool, String(TIMESTAMP), TOKEN_KEY)
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      coins: { [TOKEN_KEY]: { price: 27052, timestamp: TIMESTAMP } }
+    })
+    const insertCall = (queryPool.query as ReturnType<typeof vi.fn>).mock.calls.find(([sql]) =>
+      String(sql).includes('INSERT INTO token_prices')
+    )
+    expect(insertCall).toBeUndefined()
+  })
+
   it('still returns the resolved price when the persistence write fails', async () => {
     fetchMock.mockResolvedValue(
       defillamaResponse(200, {

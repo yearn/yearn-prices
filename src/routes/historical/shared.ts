@@ -1,8 +1,29 @@
 import type { Pool } from '@neondatabase/serverless'
+import { DEFI_LLAMA_SEARCH_WIDTH_SECONDS } from '../../clients/defillama'
 import { insertTokenPrices } from '../../db'
 import { ensure } from '../../http'
 import type { BatchHistoricalResponseCoin, ExactPriceRecord, HistoricalRequestTuple, RangeRequest } from '../../types'
 import { isClosedDay, normalizedDaysInRange, parseTokenKey } from '../../utils'
+
+export interface ResolvedPriceRecord extends ExactPriceRecord {
+  /** Timestamp of the underlying observation, not of the day it is keyed under. */
+  observedAt: number
+}
+
+/**
+ * DeFiLlama answers with the nearest observation it has, ignoring searchWidth
+ * for some markets: a thin token's "price" can be days from the requested day.
+ * The warmup writer bounds those to searchWidth, and a request-path row that
+ * skipped the bound would freeze an out-of-window observation as that day's
+ * permanent close. Sources whose observation is the resolved block's own state
+ * (chainlink, on-chain) are in-window by construction and are not bounded here.
+ */
+function isWithinObservationWindow(record: ResolvedPriceRecord): boolean {
+  if (!record.source.startsWith('defillama')) {
+    return true
+  }
+  return Math.abs(record.observedAt - record.timestamp) <= DEFI_LLAMA_SEARCH_WIDTH_SECONDS
+}
 
 /**
  * Best-effort request-path persistence. Only closed past days are written:
@@ -13,8 +34,8 @@ import { isClosedDay, normalizedDaysInRange, parseTokenKey } from '../../utils'
  * holds the prices, and a persistence fault must not turn a serveable 200 into
  * a 500.
  */
-export async function persistResolvedPrices(pool: Pool, records: ExactPriceRecord[]): Promise<void> {
-  const rows = records.filter((record) => isClosedDay(record.timestamp))
+export async function persistResolvedPrices(pool: Pool, records: ResolvedPriceRecord[]): Promise<void> {
+  const rows = records.filter((record) => isClosedDay(record.timestamp) && isWithinObservationWindow(record))
   if (rows.length === 0) {
     return
   }

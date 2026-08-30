@@ -43,7 +43,8 @@ export async function handleHistorical(
             price: historical.price,
             symbol: historical.symbol,
             confidence: historical.confidence,
-            source: historical.source as PriceSource
+            source: historical.source as PriceSource,
+            observedAt: historical.timestamp
           }
         ])
 

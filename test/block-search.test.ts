@@ -59,6 +59,40 @@ describe('estimateBlockByTimestamp', () => {
     expect(getBlock.mock.calls.length).toBeLessThanOrEqual(7)
   })
 
+  it('does not coalesce across clients: each client runs its own search', async () => {
+    const first = uniformChainClient()
+    const second = uniformChainClient()
+    const timestamp = GENESIS_TS + 777_777 * BLOCK_SECONDS
+    const chainId = nextChainId++
+
+    const blocks = await Promise.all([
+      estimateBlockByTimestamp(first.client, chainId, timestamp),
+      estimateBlockByTimestamp(second.client, chainId, timestamp)
+    ])
+
+    expect(blocks).toEqual([777_777n, 777_777n])
+    expect(first.getBlock.mock.calls.length).toBeGreaterThan(0)
+    expect(second.getBlock.mock.calls.length).toBeGreaterThan(0)
+  })
+
+  it('does not fail one client with another client failing search', async () => {
+    const failing = vi.fn(async () => {
+      throw new Error('read budget exhausted')
+    })
+    const brokenClient = { getBlock: failing } as unknown as PublicClient
+    const healthy = uniformChainClient()
+    const timestamp = GENESIS_TS + 777_777 * BLOCK_SECONDS
+    const chainId = nextChainId++
+
+    const [broken, ok] = await Promise.allSettled([
+      estimateBlockByTimestamp(brokenClient, chainId, timestamp),
+      estimateBlockByTimestamp(healthy.client, chainId, timestamp)
+    ])
+
+    expect(broken.status).toBe('rejected')
+    expect(ok).toEqual({ status: 'fulfilled', value: 777_777n })
+  })
+
   it('returns the head block for a timestamp at or past the head', async () => {
     const { client, getBlock } = uniformChainClient()
     const timestamp = GENESIS_TS + Number(HEAD) * BLOCK_SECONDS + 999
