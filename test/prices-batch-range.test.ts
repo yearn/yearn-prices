@@ -1,6 +1,8 @@
 import type { Pool } from '@neondatabase/serverless'
 import { describe, expect, it, vi } from 'vitest'
 import { CACHE_CONTROL_IMMUTABLE, CACHE_CONTROL_PARTIAL, CACHE_CONTROL_TODAY } from '../src/cache'
+import { ApiError } from '../src/http'
+import type { HistoricalSourceRegistry } from '../src/registries'
 import { handleBatchHistorical } from '../src/routes/historical/batch'
 import { handleRangeHistorical } from '../src/routes/historical/range'
 import type { Env } from '../src/types'
@@ -31,7 +33,27 @@ function row(timestamp: number, price: string, source = 'defillama') {
 }
 
 function pool(rows: unknown[]): Pool {
-  return { query: vi.fn(async () => ({ rows })) } as unknown as Pool
+  return { query: vi.fn(async () => ({ rows, rowCount: rows.length })) } as unknown as Pool
+}
+
+function notFoundRegistry(): HistoricalSourceRegistry {
+  return {
+    resolve: vi.fn(async () => {
+      throw new ApiError('NOT_FOUND', 'No historical price available for this token')
+    })
+  } as unknown as HistoricalSourceRegistry
+}
+
+function resolvingRegistry(price: number): HistoricalSourceRegistry {
+  return {
+    resolve: vi.fn(async (_chainId: number, _token: string, timestamp: number) => ({
+      price,
+      timestamp,
+      symbol: 'WETH',
+      confidence: 0.99,
+      source: 'defillama'
+    }))
+  } as unknown as HistoricalSourceRegistry
 }
 
 describe('handleBatchHistorical', () => {
@@ -66,14 +88,79 @@ describe('handleBatchHistorical', () => {
     expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
   })
 
-  it('marks an incomplete past batch partial', async () => {
+  it('marks an incomplete past batch partial when upstream cannot resolve the gap', async () => {
     const response = await handleBatchHistorical(
       url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE, DAY_TWO] }),
       ENV,
-      pool([row(DAY_ONE, '1')])
+      pool([row(DAY_ONE, '1')]),
+      notFoundRegistry()
     )
 
     expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
+  })
+
+  it('resolves table misses upstream, persists them, and returns a complete batch', async () => {
+    const queryPool = pool([row(DAY_ONE, '1')])
+    const registry = resolvingRegistry(2)
+
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [CHECKSUM_KEY]: [DAY_ONE, DAY_TWO] }),
+      ENV,
+      queryPool,
+      registry
+    )
+
+    expect(registry.resolve).toHaveBeenCalledTimes(1)
+    expect(registry.resolve).toHaveBeenCalledWith(1, CHECKSUM_ADDR, DAY_TWO)
+    const insertCall = (queryPool.query as ReturnType<typeof vi.fn>).mock.calls.find(([sql]) =>
+      String(sql).includes('INSERT INTO token_prices')
+    )
+    expect(insertCall?.[1]).toContain(CHECKSUM_ADDR)
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+    await expect(response.json()).resolves.toEqual({
+      coins: {
+        [CHECKSUM_KEY]: {
+          symbol: 'WETH',
+          prices: [
+            { timestamp: DAY_ONE, price: 1, confidence: 0.9, source: 'defillama' },
+            { timestamp: DAY_TWO, price: 2, confidence: 0.99, source: 'defillama' }
+          ]
+        }
+      }
+    })
+  })
+
+  it('leaves a failed upstream resolution absent instead of failing the batch', async () => {
+    const registry = {
+      resolve: vi.fn(async () => {
+        throw new Error('defillama 503')
+      })
+    } as unknown as HistoricalSourceRegistry
+
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [CHECKSUM_KEY]: [DAY_ONE, DAY_TWO] }),
+      ENV,
+      pool([row(DAY_ONE, '1')]),
+      registry
+    )
+
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as { coins: Record<string, { prices: unknown[] }> }
+    expect(body.coins[CHECKSUM_KEY].prices).toHaveLength(1)
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
+  })
+
+  it('does not resolve misses upstream when an explicit source is requested', async () => {
+    const registry = resolvingRegistry(2)
+
+    await handleBatchHistorical(
+      url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE] }, '&source=enso'),
+      ENV,
+      pool([]),
+      registry
+    )
+
+    expect(registry.resolve).not.toHaveBeenCalled()
   })
 
   it('marks a batch touching today with the short-lived policy', async () => {

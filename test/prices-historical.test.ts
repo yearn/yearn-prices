@@ -235,6 +235,26 @@ describe('handleHistorical', () => {
     expect(url).toContain(`/prices/historical/${TIMESTAMP}/`)
   })
 
+  it('persists a resolved fallback under the normalized day key', async () => {
+    fetchMock.mockResolvedValue(
+      defillamaResponse(200, {
+        coins: {
+          [`ethereum:${RAW_ADDR}`]: { price: 27052, symbol: 'WBTC', timestamp: TIMESTAMP, confidence: 0.99 }
+        }
+      })
+    )
+    const queryPool = pool([])
+
+    await handleHistorical(request(), ENV, queryPool, String(TIMESTAMP), TOKEN_KEY)
+
+    const insertCall = (queryPool.query as ReturnType<typeof vi.fn>).mock.calls.find(([sql]) =>
+      String(sql).includes('INSERT INTO token_prices')
+    )
+    expect(insertCall).toBeDefined()
+    expect(insertCall?.[1]).toContain(27052)
+    expect(insertCall?.[1]).toContain('defillama')
+  })
+
   it('does not fall back when an explicit source is requested', async () => {
     await expect(handleHistorical(request('enso'), ENV, pool([]), String(TIMESTAMP), TOKEN_KEY)).rejects.toMatchObject({
       code: 'NOT_FOUND'

@@ -34,29 +34,65 @@ function rememberSample(chainId: number, number: bigint, timestamp: number): voi
   blockSamples.set(chainId, samples)
 }
 
-function seedBounds(chainId: number, timestamp: number, latest: bigint): { low: bigint; high: bigint; best: bigint } {
+interface SearchBounds {
+  low: bigint
+  high: bigint
+  best: bigint
+  lowTimestamp: number
+  highTimestamp: number
+}
+
+function seedBounds(chainId: number, timestamp: number, latest: bigint, latestTimestamp: number): SearchBounds {
   let low = 0n
+  let lowTimestamp = 0
   let high = latest
+  let highTimestamp = latestTimestamp
   // Genesis, not latest: a timestamp older than the whole chain must not fall
   // back to the head block.
   let best = 0n
   for (const sample of blockSamples.get(chainId) ?? []) {
     if (sample.timestamp === timestamp) {
-      return { low: sample.number, high: sample.number, best: sample.number }
+      return {
+        low: sample.number,
+        high: sample.number,
+        best: sample.number,
+        lowTimestamp: timestamp,
+        highTimestamp: timestamp
+      }
     }
     if (sample.timestamp < timestamp && sample.number > low) {
       low = sample.number
+      lowTimestamp = sample.timestamp
       best = sample.number
     }
     if (sample.timestamp > timestamp && sample.number < high) {
       high = sample.number
+      highTimestamp = sample.timestamp
     }
   }
-  return { low, high, best }
+  return { low, high, best, lowTimestamp, highTimestamp }
 }
 
-function sleep(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds))
+// Block times are near-constant per chain, so interpolating between the known
+// bound timestamps lands within a few blocks of the target — typically 2-4
+// probes instead of ~14 midpoint probes, which was pushing the Worker past its
+// time budget (504s). Falls back to midpoints after a few probes so a skewed
+// block-time history still converges in O(log n).
+const MAX_INTERPOLATION_PROBES = 8
+
+function nextProbe(bounds: SearchBounds, timestamp: number, probes: number): bigint {
+  const { low, high, lowTimestamp, highTimestamp } = bounds
+  // lowTimestamp === 0 means the low bound is still the unprobed genesis seed:
+  // interpolating against unix epoch skews every guess toward the head, so
+  // bisect until a real low bound exists.
+  if (probes >= MAX_INTERPOLATION_PROBES || lowTimestamp <= 0 || highTimestamp <= lowTimestamp) {
+    return (low + high) / 2n
+  }
+  const fraction = (timestamp - lowTimestamp) / (highTimestamp - lowTimestamp)
+  const guess = low + BigInt(Math.round(Number(high - low) * fraction))
+  if (guess < low) return low
+  if (guess > high) return high
+  return guess
 }
 
 export function compareApiVersions(left: string | null | undefined, right: string): number {
@@ -163,13 +199,12 @@ export async function estimateBlockByTimestamp(
     return latestBlock.number
   }
 
-  const seed = seedBounds(chainId, timestamp, latestBlock.number)
-  let low = seed.low
-  let high = seed.high
-  let best = seed.best
+  const bounds = seedBounds(chainId, timestamp, latestBlock.number, latestTimestamp)
+  let probes = 0
 
-  while (low <= high) {
-    const mid = (low + high) / 2n
+  while (bounds.low <= bounds.high) {
+    const mid = nextProbe(bounds, timestamp, probes)
+    probes += 1
     const block = await client.getBlock({ blockNumber: mid })
     const blockTimestamp = Number(block.timestamp)
     rememberSample(chainId, mid, blockTimestamp)
@@ -180,20 +215,20 @@ export async function estimateBlockByTimestamp(
     }
 
     if (blockTimestamp < timestamp) {
-      best = mid
-      low = mid + 1n
+      bounds.best = mid
+      bounds.low = mid + 1n
+      bounds.lowTimestamp = blockTimestamp
     } else {
       if (mid === 0n) {
         break
       }
-      high = mid - 1n
+      bounds.high = mid - 1n
+      bounds.highTimestamp = blockTimestamp
     }
-
-    await sleep(10)
   }
 
-  setCapped(blockCache, cacheKey, best, MAX_BLOCK_CACHE)
-  return best
+  setCapped(blockCache, cacheKey, bounds.best, MAX_BLOCK_CACHE)
+  return bounds.best
 }
 
 export async function readVaultSharePrice(
