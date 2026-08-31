@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CACHE_CONTROL_IMMUTABLE, CACHE_CONTROL_PARTIAL } from '../src/cache'
 import { handleHistorical } from '../src/routes/historical/exact'
 import type { Env } from '../src/types'
+import { normalizeToEndOfDay } from '../src/utils'
 
 const RAW_ADDR = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
 const TOKEN_KEY = `ethereum:${RAW_ADDR}`
@@ -233,6 +234,120 @@ describe('handleHistorical', () => {
     expect(response.status).toBe(200)
     const url = String(fetchMock.mock.calls[0][0])
     expect(url).toContain(`/prices/historical/${TIMESTAMP}/`)
+  })
+
+  it('persists a resolved fallback under the normalized day key', async () => {
+    fetchMock.mockResolvedValue(
+      defillamaResponse(200, {
+        coins: {
+          [`ethereum:${RAW_ADDR}`]: { price: 27052, symbol: 'WBTC', timestamp: TIMESTAMP, confidence: 0.99 }
+        }
+      })
+    )
+    const queryPool = pool([])
+
+    await handleHistorical(request(), ENV, queryPool, String(TIMESTAMP), TOKEN_KEY)
+
+    const insertCall = (queryPool.query as ReturnType<typeof vi.fn>).mock.calls.find(([sql]) =>
+      String(sql).includes('INSERT INTO token_prices')
+    )
+    expect(insertCall).toBeDefined()
+    expect(insertCall?.[1]).toContain(27052)
+    expect(insertCall?.[1]).toContain('defillama')
+  })
+
+  it('serves but does not persist an observation outside the DeFiLlama search window', async () => {
+    fetchMock.mockResolvedValue(
+      defillamaResponse(200, {
+        coins: {
+          [`ethereum:${RAW_ADDR}`]: {
+            price: 27052,
+            symbol: 'WBTC',
+            timestamp: TIMESTAMP - 2 * 86400,
+            confidence: 0.99
+          }
+        }
+      })
+    )
+    const queryPool = pool([])
+
+    const response = await handleHistorical(request(), ENV, queryPool, String(TIMESTAMP), TOKEN_KEY)
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      coins: { [TOKEN_KEY]: { price: 27052, timestamp: TIMESTAMP } }
+    })
+    const insertCall = (queryPool.query as ReturnType<typeof vi.fn>).mock.calls.find(([sql]) =>
+      String(sql).includes('INSERT INTO token_prices')
+    )
+    expect(insertCall).toBeUndefined()
+  })
+
+  it('still returns the resolved price when the persistence write fails', async () => {
+    fetchMock.mockResolvedValue(
+      defillamaResponse(200, {
+        coins: {
+          [`ethereum:${RAW_ADDR}`]: { price: 27052, symbol: 'WBTC', timestamp: TIMESTAMP, confidence: 0.99 }
+        }
+      })
+    )
+    const queryPool = {
+      query: vi.fn(async (sql: string) => {
+        if (String(sql).includes('INSERT INTO token_prices')) throw new Error('write failed')
+        return { rows: [], rowCount: 0 }
+      })
+    } as unknown as Pool
+
+    const response = await handleHistorical(request(), ENV, queryPool, String(TIMESTAMP), TOKEN_KEY)
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({
+      coins: { [TOKEN_KEY]: { price: 27052 } }
+    })
+  })
+
+  it('does not persist a current-day fallback', async () => {
+    const now = 1787911200
+    vi.useFakeTimers()
+    vi.setSystemTime(now * 1000)
+
+    fetchMock.mockResolvedValue(
+      defillamaResponse(200, {
+        coins: {
+          [`ethereum:${RAW_ADDR}`]: { price: 27052, symbol: 'WBTC', timestamp: now, confidence: 0.99 }
+        }
+      })
+    )
+    const queryPool = pool([])
+
+    const response = await handleHistorical(request(), ENV, queryPool, String(now - 600), TOKEN_KEY)
+
+    expect(response.status).toBe(200)
+    const insertCall = (queryPool.query as ReturnType<typeof vi.fn>).mock.calls.find(([sql]) =>
+      String(sql).includes('INSERT INTO token_prices')
+    )
+    expect(insertCall).toBeUndefined()
+  })
+
+  it('does not persist a future-day fallback', async () => {
+    const future = normalizeToEndOfDay(Math.floor(Date.now() / 1000)) + 86_400
+
+    fetchMock.mockResolvedValue(
+      defillamaResponse(200, {
+        coins: {
+          [`ethereum:${RAW_ADDR}`]: { price: 27052, symbol: 'WBTC', timestamp: future, confidence: 0.99 }
+        }
+      })
+    )
+    const queryPool = pool([])
+
+    const response = await handleHistorical(request(), ENV, queryPool, String(future), TOKEN_KEY)
+
+    expect(response.status).toBe(200)
+    const insertCall = (queryPool.query as ReturnType<typeof vi.fn>).mock.calls.find(([sql]) =>
+      String(sql).includes('INSERT INTO token_prices')
+    )
+    expect(insertCall).toBeUndefined()
   })
 
   it('does not fall back when an explicit source is requested', async () => {

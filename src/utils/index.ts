@@ -12,6 +12,7 @@ export { chunk, runInGroups } from './collections'
 export { optionalResponseNumber, toResponseNumber } from './format'
 export {
   currentUtcDayEnd,
+  isClosedDay,
   isTodayNormalized,
   normalizedDaysInRange,
   normalizedRangeDayCount,

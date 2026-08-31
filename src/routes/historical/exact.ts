@@ -3,7 +3,7 @@ import { CACHE_CONTROL_PARTIAL, CACHE_CONTROL_TODAY, cacheControlForHistorical }
 import { getExactHistoricalPrice } from '../../db'
 import { ApiError, jsonResponse } from '../../http'
 import { type HistoricalSourceRegistry, historicalSourceRegistry } from '../../registries'
-import type { Env } from '../../types'
+import type { Env, PriceSource } from '../../types'
 import {
   chainNameToId,
   isTodayNormalized,
@@ -12,6 +12,7 @@ import {
   parseTokenKey,
   toFetchTimestamp
 } from '../../utils'
+import { persistResolvedPrices } from './shared'
 
 export async function handleHistorical(
   request: Request,
@@ -31,6 +32,21 @@ export async function handleHistorical(
     if (chainId !== undefined) {
       try {
         const historical = await registry.resolve(chainId, token, toFetchTimestamp(timestamp))
+
+        // Persist under the normalized day key so the next request — and the
+        // batch route — is a table hit instead of another upstream resolution.
+        await persistResolvedPrices(pool, [
+          {
+            chain,
+            token,
+            timestamp,
+            price: historical.price,
+            symbol: historical.symbol,
+            confidence: historical.confidence,
+            source: historical.source as PriceSource,
+            observedAt: historical.timestamp
+          }
+        ])
 
         return jsonResponse(
           {

@@ -66,9 +66,7 @@ Price routes accept an optional `source` query parameter. Supported values are:
 - `defillama-alias`
 - `enso`
 
-`source` filters the stored price rows only. `chainlink` and `defillama-alias` are resolved live and never written
-to storage, so filtering on either matches no row today: the single-token route returns `404`, while
-`batchHistorical` and `rangeHistorical` return `200` with an empty `coins` object.
+`source` filters the stored price rows only. `chainlink` and `defillama-alias` are resolved live. When request-path persistence fills a gap for a closed past day, the result is stored under the resolving source's name, so filters match those rows afterward. Before any such fill, filtering returns `404` for the single-token route and `200` with an empty `coins` object for `batchHistorical` and `rangeHistorical`.
 
 When `source` is omitted, the API returns the first available row by priority:
 
@@ -137,7 +135,7 @@ Response:
 }
 ```
 
-If no stored row exists for the normalized timestamp and no `source` filter was given, the route falls back to a live DefiLlama lookup for that day and returns the result with `"source": "defillama"`. The response is not persisted. A `source` filter disables the fallback: the route answers from stored rows only.
+If no stored row exists for the normalized timestamp and no `source` filter was given, the route falls back to the live historical source registry for that day. A fallback resolved for a closed past day is stored in `token_prices` under the normalized day key, so the next request is a table hit; current-day and future-day results are never persisted. A non-chainlink resolution is stored only when its underlying observation falls within the DeFiLlama search width of the day key; an out-of-window result is served but not stored, so it resolves upstream again on the next cache miss. A `source` filter disables the fallback: the route answers from stored rows only.
 
 If the fallback upstream is degraded, the request fails with `INTERNAL_ERROR` (`500`, `no-store`) rather than `NOT_FOUND` — a not-found response is cached for an hour, so a transient blip must not be recorded as "no price exists".
 
@@ -281,7 +279,9 @@ Response:
 }
 ```
 
-Only found prices are returned. Missing token and timestamp pairs are omitted from the response.
+When no `source` filter is given, up to `10` pairs missing from the table are resolved through the source registry; results for closed past days are stored in `token_prices` and returned in the same response. A non-chainlink resolution is stored only when its underlying observation falls within the DeFiLlama search width of the day key; an out-of-window result is served but not stored, so it resolves upstream again on the next cache miss. A `source` filter disables that resolution: the route answers from stored rows only.
+
+Only found prices are returned. Pairs that upstream cannot resolve, and misses past the `10` per-request limit, are omitted from the response.
 
 ## `GET /api/prices/rangeHistorical`
 
@@ -380,7 +380,7 @@ Common error cases:
 Price responses set cache headers based on the requested timestamps and whether every requested value was found.
 
 - Historical non-today exact price: `public, max-age=31536000, immutable`
-- Requests involving today's UTC day: `public, s-maxage=300, max-age=3600, stale-while-revalidate=14400`
+- Requests involving today's UTC day, or a batch pair whose day has not closed yet: `public, s-maxage=300, max-age=3600, stale-while-revalidate=14400`
 - Fully resolved batch or range for past days: `public, max-age=31536000, immutable`
 - Partially resolved batch or range for past days: `public, max-age=3600`
 - Historical not found responses: `public, max-age=3600, stale-while-revalidate=14400`
