@@ -71,11 +71,29 @@ async function resolveMisses(
     })
   )
   // A failed resolution stays a plain absence: callers already handle missing
-  // entries, and one bad token must not fail the other 49.
-  return settled
-    .filter((entry): entry is PromiseFulfilledResult<ResolvedPriceRecord | null> => entry.status === 'fulfilled')
-    .map((entry) => entry.value)
-    .filter((record): record is ResolvedPriceRecord => record !== null)
+  // entries, and one bad token must not fail the other 49. But an absence with
+  // no log is invisible to alerting, so each rejection is logged before it is
+  // dropped — budgeted and settled are index-aligned.
+  const resolved: ResolvedPriceRecord[] = []
+  settled.forEach((entry, index) => {
+    if (entry.status === 'fulfilled') {
+      if (entry.value !== null) {
+        resolved.push(entry.value)
+      }
+      return
+    }
+    const miss = budgeted[index]
+    console.warn(
+      JSON.stringify({
+        message: 'resolve-miss-failed',
+        chain: miss.chain,
+        token: miss.token,
+        timestamp: miss.timestamp,
+        error: entry.reason instanceof Error ? entry.reason.message : String(entry.reason)
+      })
+    )
+  })
+  return resolved
 }
 
 export async function handleBatchHistorical(

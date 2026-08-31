@@ -14,6 +14,25 @@ function uniformChainClient() {
   return { client: { getBlock } as unknown as PublicClient, getBlock }
 }
 
+// Block interval drops 5000s -> 2s at TRANSITION. Interpolating across the
+// transition keeps overshooting by a few hundred blocks per probe, so only the
+// bisection fallback in nextProbe keeps the search bounded.
+function shiftingChainClient() {
+  const TRANSITION = 300_000n
+  const SLOW_SECONDS = 5_000n
+  const FAST_SECONDS = 2n
+  const timestampAt = (number: bigint) => {
+    const slowBlocks = number < TRANSITION ? number : TRANSITION
+    const fastBlocks = number > TRANSITION ? number - TRANSITION : 0n
+    return BigInt(GENESIS_TS) + slowBlocks * SLOW_SECONDS + fastBlocks * FAST_SECONDS
+  }
+  const getBlock = vi.fn(async (args?: { blockNumber?: bigint }) => {
+    const number = args?.blockNumber ?? HEAD
+    return { number, timestamp: timestampAt(number) }
+  })
+  return { client: { getBlock } as unknown as PublicClient, getBlock, timestampAt }
+}
+
 let nextChainId = 900_000
 
 describe('estimateBlockByTimestamp', () => {
@@ -101,6 +120,17 @@ describe('estimateBlockByTimestamp', () => {
 
     expect(block).toBe(HEAD)
     expect(getBlock).toHaveBeenCalledTimes(1)
+  })
+
+  it('stays bounded across a sharp block-interval transition', async () => {
+    const { client, getBlock, timestampAt } = shiftingChainClient()
+    const target = 300_500n
+    const timestamp = Number(timestampAt(target))
+
+    const block = await estimateBlockByTimestamp(client, nextChainId++, timestamp)
+
+    expect(block).toBe(target)
+    expect(getBlock.mock.calls.length).toBeLessThanOrEqual(30)
   })
 
   it('returns genesis for a timestamp before the chain existed', async () => {
