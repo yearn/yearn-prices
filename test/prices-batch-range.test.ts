@@ -317,7 +317,7 @@ describe('handleBatchHistorical', () => {
     expect(insertCall).toBeDefined()
   })
 
-  it('does not persist a today-resolved miss', async () => {
+  it('persists a today-resolved miss under the current UTC EOD key', async () => {
     const queryPool = pool([])
 
     const response = await handleBatchHistorical(
@@ -331,7 +331,7 @@ describe('handleBatchHistorical', () => {
     const insertCall = (queryPool.query as ReturnType<typeof vi.fn>).mock.calls.find(([sql]) =>
       String(sql).includes('INSERT INTO token_prices')
     )
-    expect(insertCall).toBeUndefined()
+    expect(insertCall).toBeDefined()
     const body = (await response.json()) as { coins: Record<string, { prices: unknown[] }> }
     expect(body.coins[CHECKSUM_KEY].prices).toHaveLength(1)
   })
