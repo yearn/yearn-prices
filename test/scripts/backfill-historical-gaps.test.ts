@@ -60,7 +60,7 @@ function fakePool(config: FakePoolConfig = {}): {
     if (sql.includes('lower(tp.token)')) {
       return { rows: (config.noncanonical ?? []) as unknown as Record<string, unknown>[] }
     }
-    if (sql.includes('WITH requested')) {
+    if (sql.includes('INNER JOIN (VALUES')) {
       return {
         rows: (config.pricedRows ?? []).map((row) => ({
           chain: row.chain,

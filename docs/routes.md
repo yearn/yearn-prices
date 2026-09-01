@@ -279,7 +279,7 @@ Response:
 }
 ```
 
-When no `source` filter is given, up to `10` pairs missing from the table are resolved through the source registry; results for closed past days are stored in `token_prices` and returned in the same response. A non-chainlink resolution is stored only when its underlying observation falls within the DeFiLlama search width of the day key; an out-of-window result is served but not stored, so it resolves upstream again on the next cache miss. A `source` filter disables that resolution: the route answers from stored rows only.
+When no `source` filter is given, up to `10` pairs missing from the table are resolved through the source registry. The initial DeFiLlama lookup uses its provider-native batch endpoint; unresolved pairs then fall through to the remaining sources. DeFiLlama `429` responses are not retried on the request path. Upstream resolution has a five-second deadline measured from route entry, after which prices already completed are returned and the rest stay absent. Results for closed past days are stored in `token_prices` and returned in the same response. A non-chainlink resolution is stored only when its underlying observation falls within the DeFiLlama search width of the day key; an out-of-window result is served but not stored, so it resolves upstream again on the next cache miss. A `source` filter disables that resolution: the route answers from stored rows only.
 
 Only found prices are returned. Pairs that upstream cannot resolve, and misses past the `10` per-request limit, are omitted from the response.
 

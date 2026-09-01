@@ -40,6 +40,44 @@ describe('createDefiLlamaHistoricalSource', () => {
     await expect(source.getHistoricalPrice(1, ADDRESS, 100)).resolves.toBeNull()
   })
 
+  it('resolves multiple targets through the provider batch endpoint', async () => {
+    const secondAddress = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'
+    const timestamp = 1695254399
+    const getBatchHistorical = vi.fn(async () => ({
+      coins: {
+        [`ethereum:${ADDRESS}`]: {
+          symbol: 'WETH',
+          prices: [{ price: 1800, timestamp, confidence: 0.99 }]
+        },
+        [`ethereum:${secondAddress}`]: {
+          symbol: 'USDC',
+          prices: [{ price: 1, timestamp, confidence: 0.98 }]
+        }
+      }
+    }))
+    const source = createDefiLlamaHistoricalSource({ getBatchHistorical } as unknown as DefiLlamaClient)
+    const targets = [
+      { chainId: 1, token: ADDRESS, timestamp },
+      { chainId: 1, token: secondAddress, timestamp }
+    ]
+
+    await expect(source.getBatchHistoricalPrices(targets)).resolves.toEqual([
+      {
+        target: targets[0],
+        price: { price: 1800, timestamp, symbol: 'WETH', confidence: 0.99 }
+      },
+      {
+        target: targets[1],
+        price: { price: 1, timestamp, symbol: 'USDC', confidence: 0.98 }
+      }
+    ])
+    expect(getBatchHistorical).toHaveBeenCalledTimes(1)
+    expect(getBatchHistorical).toHaveBeenCalledWith({
+      [`ethereum:${ADDRESS}`]: [timestamp],
+      [`ethereum:${secondAddress}`]: [timestamp]
+    })
+  })
+
   it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])('returns null for an invalid price (%s)', async (price) => {
     const source = createDefiLlamaHistoricalSource(
       client({

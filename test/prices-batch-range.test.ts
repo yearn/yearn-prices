@@ -7,7 +7,7 @@ import { createMarketPriceResolver } from '../src/registries/market-price'
 import { handleBatchHistorical } from '../src/routes/historical/batch'
 import { handleRangeHistorical } from '../src/routes/historical/range'
 import { createOnchainHistoricalSource } from '../src/sources/onchain'
-import type { HistoricalPriceSource } from '../src/sources/types'
+import type { HistoricalPriceSource, HistoricalPriceTarget } from '../src/sources/types'
 import type { Env } from '../src/types'
 import { normalizeToEndOfDay } from '../src/utils'
 import { BLOCK_TIMESTAMP, fakeClient } from './sources/onchain/helpers'
@@ -132,6 +132,75 @@ describe('handleBatchHistorical', () => {
         }
       }
     })
+  })
+
+  it('uses a provider batch method instead of one request per miss', async () => {
+    const otherAddress = '0x6b175474e89094c44da98b954eedeac495271d0f'
+    const getHistoricalPrice = vi.fn(async () => {
+      throw new Error('individual path should not run')
+    })
+    const getBatchHistoricalPrices = vi.fn(async (targets: HistoricalPriceTarget[]) =>
+      targets.map((target) => ({
+        target,
+        price: {
+          price: 2,
+          timestamp: target.timestamp,
+          symbol: 'TOKEN',
+          confidence: 0.99
+        }
+      }))
+    )
+    const source: HistoricalPriceSource = {
+      name: 'defillama',
+      priority: 10,
+      supports: () => true,
+      getHistoricalPrice,
+      getBatchHistoricalPrices
+    }
+    const registry = new HistoricalSourceRegistry([source])
+
+    const response = await handleBatchHistorical(
+      url('batchHistorical', {
+        [CHECKSUM_KEY]: [DAY_ONE],
+        [`ethereum:${otherAddress}`]: [DAY_ONE]
+      }),
+      ENV,
+      pool([]),
+      registry
+    )
+
+    expect(response.status).toBe(200)
+    expect(getBatchHistoricalPrices).toHaveBeenCalledTimes(1)
+    expect(getBatchHistoricalPrices.mock.calls[0][0]).toHaveLength(2)
+    expect(getHistoricalPrice).not.toHaveBeenCalled()
+  })
+
+  it('returns completed partial results when the route resolution deadline expires', async () => {
+    vi.useFakeTimers()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const registry = {
+      resolve: vi.fn(() => new Promise<never>(() => undefined))
+    } as unknown as HistoricalSourceRegistry
+
+    try {
+      const responsePromise = handleBatchHistorical(
+        url('batchHistorical', { [CHECKSUM_KEY]: [DAY_ONE, DAY_TWO] }),
+        ENV,
+        pool([row(DAY_ONE, '1')]),
+        registry
+      )
+      await vi.advanceTimersByTimeAsync(5_000)
+      const response = await responsePromise
+
+      expect(response.status).toBe(200)
+      const body = (await response.json()) as { coins: Record<string, { prices: unknown[] }> }
+      expect(body.coins[CHECKSUM_KEY].prices).toHaveLength(1)
+      expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('batch-resolution-deadline'))
+    } finally {
+      warn.mockRestore()
+      vi.useRealTimers()
+    }
   })
 
   it('leaves a failed upstream resolution absent instead of failing the batch', async () => {

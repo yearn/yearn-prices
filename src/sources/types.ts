@@ -47,6 +47,17 @@ export interface HistoricalPriceResult {
   confidence: number | null
 }
 
+export interface HistoricalPriceTarget {
+  chainId: number
+  token: string
+  timestamp: number
+}
+
+export interface HistoricalBatchPrice {
+  target: HistoricalPriceTarget
+  price: HistoricalPriceResult
+}
+
 export interface HistoricalPriceSource {
   /** Stable id; stamped on every price this source returns. */
   name: string
@@ -61,4 +72,9 @@ export interface HistoricalPriceSource {
    * The registry guarantees `source` is stamped.
    */
   getHistoricalPrice(chainId: number, token: string, timestamp: number): Promise<HistoricalPriceResult | null>
+  /** Optional provider-native batch path. The registry falls back per unresolved target. */
+  getBatchHistoricalPrices?(
+    targets: HistoricalPriceTarget[],
+    onResolved?: (entry: HistoricalBatchPrice) => void
+  ): Promise<HistoricalBatchPrice[]>
 }

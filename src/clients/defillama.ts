@@ -16,6 +16,7 @@ export interface DefiLlamaRequestOptions {
   timeoutMs?: number
   honorRetryAfter?: boolean
   retryAfterCapMs?: number
+  retryRateLimits?: boolean
   retryTransportErrors?: boolean
   retryInvalidJson?: boolean
 }
@@ -25,11 +26,18 @@ export const DEFI_LLAMA_SEARCH_WIDTH_SECONDS = 6 * 60 * 60
 export const DEFI_LLAMA_SEARCH_WIDTH = `${DEFI_LLAMA_SEARCH_WIDTH_SECONDS / 3_600}h`
 
 export class DefiLlamaClient {
+  private readonly requestOptions: DefiLlamaRequestOptions
+
   constructor(
     private readonly rateLimiter = new SlidingWindowRateLimiter(10, 1000),
     private readonly onRetry?: (attempt: number, delayMs: number, url: string, status: number) => void,
-    private readonly requestOptions: DefiLlamaRequestOptions = {}
-  ) {}
+    requestOptions: DefiLlamaRequestOptions = {}
+  ) {
+    // Retrying every member of a rate-limited batch in lockstep amplifies the
+    // provider burst and delays the request. Callers may opt back in for
+    // offline jobs that honor Retry-After and can afford to wait.
+    this.requestOptions = { ...requestOptions, retryRateLimits: requestOptions.retryRateLimits ?? false }
+  }
 
   getHistorical(
     timestamp: number,

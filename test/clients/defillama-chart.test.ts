@@ -29,22 +29,6 @@ function calledUrl(fetchMock: ReturnType<typeof stubFetch>, call = 0): URL {
   return new URL(fetchMock.mock.calls[call][0] as unknown as string)
 }
 
-async function drain<T>(work: Promise<T>): Promise<T> {
-  let done = false
-  void work.then(
-    () => {
-      done = true
-    },
-    () => {
-      done = true
-    }
-  )
-  while (!done) {
-    await vi.advanceTimersByTimeAsync(1000)
-  }
-  return work
-}
-
 describe('DefiLlamaClient.getChart', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -171,13 +155,16 @@ describe('DefiLlamaClient.getChart', () => {
     ).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
   })
 
-  it('retries a 429 and returns the following success', async () => {
-    vi.useFakeTimers()
+  it('fails immediately on the first 429', async () => {
     const fetchMock = stubFetch({ status: 429, body: { message: 'rate limited' } }, { body: multiDay })
 
-    const response = await drain(new DefiLlamaClient().getChart([WETH], { start: START, span: 5, period: '1d' }))
+    await expect(new DefiLlamaClient().getChart([WETH], { start: START, span: 5, period: '1d' })).rejects.toMatchObject(
+      {
+        responseStatus: 429,
+        attempts: 1
+      }
+    )
 
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-    expect(response.coins[WETH].prices).toHaveLength(5)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })

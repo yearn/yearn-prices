@@ -71,6 +71,27 @@ describe('canonicalCacheKey', () => {
     expect(a).toBe(b)
   })
 
+  it('normalizes, sorts, and deduplicates batch timestamps by UTC day', () => {
+    const dayOneMorning = 1695196800
+    const dayOneEvening = 1695250000
+    const dayTwoMorning = dayOneMorning + 86_400
+    const token = 'ethereum:0xaaa0000000000000000000000000000000000000'
+    const a = canonicalCacheKey(batchUrl('batchHistorical', { [token]: [dayTwoMorning, dayOneMorning, dayOneEvening] }))
+    const b = canonicalCacheKey(
+      batchUrl('batchHistorical', { [token]: [String(dayOneEvening), String(dayTwoMorning)] })
+    )
+
+    expect(a).toBe(b)
+  })
+
+  it('keeps batch timestamps from different UTC days distinct', () => {
+    const token = 'ethereum:0xaaa0000000000000000000000000000000000000'
+    const a = canonicalCacheKey(batchUrl('batchHistorical', { [token]: [1695196800] }))
+    const b = canonicalCacheKey(batchUrl('batchHistorical', { [token]: [1695283200] }))
+
+    expect(a).not.toBe(b)
+  })
+
   it('ignores query-parameter ordering', () => {
     const coins = encodeURIComponent(JSON.stringify(['ethereum:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2']))
     const a = canonicalCacheKey(`${BASE}?coins=${coins}&source=defillama`)

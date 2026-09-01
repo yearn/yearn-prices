@@ -3,6 +3,7 @@ import { cacheControlForBatch } from '../../cache'
 import { getBatchHistoricalPrices } from '../../db'
 import { jsonResponse } from '../../http'
 import { type HistoricalSourceRegistry, historicalSourceRegistry } from '../../registries'
+import type { HistoricalPrice, HistoricalPriceTarget } from '../../sources/types'
 import type { Env, HistoricalRequestTuple, PriceSource } from '../../types'
 import { chainNameToId, isClosedDay, parseBatchCoins, parseOptionalSource, toFetchTimestamp } from '../../utils'
 import {
@@ -20,6 +21,7 @@ import {
 // resolved rows persist. The budget is spread round-robin across tokens so a
 // leading token whose misses never resolve cannot starve the rest forever.
 const MAX_UPSTREAM_RESOLUTIONS = 10
+const REQUEST_RESOLUTION_DEADLINE_MS = 5_000
 
 function interleaveByToken(misses: HistoricalRequestTuple[]): HistoricalRequestTuple[] {
   const byToken = new Map<string, HistoricalRequestTuple[]>()
@@ -47,18 +49,32 @@ function interleaveByToken(misses: HistoricalRequestTuple[]): HistoricalRequestT
 
 async function resolveMisses(
   registry: HistoricalSourceRegistry,
-  misses: HistoricalRequestTuple[]
+  misses: HistoricalRequestTuple[],
+  deadlineAt: number
 ): Promise<ResolvedPriceRecord[]> {
   const budgeted = [
     ...interleaveByToken(misses.filter((miss) => isClosedDay(miss.timestamp))),
     ...interleaveByToken(misses.filter((miss) => !isClosedDay(miss.timestamp)))
   ].slice(0, MAX_UPSTREAM_RESOLUTIONS)
-  const settled = await Promise.allSettled(
-    budgeted.map(async (miss): Promise<ResolvedPriceRecord | null> => {
-      const chainId = chainNameToId(miss.chain)
-      if (chainId === undefined) return null
-      const historical = await registry.resolve(chainId, miss.token, toFetchTimestamp(miss.timestamp))
-      return {
+  const resolved: ResolvedPriceRecord[] = []
+  const targetToMiss = new Map<HistoricalPriceTarget, HistoricalRequestTuple>()
+  for (const miss of budgeted) {
+    const chainId = chainNameToId(miss.chain)
+    if (chainId !== undefined) {
+      targetToMiss.set({ chainId, token: miss.token, timestamp: toFetchTimestamp(miss.timestamp) }, miss)
+    }
+  }
+
+  let acceptingSettlements = true
+  let settledCount = 0
+  const onSettled = (target: HistoricalPriceTarget, entry: PromiseSettledResult<HistoricalPrice>): void => {
+    if (!acceptingSettlements) return
+    const miss = targetToMiss.get(target)
+    if (!miss) return
+    settledCount += 1
+    if (entry.status === 'fulfilled') {
+      const historical = entry.value
+      resolved.push({
         chain: miss.chain,
         token: miss.token,
         timestamp: miss.timestamp,
@@ -67,22 +83,9 @@ async function resolveMisses(
         confidence: historical.confidence,
         source: historical.source as PriceSource,
         observedAt: historical.timestamp
-      }
-    })
-  )
-  // A failed resolution stays a plain absence: callers already handle missing
-  // entries, and one bad token must not fail the other 49. But an absence with
-  // no log is invisible to alerting, so each rejection is logged before it is
-  // dropped — budgeted and settled are index-aligned.
-  const resolved: ResolvedPriceRecord[] = []
-  settled.forEach((entry, index) => {
-    if (entry.status === 'fulfilled') {
-      if (entry.value !== null) {
-        resolved.push(entry.value)
-      }
+      })
       return
     }
-    const miss = budgeted[index]
     console.warn(
       JSON.stringify({
         message: 'resolve-miss-failed',
@@ -92,7 +95,46 @@ async function resolveMisses(
         error: entry.reason instanceof Error ? entry.reason.message : String(entry.reason)
       })
     )
-  })
+  }
+
+  const targets = [...targetToMiss.keys()]
+  const work =
+    typeof registry.resolveBatch === 'function'
+      ? registry.resolveBatch(targets, onSettled)
+      : Promise.all(
+          targets.map(async (target) => {
+            try {
+              onSettled(target, {
+                status: 'fulfilled',
+                value: await registry.resolve(target.chainId, target.token, target.timestamp)
+              })
+            } catch (reason) {
+              onSettled(target, { status: 'rejected', reason })
+            }
+          })
+        ).then(() => undefined)
+
+  const remainingMs = Math.max(deadlineAt - Date.now(), 0)
+  let timeoutId: ReturnType<typeof setTimeout> | undefined
+  const outcome = await Promise.race([
+    work.then(() => 'settled' as const),
+    new Promise<'deadline'>((resolve) => {
+      timeoutId = setTimeout(() => resolve('deadline'), remainingMs)
+    })
+  ])
+  if (timeoutId !== undefined) clearTimeout(timeoutId)
+  acceptingSettlements = false
+  if (outcome === 'deadline') {
+    console.warn(
+      JSON.stringify({
+        message: 'batch-resolution-deadline',
+        deadline_ms: REQUEST_RESOLUTION_DEADLINE_MS,
+        attempted: targets.length,
+        resolved: resolved.length,
+        pending: targets.length - settledCount
+      })
+    )
+  }
   return resolved
 }
 
@@ -102,6 +144,7 @@ export async function handleBatchHistorical(
   pool: Pool,
   registry?: HistoricalSourceRegistry
 ): Promise<Response> {
+  const resolutionDeadlineAt = Date.now() + REQUEST_RESOLUTION_DEADLINE_MS
   const url = new URL(request.url)
   const source = parseOptionalSource(url.searchParams.get('source'))
   const rawCoins = url.searchParams.get('coins')
@@ -123,7 +166,11 @@ export async function handleBatchHistorical(
       }
     }
     if (missByKey.size > 0) {
-      const resolved = await resolveMisses(registry ?? historicalSourceRegistry(env), [...missByKey.values()])
+      const resolved = await resolveMisses(
+        registry ?? historicalSourceRegistry(env),
+        [...missByKey.values()],
+        resolutionDeadlineAt
+      )
       if (resolved.length > 0) {
         allPersisted = (await persistResolvedPrices(pool, resolved)) === resolved.length
         rows.push(...resolved)
