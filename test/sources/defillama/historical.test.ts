@@ -98,6 +98,30 @@ describe('createDefiLlamaHistoricalSource', () => {
     expect(getBatchHistorical).toHaveBeenCalledTimes(2)
   })
 
+  it('requests payload groups concurrently so one hung group cannot eat the route budget', async () => {
+    const timestamp = 1695254399
+    const tokens = Array.from({ length: 6 }, (_, index) => `0x${String(index + 1).repeat(40)}`)
+    let started = 0
+    let release: () => void = () => {}
+    const bothStarted = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const getBatchHistorical = vi.fn(async () => {
+      started += 1
+      if (started === 2) release()
+      await bothStarted
+      return { coins: {} }
+    })
+    const source = createDefiLlamaHistoricalSource({ getBatchHistorical } as unknown as DefiLlamaClient)
+
+    await Promise.race([
+      source.getBatchHistoricalPrices(tokens.map((token) => ({ chainId: 1, token, timestamp }))),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('payload groups ran sequentially')), 500))
+    ])
+
+    expect(getBatchHistorical).toHaveBeenCalledTimes(2)
+  })
+
   it('rethrows when every payload group fails', async () => {
     const getBatchHistorical = vi.fn().mockRejectedValue(new ApiError('INTERNAL_ERROR', 'rate limited'))
     const source = createDefiLlamaHistoricalSource({ getBatchHistorical } as unknown as DefiLlamaClient)

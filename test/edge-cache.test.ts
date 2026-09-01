@@ -10,6 +10,8 @@ import {
   readEdgeCache,
   writeEdgeCache
 } from '../src/cache'
+import worker from '../src/index'
+import type { Env } from '../src/types'
 import { normalizeToEndOfDay } from '../src/utils'
 
 const BASE = 'https://svc/api/prices/spot'
@@ -183,6 +185,32 @@ describe('readEdgeCache / writeEdgeCache', () => {
 
     await expect(response.text()).resolves.toBe('{"coins":{}}')
     await expect(store.get(canonicalCacheKey(request.url))!.text()).resolves.toBe('{"coins":{}}')
+  })
+})
+
+describe('validation before the edge-cache read', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('rejects an over-limit batch payload without consulting the cache', async () => {
+    const { cache } = stubEdgeCache()
+    const coins = { [TOKEN]: Array.from({ length: 91 }, () => PAST) }
+    const request = new Request(batchUrl('batchHistorical', coins), {
+      headers: { authorization: 'Bearer k' }
+    })
+
+    const response = await worker.fetch(
+      request,
+      { API_KEY_TEST: 'k' } as unknown as Env,
+      {
+        waitUntil: vi.fn()
+      } as unknown as ExecutionContext
+    )
+
+    expect(response.status).toBe(400)
+    expect(cache.match).not.toHaveBeenCalled()
   })
 })
 

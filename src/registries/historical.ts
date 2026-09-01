@@ -32,11 +32,13 @@ function marketPriceResolver(marketSources: HistoricalPriceSource[]) {
 }
 
 export function createHistoricalSources(env?: Env): HistoricalPriceSource[] {
-  // Leave enough room inside the route's five-second resolution budget to
-  // return already-completed partial results when the provider hangs. Retrying
-  // every member of a rate-limited batch in lockstep amplifies the provider
-  // burst and blows that budget; offline jobs keep their retry policy.
-  const client = new DefiLlamaClient(undefined, undefined, { timeoutMs: 4_000, retryRateLimits: false })
+  // Halves the route's five-second resolution budget: the batch stage fires its
+  // payload groups concurrently, so one hung stage costs one timeout and the
+  // single-coin fallback still gets the other half. Retrying every member of a
+  // rate-limited batch in lockstep amplifies the provider burst and blows that
+  // budget; offline jobs keep their retry policy. The exact route shares this
+  // client, so it also loses 429 retries — see docs/routes.md.
+  const client = new DefiLlamaClient(undefined, undefined, { timeoutMs: 2_500, retryRateLimits: false })
   const marketSources = [
     createDefiLlamaHistoricalSource(client),
     createChainlinkHistoricalSource({ env }),

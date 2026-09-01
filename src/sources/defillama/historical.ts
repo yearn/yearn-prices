@@ -50,42 +50,48 @@ export class DefiLlamaHistoricalSource extends HistoricalPriceSourceBase {
       targetsByCoin.set(coinKey, coinTargets)
     }
 
-    const resolved: HistoricalBatchPrice[] = []
     let groupError: unknown
-    for (const payload of buildDefiLlamaPayloads(grouped, currentTimestamp)) {
-      let response: Awaited<ReturnType<DefiLlamaClient['getBatchHistorical']>>
-      try {
-        response = await this.client.getBatchHistorical(payload)
-      } catch (error) {
-        // One rate-limited or malformed group must not cancel the groups after
-        // it; their pairs would never be requested at all.
-        groupError ??= error
-        continue
-      }
-      for (const [coinKey, fetchTimestamps] of Object.entries(payload)) {
-        const samples = (response.coins?.[coinKey]?.prices ?? []).filter((sample) =>
-          this.isUsablePrice(sample.price, sample.timestamp)
-        )
-        const matched = matchPricesToRequests(fetchTimestamps, samples)
-        for (const target of targetsByCoin.get(coinKey) ?? []) {
-          const fetchTimestamp = toFetchTimestamp(target.timestamp, currentTimestamp)
-          if (!fetchTimestamps.includes(fetchTimestamp)) continue
-          const sample = matched.get(fetchTimestamp)
-          if (!sample) continue
-          const entry = {
-            target,
-            price: {
-              price: sample.price,
-              timestamp: sample.timestamp,
-              symbol: response.coins?.[coinKey]?.symbol ?? null,
-              confidence: sample.confidence ?? null
-            }
-          }
-          resolved.push(entry)
-          onResolved?.(entry)
+    // Groups run concurrently: fetched one after another, a hung group burns
+    // the route's resolution budget and the single-coin fallback never runs.
+    const groups = await Promise.all(
+      buildDefiLlamaPayloads(grouped, currentTimestamp).map(async (payload) => {
+        let response: Awaited<ReturnType<DefiLlamaClient['getBatchHistorical']>>
+        try {
+          response = await this.client.getBatchHistorical(payload)
+        } catch (error) {
+          // One rate-limited or malformed group must not drop the other groups;
+          // their pairs would never be requested at all.
+          groupError ??= error
+          return []
         }
-      }
-    }
+        const entries: HistoricalBatchPrice[] = []
+        for (const [coinKey, fetchTimestamps] of Object.entries(payload)) {
+          const samples = (response.coins?.[coinKey]?.prices ?? []).filter((sample) =>
+            this.isUsablePrice(sample.price, sample.timestamp)
+          )
+          const matched = matchPricesToRequests(fetchTimestamps, samples)
+          for (const target of targetsByCoin.get(coinKey) ?? []) {
+            const fetchTimestamp = toFetchTimestamp(target.timestamp, currentTimestamp)
+            if (!fetchTimestamps.includes(fetchTimestamp)) continue
+            const sample = matched.get(fetchTimestamp)
+            if (!sample) continue
+            const entry = {
+              target,
+              price: {
+                price: sample.price,
+                timestamp: sample.timestamp,
+                symbol: response.coins?.[coinKey]?.symbol ?? null,
+                confidence: sample.confidence ?? null
+              }
+            }
+            entries.push(entry)
+            onResolved?.(entry)
+          }
+        }
+        return entries
+      })
+    )
+    const resolved = groups.flat()
     if (resolved.length === 0 && groupError !== undefined) {
       throw groupError
     }
