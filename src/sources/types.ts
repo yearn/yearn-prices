@@ -72,9 +72,14 @@ export interface HistoricalPriceSource {
    * The registry guarantees `source` is stamped.
    */
   getHistoricalPrice(chainId: number, token: string, timestamp: number): Promise<HistoricalPriceResult | null>
-  /** Optional provider-native batch path. The registry falls back per unresolved target. */
+  /**
+   * Optional provider-native batch path. The registry falls back per unresolved
+   * target. `onFailed` reports the targets of a payload group that errored, so
+   * only those skip this source in the fallback chain.
+   */
   getBatchHistoricalPrices?(
     targets: HistoricalPriceTarget[],
-    onResolved?: (entry: HistoricalBatchPrice) => void
+    onResolved?: (entry: HistoricalBatchPrice) => void,
+    onFailed?: (targets: HistoricalPriceTarget[], error: unknown) => void
   ): Promise<HistoricalBatchPrice[]>
 }

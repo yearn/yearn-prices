@@ -32,13 +32,11 @@ function marketPriceResolver(marketSources: HistoricalPriceSource[]) {
 }
 
 export function createHistoricalSources(env?: Env): HistoricalPriceSource[] {
-  // Halves the route's five-second resolution budget: the batch stage fires its
-  // payload groups concurrently, so one hung stage costs one timeout and the
-  // single-coin fallback still gets the other half. The timeout is per attempt;
-  // 5xx responses still retry with backoff, and the route deadline bounds that. Retrying every member of a
-  // rate-limited batch in lockstep amplifies the provider burst and blows that
-  // budget; offline jobs keep their retry policy. The exact route shares this
-  // client, so it also loses 429 retries — see docs/routes.md.
+  // Per-attempt timeout only; 5xx responses still retry with backoff, so the
+  // batch stage is capped separately by BATCH_STAGE_BUDGET_MS. Retrying every
+  // member of a rate-limited batch in lockstep amplifies the provider burst;
+  // offline jobs keep their retry policy. The exact route shares this client,
+  // so it also loses 429 retries — see docs/routes.md.
   const client = new DefiLlamaClient(undefined, undefined, { timeoutMs: 2_500, retryRateLimits: false })
   const marketSources = [
     createDefiLlamaHistoricalSource(client),
@@ -55,6 +53,13 @@ export function createHistoricalSources(env?: Env): HistoricalPriceSource[] {
     })
   ]
 }
+
+/**
+ * Half the route's five-second resolution budget. A slow or retrying provider
+ * batch call must not consume the whole deadline: the rest of the source chain
+ * still needs time to price the pairs the batch never returned.
+ */
+const BATCH_STAGE_BUDGET_MS = 2_500
 
 export class HistoricalSourceRegistry extends SourceRegistry<HistoricalPriceSource, [timestamp: number]> {
   constructor(sources: HistoricalPriceSource[]) {
@@ -73,8 +78,9 @@ export class HistoricalSourceRegistry extends SourceRegistry<HistoricalPriceSour
   /**
    * Uses a provider-native batch method when available, then runs the source
    * chain for targets the batch did not resolve. A pair the batch matcher drops
-   * is still tried against the batch source's single lookup; a pair whose batch
-   * group failed skips that source, since the same client would fail again.
+   * is still tried against the batch source's single lookup; a pair whose own
+   * payload group failed, or that is still pending when the batch stage runs out
+   * of budget, skips that source, since the same client would fail again.
    * Settlements are emitted as they happen so a route deadline can retain
    * completed partial results.
    */
@@ -104,24 +110,43 @@ export class HistoricalSourceRegistry extends SourceRegistry<HistoricalPriceSour
     const pending = new Map(targets.map((target) => [key(target), target]))
     const batchErrors = new Map<string, unknown>()
     const batchTargets = targets.filter((target) => batchSource.supports(target.chainId))
+    let batchStageOpen = true
     const settleDirect = (entry: HistoricalBatchPrice) => {
+      if (!batchStageOpen) return
       const entryKey = key(entry.target)
       const target = pending.get(entryKey)
       if (!target) return
       pending.delete(entryKey)
       onSettled(target, { status: 'fulfilled', value: { ...entry.price, source: batchSource.name } })
     }
-
-    try {
-      const direct = await batchSource.getBatchHistoricalPrices(batchTargets, settleDirect)
-      for (const entry of direct) {
-        settleDirect(entry)
-      }
-    } catch (error) {
-      for (const target of batchTargets) {
+    const markFailed = (failed: HistoricalPriceTarget[], error: unknown) => {
+      if (!batchStageOpen) return
+      for (const target of failed) {
         batchErrors.set(key(target), error)
       }
     }
+
+    const batchStage = batchSource
+      .getBatchHistoricalPrices(batchTargets, settleDirect, markFailed)
+      .then((direct) => {
+        for (const entry of direct) {
+          settleDirect(entry)
+        }
+      })
+      .catch((error: unknown) => markFailed(batchTargets, error))
+
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+    const timedOut = await Promise.race([
+      batchStage.then(() => false),
+      new Promise<true>((resolve) => {
+        timeoutId = setTimeout(() => resolve(true), BATCH_STAGE_BUDGET_MS)
+      })
+    ])
+    if (timeoutId !== undefined) clearTimeout(timeoutId)
+    if (timedOut) {
+      markFailed([...pending.values()], new ApiError('UNAVAILABLE', 'defillama batch stage exceeded its budget'))
+    }
+    batchStageOpen = false
 
     await Promise.all(
       [...pending.values()].map(async (target) => {

@@ -33,7 +33,8 @@ export class DefiLlamaHistoricalSource extends HistoricalPriceSourceBase {
 
   async getBatchHistoricalPrices(
     targets: HistoricalPriceTarget[],
-    onResolved?: (entry: HistoricalBatchPrice) => void
+    onResolved?: (entry: HistoricalBatchPrice) => void,
+    onFailed?: (targets: HistoricalPriceTarget[], error: unknown) => void
   ): Promise<HistoricalBatchPrice[]> {
     const currentTimestamp = nowUnix()
     const grouped: Record<string, number[]> = {}
@@ -50,7 +51,13 @@ export class DefiLlamaHistoricalSource extends HistoricalPriceSourceBase {
       targetsByCoin.set(coinKey, coinTargets)
     }
 
-    let groupError: unknown
+    const targetsOf = (payload: Record<string, number[]>): HistoricalPriceTarget[] =>
+      Object.entries(payload).flatMap(([coinKey, fetchTimestamps]) =>
+        (targetsByCoin.get(coinKey) ?? []).filter((target) =>
+          fetchTimestamps.includes(toFetchTimestamp(target.timestamp, currentTimestamp))
+        )
+      )
+
     // Groups run concurrently: fetched one after another, a hung group burns
     // the route's resolution budget and the single-coin fallback never runs.
     const groups = await Promise.all(
@@ -60,8 +67,10 @@ export class DefiLlamaHistoricalSource extends HistoricalPriceSourceBase {
           response = await this.client.getBatchHistorical(payload)
         } catch (error) {
           // One rate-limited or malformed group must not drop the other groups;
-          // their pairs would never be requested at all.
-          groupError ??= error
+          // their pairs would never be requested at all. Only this group's pairs
+          // are reported failed: a sibling group's pairs keep their single-coin
+          // retry, and this group's skip a call the same client just failed.
+          onFailed?.(targetsOf(payload), error)
           return []
         }
         const entries: HistoricalBatchPrice[] = []
@@ -91,11 +100,7 @@ export class DefiLlamaHistoricalSource extends HistoricalPriceSourceBase {
         return entries
       })
     )
-    const resolved = groups.flat()
-    if (resolved.length === 0 && groupError !== undefined) {
-      throw groupError
-    }
-    return resolved
+    return groups.flat()
   }
 }
 

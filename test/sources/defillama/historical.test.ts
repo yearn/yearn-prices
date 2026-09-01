@@ -122,13 +122,31 @@ describe('createDefiLlamaHistoricalSource', () => {
     expect(getBatchHistorical).toHaveBeenCalledTimes(2)
   })
 
-  it('rethrows when every payload group fails', async () => {
+  it('reports only the failed group\'s targets to onFailed', async () => {
+    const timestamp = 1695254399
+    const tokens = Array.from({ length: 6 }, (_, index) => `0x${String(index + 1).repeat(40)}`)
+    const getBatchHistorical = vi
+      .fn()
+      .mockRejectedValueOnce(new ApiError('INTERNAL_ERROR', 'rate limited'))
+      .mockResolvedValueOnce({ coins: {} })
+    const source = createDefiLlamaHistoricalSource({ getBatchHistorical } as unknown as DefiLlamaClient)
+    const targets = tokens.map((token) => ({ chainId: 1, token, timestamp }))
+    const onFailed = vi.fn()
+
+    await source.getBatchHistoricalPrices(targets, undefined, onFailed)
+
+    expect(onFailed).toHaveBeenCalledTimes(1)
+    expect(onFailed.mock.calls[0][0]).toEqual(targets.slice(0, 5))
+  })
+
+  it('reports every target to onFailed when every payload group fails', async () => {
     const getBatchHistorical = vi.fn().mockRejectedValue(new ApiError('INTERNAL_ERROR', 'rate limited'))
     const source = createDefiLlamaHistoricalSource({ getBatchHistorical } as unknown as DefiLlamaClient)
+    const targets = [{ chainId: 1, token: ADDRESS, timestamp: 1695254399 }]
+    const onFailed = vi.fn()
 
-    await expect(
-      source.getBatchHistoricalPrices([{ chainId: 1, token: ADDRESS, timestamp: 1695254399 }])
-    ).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
+    await expect(source.getBatchHistoricalPrices(targets, undefined, onFailed)).resolves.toEqual([])
+    expect(onFailed).toHaveBeenCalledWith(targets, expect.objectContaining({ code: 'INTERNAL_ERROR' }))
   })
 
   it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])('returns null for an invalid price (%s)', async (price) => {

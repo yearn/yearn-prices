@@ -208,6 +208,54 @@ describe('HistoricalSourceRegistry', () => {
       expect(settled.get(1)).toEqual({ status: 'rejected', reason: rateLimited })
     })
 
+    it('sends only the failed group\'s pairs past the batch source single lookup', async () => {
+      const single = vi.fn(async () => HISTORICAL_PRICE)
+      const rateLimited = new ApiError('RATE_LIMITED', 'defillama 429')
+      const batch: HistoricalPriceSource = {
+        ...historicalSource('defillama', 10, single),
+        getBatchHistoricalPrices: async (targets, _onResolved, onFailed) => {
+          onFailed?.([targets[0]], rateLimited)
+          return []
+        }
+      }
+      const fallback = vi.fn(async () => null)
+      const registry = new HistoricalSourceRegistry([batch, historicalSource('chainlink', 20, fallback)])
+      const { settled, onSettled } = settle()
+
+      await registry.resolveBatch([target(1), target(2)], onSettled)
+
+      expect(single).toHaveBeenCalledTimes(1)
+      expect(single).toHaveBeenCalledWith(1, '0xtoken', 2)
+      expect(settled.get(1)).toEqual({ status: 'rejected', reason: rateLimited })
+      expect(settled.get(2)).toEqual({ status: 'fulfilled', value: { ...HISTORICAL_PRICE, source: 'defillama' } })
+    })
+
+    it('falls through to the rest of the chain when the batch stage outruns its budget', async () => {
+      vi.useFakeTimers()
+      try {
+        const single = vi.fn(async () => HISTORICAL_PRICE)
+        const batch: HistoricalPriceSource = {
+          ...historicalSource('defillama', 10, single),
+          getBatchHistoricalPrices: () => new Promise(() => {})
+        }
+        const fallback = vi.fn(async () => ({ ...HISTORICAL_PRICE, price: 9 }))
+        const registry = new HistoricalSourceRegistry([batch, historicalSource('chainlink', 20, fallback)])
+        const { settled, onSettled } = settle()
+
+        const work = registry.resolveBatch([target(1)], onSettled)
+        await vi.advanceTimersByTimeAsync(2_500)
+        await work
+
+        expect(single).not.toHaveBeenCalled()
+        expect(settled.get(1)).toEqual({
+          status: 'fulfilled',
+          value: { ...HISTORICAL_PRICE, price: 9, source: 'chainlink' }
+        })
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
     it('runs the full chain for targets the batch source does not support', async () => {
       const batchCall = vi.fn(async () => [])
       const batch: HistoricalPriceSource = {
@@ -225,7 +273,7 @@ describe('HistoricalSourceRegistry', () => {
 
       await registry.resolveBatch([target(1, 999)], onSettled)
 
-      expect(batchCall).toHaveBeenCalledWith([], expect.any(Function))
+      expect(batchCall).toHaveBeenCalledWith([], expect.any(Function), expect.any(Function))
       expect(settled.get(1)).toEqual({
         status: 'fulfilled',
         value: { ...HISTORICAL_PRICE, price: 9, source: 'onchain' }
