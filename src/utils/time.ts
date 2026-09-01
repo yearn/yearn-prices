@@ -31,10 +31,6 @@ export function isClosedDay(timestamp: number, now = nowUnix()): boolean {
   return normalizeToEndOfDay(timestamp) < currentUtcDayEnd(now)
 }
 
-export function previousClosedDayEnd(now = nowUnix()): number {
-  return currentUtcDayEnd(now) - DAY_SECONDS
-}
-
 export function toFetchTimestamp(timestamp: number, currentTimestamp = nowUnix()): number {
   return isTodayNormalized(timestamp, currentTimestamp) ? currentTimestamp : timestamp
 }

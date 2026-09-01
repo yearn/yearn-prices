@@ -4,18 +4,10 @@ import { getBatchHistoricalPrices } from '../../db'
 import { jsonResponse } from '../../http'
 import { type HistoricalSourceRegistry, historicalSourceRegistry } from '../../registries'
 import type { Env, HistoricalRequestTuple, PriceSource } from '../../types'
-import {
-  chainNameToId,
-  isClosedDay,
-  isTodayNormalized,
-  parseBatchCoins,
-  parseOptionalSource,
-  toFetchTimestamp
-} from '../../utils'
+import { chainNameToId, isClosedDay, parseBatchCoins, parseOptionalSource, toFetchTimestamp } from '../../utils'
 import {
   buildOriginalKeyMap,
   buildTokenKey,
-  carryOpenDayFromLastClose,
   groupRowsByToken,
   persistResolvedPrices,
   type ResolvedPriceRecord,
@@ -131,17 +123,10 @@ export async function handleBatchHistorical(
       }
     }
     if (missByKey.size > 0) {
-      const misses = [...missByKey.values()]
-      const openDayMisses = misses.filter((miss) => isTodayNormalized(miss.timestamp))
-      const upstreamMisses = misses.filter((miss) => !isTodayNormalized(miss.timestamp))
-      const carried = await carryOpenDayFromLastClose(pool, openDayMisses, source)
-      rows.push(...carried)
-      if (upstreamMisses.length > 0) {
-        const resolved = await resolveMisses(registry ?? historicalSourceRegistry(env), upstreamMisses)
-        if (resolved.length > 0) {
-          allPersisted = (await persistResolvedPrices(pool, resolved)) === resolved.length
-          rows.push(...resolved)
-        }
+      const resolved = await resolveMisses(registry ?? historicalSourceRegistry(env), [...missByKey.values()])
+      if (resolved.length > 0) {
+        allPersisted = (await persistResolvedPrices(pool, resolved)) === resolved.length
+        rows.push(...resolved)
       }
     }
   }

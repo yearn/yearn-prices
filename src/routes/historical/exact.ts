@@ -12,7 +12,7 @@ import {
   parseTokenKey,
   toFetchTimestamp
 } from '../../utils'
-import { carryOpenDayFromLastClose, persistResolvedPrices } from './shared'
+import { persistResolvedPrices } from './shared'
 
 export async function handleHistorical(
   request: Request,
@@ -27,30 +27,6 @@ export async function handleHistorical(
   const source = parseOptionalSource(new URL(request.url).searchParams.get('source'))
 
   const record = await getExactHistoricalPrice(pool, { chain, token, timestamp }, source)
-  if (!record && isTodayNormalized(timestamp) && !source) {
-    const [carried] = await carryOpenDayFromLastClose(pool, [{ chain, token, timestamp }])
-    if (carried) {
-      return jsonResponse(
-        {
-          coins: {
-            [tokenKeySegment]: {
-              price: carried.price,
-              symbol: carried.symbol,
-              timestamp,
-              confidence: carried.confidence,
-              source: carried.source
-            }
-          }
-        },
-        {
-          headers: {
-            'cache-control': CACHE_CONTROL_TODAY
-          }
-        }
-      )
-    }
-    throw new ApiError('NOT_FOUND', `No historical price found for ${tokenKey} at ${timestamp}`)
-  }
 
   if (!record && !source) {
     const chainId = chainNameToId(chain)

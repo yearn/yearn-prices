@@ -1,15 +1,15 @@
 import type { Pool } from '@neondatabase/serverless'
 import { DEFI_LLAMA_SEARCH_WIDTH_SECONDS } from '../../clients/defillama'
-import { getBatchHistoricalPrices, insertTokenPrices } from '../../db'
+import { insertTokenPrices } from '../../db'
 import { ensure } from '../../http'
-import type {
-  BatchHistoricalResponseCoin,
-  ExactPriceRecord,
-  HistoricalRequestTuple,
-  PriceSource,
-  RangeRequest
-} from '../../types'
-import { isClosedDay, normalizedDaysInRange, parseTokenKey, previousClosedDayEnd } from '../../utils'
+import type { BatchHistoricalResponseCoin, ExactPriceRecord, HistoricalRequestTuple, RangeRequest } from '../../types'
+import {
+  currentUtcDayEnd,
+  normalizedDaysInRange,
+  normalizeToEndOfDay,
+  parseTokenKey,
+  toFetchTimestamp
+} from '../../utils'
 
 export interface ResolvedPriceRecord extends ExactPriceRecord {
   /** Timestamp of the underlying observation, not of the day it is keyed under. */
@@ -33,20 +33,23 @@ function isWithinObservationWindow(record: ResolvedPriceRecord): boolean {
   if (record.source === 'chainlink') {
     return true
   }
-  return Math.abs(record.observedAt - record.timestamp) <= DEFI_LLAMA_SEARCH_WIDTH_SECONDS
+  return Math.abs(record.observedAt - toFetchTimestamp(record.timestamp)) <= DEFI_LLAMA_SEARCH_WIDTH_SECONDS
+}
+
+function isPersistableDay(timestamp: number): boolean {
+  return normalizeToEndOfDay(timestamp) <= currentUtcDayEnd()
 }
 
 /**
- * Best-effort request-path persistence. Only closed past days are written:
- * a current- or future-day key was resolved at "now", and writing it under the
- * day-end key would freeze that intraday value as the day's permanent close
- * once the row turns immutable at midnight (the invariant src/routes/spot.ts
- * documents). A write failure is logged and swallowed — the response already
+ * Best-effort request-path persistence. Closed past days and the current UTC
+ * day are written (today as a mutable row) so a DeFiLlama fill is a table hit
+ * for the rest of the day and does not 429-stampede. Future-day keys are not
+ * written. A write failure is logged and swallowed — the response already
  * holds the prices, and a persistence fault must not turn a serveable 200 into
  * a 500.
  */
 export async function persistResolvedPrices(pool: Pool, records: ResolvedPriceRecord[]): Promise<number> {
-  const rows = records.filter((record) => isClosedDay(record.timestamp) && isWithinObservationWindow(record))
+  const rows = records.filter((record) => isPersistableDay(record.timestamp) && isWithinObservationWindow(record))
   if (rows.length === 0) {
     return 0
   }
@@ -67,37 +70,6 @@ export async function persistResolvedPrices(pool: Pool, records: ResolvedPriceRe
 
 export function buildTokenKey(chain: string, token: string): string {
   return `${chain}:${token}`
-}
-
-/**
- * The open UTC day is not written on the request path (see persistResolvedPrices).
- * Serving last close under the *requested* day-end lets Kong batchHistorical match
- * utcDayStart(price.timestamp) === utcDayStart(request) without calling DeFiLlama.
- */
-export async function carryOpenDayFromLastClose(
-  pool: Pool,
-  openDayMisses: HistoricalRequestTuple[],
-  source?: PriceSource
-): Promise<ExactPriceRecord[]> {
-  if (openDayMisses.length === 0) {
-    return []
-  }
-
-  const previousTimestamp = previousClosedDayEnd()
-  const previousRows = await getBatchHistoricalPrices(
-    pool,
-    openDayMisses.map((miss) => ({ chain: miss.chain, token: miss.token, timestamp: previousTimestamp })),
-    source
-  )
-  const previousByToken = new Map(previousRows.map((row) => [buildTokenKey(row.chain, row.token), row]))
-  const carried: ExactPriceRecord[] = []
-  for (const miss of openDayMisses) {
-    const previous = previousByToken.get(buildTokenKey(miss.chain, miss.token))
-    if (previous) {
-      carried.push({ ...previous, timestamp: miss.timestamp })
-    }
-  }
-  return carried
 }
 
 export function buildOriginalKeyMap(raw: string): Map<string, string> {
