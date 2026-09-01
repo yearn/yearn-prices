@@ -208,7 +208,7 @@ describe('HistoricalSourceRegistry', () => {
       expect(settled.get(1)).toEqual({ status: 'rejected', reason: rateLimited })
     })
 
-    it('sends only the failed group\'s pairs past the batch source single lookup', async () => {
+    it("sends only the failed group's pairs past the batch source single lookup", async () => {
       const single = vi.fn(async () => HISTORICAL_PRICE)
       const rateLimited = new ApiError('RATE_LIMITED', 'defillama 429')
       const batch: HistoricalPriceSource = {

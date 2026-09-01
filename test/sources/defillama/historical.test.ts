@@ -122,7 +122,7 @@ describe('createDefiLlamaHistoricalSource', () => {
     expect(getBatchHistorical).toHaveBeenCalledTimes(2)
   })
 
-  it('reports only the failed group\'s targets to onFailed', async () => {
+  it("reports only the failed group's targets to onFailed", async () => {
     const timestamp = 1695254399
     const tokens = Array.from({ length: 6 }, (_, index) => `0x${String(index + 1).repeat(40)}`)
     const getBatchHistorical = vi
