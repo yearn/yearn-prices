@@ -157,6 +157,82 @@ describe('HistoricalSourceRegistry', () => {
     })
   })
 
+  describe('resolveBatch', () => {
+    const target = (timestamp: number, chainId = 1) => ({ chainId, token: '0xtoken', timestamp })
+    const settle = () => {
+      const settled = new Map<number, PromiseSettledResult<HistoricalPrice>>()
+      return {
+        settled,
+        onSettled: (t: { timestamp: number }, r: PromiseSettledResult<HistoricalPrice>) => settled.set(t.timestamp, r)
+      }
+    }
+
+    it('sends only batch-unresolved targets through the source chain, batch source included', async () => {
+      const single = vi.fn(async () => HISTORICAL_PRICE)
+      const batch: HistoricalPriceSource = {
+        ...historicalSource('defillama', 10, single),
+        getBatchHistoricalPrices: async (targets) => [{ target: targets[0], price: { ...HISTORICAL_PRICE, price: 5 } }]
+      }
+      const fallback = vi.fn(async () => HISTORICAL_PRICE)
+      const registry = new HistoricalSourceRegistry([historicalSource('chainlink', 20, fallback), batch])
+      const { settled, onSettled } = settle()
+
+      await registry.resolveBatch([target(1), target(2)], onSettled)
+
+      expect(settled.get(1)).toEqual({
+        status: 'fulfilled',
+        value: { ...HISTORICAL_PRICE, price: 5, source: 'defillama' }
+      })
+      expect(settled.get(2)).toEqual({ status: 'fulfilled', value: { ...HISTORICAL_PRICE, source: 'defillama' } })
+      expect(single).toHaveBeenCalledTimes(1)
+      expect(fallback).not.toHaveBeenCalled()
+    })
+
+    it('skips the batch source single lookup when its batch group failed, and reports the batch error', async () => {
+      const single = vi.fn(async () => HISTORICAL_PRICE)
+      const rateLimited = new ApiError('RATE_LIMITED', 'defillama 429')
+      const batch: HistoricalPriceSource = {
+        ...historicalSource('defillama', 10, single),
+        getBatchHistoricalPrices: async () => {
+          throw rateLimited
+        }
+      }
+      const fallback = vi.fn(async () => null)
+      const registry = new HistoricalSourceRegistry([batch, historicalSource('chainlink', 20, fallback)])
+      const { settled, onSettled } = settle()
+
+      await registry.resolveBatch([target(1)], onSettled)
+
+      expect(single).not.toHaveBeenCalled()
+      expect(fallback).toHaveBeenCalledTimes(1)
+      expect(settled.get(1)).toEqual({ status: 'rejected', reason: rateLimited })
+    })
+
+    it('runs the full chain for targets the batch source does not support', async () => {
+      const batchCall = vi.fn(async () => [])
+      const batch: HistoricalPriceSource = {
+        ...historicalSource(
+          'defillama',
+          10,
+          async () => HISTORICAL_PRICE,
+          (chainId) => chainId === 1
+        ),
+        getBatchHistoricalPrices: batchCall
+      }
+      const fallback = vi.fn(async () => ({ ...HISTORICAL_PRICE, price: 9 }))
+      const registry = new HistoricalSourceRegistry([batch, historicalSource('onchain', 30, fallback)])
+      const { settled, onSettled } = settle()
+
+      await registry.resolveBatch([target(1, 999)], onSettled)
+
+      expect(batchCall).toHaveBeenCalledWith([], expect.any(Function))
+      expect(settled.get(1)).toEqual({
+        status: 'fulfilled',
+        value: { ...HISTORICAL_PRICE, price: 9, source: 'onchain' }
+      })
+    })
+  })
+
   it('rejects duplicate historical source names', () => {
     expect(
       () =>

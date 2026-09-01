@@ -34,7 +34,8 @@ function marketPriceResolver(marketSources: HistoricalPriceSource[]) {
 export function createHistoricalSources(env?: Env): HistoricalPriceSource[] {
   // Halves the route's five-second resolution budget: the batch stage fires its
   // payload groups concurrently, so one hung stage costs one timeout and the
-  // single-coin fallback still gets the other half. Retrying every member of a
+  // single-coin fallback still gets the other half. The timeout is per attempt;
+  // 5xx responses still retry with backoff, and the route deadline bounds that. Retrying every member of a
   // rate-limited batch in lockstep amplifies the provider burst and blows that
   // budget; offline jobs keep their retry policy. The exact route shares this
   // client, so it also loses 429 retries — see docs/routes.md.
@@ -70,9 +71,12 @@ export class HistoricalSourceRegistry extends SourceRegistry<HistoricalPriceSour
   }
 
   /**
-   * Uses a provider-native batch method when available, then runs the remaining
-   * sources only for targets the batch did not resolve. Settlements are emitted
-   * as they happen so a route deadline can retain completed partial results.
+   * Uses a provider-native batch method when available, then runs the source
+   * chain for targets the batch did not resolve. A pair the batch matcher drops
+   * is still tried against the batch source's single lookup; a pair whose batch
+   * group failed skips that source, since the same client would fail again.
+   * Settlements are emitted as they happen so a route deadline can retain
+   * completed partial results.
    */
   async resolveBatch(
     targets: HistoricalPriceTarget[],
@@ -121,13 +125,18 @@ export class HistoricalSourceRegistry extends SourceRegistry<HistoricalPriceSour
 
     await Promise.all(
       [...pending.values()].map(async (target) => {
+        const batchError = batchErrors.get(key(target))
         try {
           onSettled(target, {
             status: 'fulfilled',
-            value: await this.resolve(target.chainId, target.token, target.timestamp)
+            value: await this.resolveSkipping(
+              batchError ? batchSource.name : undefined,
+              target.chainId,
+              target.token,
+              target.timestamp
+            )
           })
         } catch (reason) {
-          const batchError = batchErrors.get(key(target))
           const finalReason =
             reason instanceof ApiError && reason.code === 'NOT_FOUND' && batchError ? batchError : reason
           onSettled(target, { status: 'rejected', reason: finalReason })

@@ -50,10 +50,23 @@ export class SourceRegistry<TSource extends NamedSource, TArgs extends unknown[]
   }
 
   async resolve(chainId: number, token: string, ...args: TArgs): Promise<StampedPrice> {
+    return this.resolveSkipping(undefined, chainId, token, ...args)
+  }
+
+  /**
+   * Like resolve, but skips one source by name. Used when that source already
+   * answered for the pair through another code path and asking again is waste.
+   */
+  async resolveSkipping(
+    skip: string | undefined,
+    chainId: number,
+    token: string,
+    ...args: TArgs
+  ): Promise<StampedPrice> {
     let lastError: unknown
 
     for (const source of this.sources) {
-      if (!source.supports(chainId)) {
+      if (source.name === skip || !source.supports(chainId)) {
         continue
       }
 

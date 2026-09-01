@@ -98,21 +98,7 @@ async function resolveMisses(
   }
 
   const targets = [...targetToMiss.keys()]
-  const work =
-    typeof registry.resolveBatch === 'function'
-      ? registry.resolveBatch(targets, onSettled)
-      : Promise.all(
-          targets.map(async (target) => {
-            try {
-              onSettled(target, {
-                status: 'fulfilled',
-                value: await registry.resolve(target.chainId, target.token, target.timestamp)
-              })
-            } catch (reason) {
-              onSettled(target, { status: 'rejected', reason })
-            }
-          })
-        ).then(() => undefined)
+  const work = registry.resolveBatch(targets, onSettled)
 
   const remainingMs = Math.max(deadlineAt - Date.now(), 0)
   let timeoutId: ReturnType<typeof setTimeout> | undefined
