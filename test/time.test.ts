@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isTodayNormalized, normalizeToEndOfDay, toFetchTimestamp } from '../src/utils/time'
+import { isTodayNormalized, normalizeToEndOfDay, previousClosedDayEnd, toFetchTimestamp } from '../src/utils/time'
 
 const DAY = 86_400
 const NOW = 1_787_911_200
@@ -30,6 +30,13 @@ describe('isTodayNormalized', () => {
     expect(isTodayNormalized(DAY_START - 1, NOW)).toBe(false)
     expect(isTodayNormalized(NOW - DAY, NOW)).toBe(false)
     expect(isTodayNormalized(NOW + DAY, NOW)).toBe(false)
+  })
+})
+
+describe('previousClosedDayEnd', () => {
+  it('is yesterday 23:59:59 UTC', () => {
+    expect(previousClosedDayEnd(NOW)).toBe(DAY_START - 1)
+    expect(previousClosedDayEnd(DAY_START + 300)).toBe(DAY_START - 1)
   })
 })
 
