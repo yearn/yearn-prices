@@ -1,9 +1,15 @@
 import type { Pool } from '@neondatabase/serverless'
 import { DEFI_LLAMA_SEARCH_WIDTH_SECONDS } from '../../clients/defillama'
-import { insertTokenPrices } from '../../db'
+import { getBatchHistoricalPrices, insertTokenPrices } from '../../db'
 import { ensure } from '../../http'
-import type { BatchHistoricalResponseCoin, ExactPriceRecord, HistoricalRequestTuple, RangeRequest } from '../../types'
-import { isClosedDay, normalizedDaysInRange, parseTokenKey } from '../../utils'
+import type {
+  BatchHistoricalResponseCoin,
+  ExactPriceRecord,
+  HistoricalRequestTuple,
+  PriceSource,
+  RangeRequest
+} from '../../types'
+import { isClosedDay, normalizedDaysInRange, parseTokenKey, previousClosedDayEnd } from '../../utils'
 
 export interface ResolvedPriceRecord extends ExactPriceRecord {
   /** Timestamp of the underlying observation, not of the day it is keyed under. */
@@ -61,6 +67,37 @@ export async function persistResolvedPrices(pool: Pool, records: ResolvedPriceRe
 
 export function buildTokenKey(chain: string, token: string): string {
   return `${chain}:${token}`
+}
+
+/**
+ * The open UTC day is not written on the request path (see persistResolvedPrices).
+ * Serving last close under the *requested* day-end lets Kong batchHistorical match
+ * utcDayStart(price.timestamp) === utcDayStart(request) without calling DeFiLlama.
+ */
+export async function carryOpenDayFromLastClose(
+  pool: Pool,
+  openDayMisses: HistoricalRequestTuple[],
+  source?: PriceSource
+): Promise<ExactPriceRecord[]> {
+  if (openDayMisses.length === 0) {
+    return []
+  }
+
+  const previousTimestamp = previousClosedDayEnd()
+  const previousRows = await getBatchHistoricalPrices(
+    pool,
+    openDayMisses.map((miss) => ({ chain: miss.chain, token: miss.token, timestamp: previousTimestamp })),
+    source
+  )
+  const previousByToken = new Map(previousRows.map((row) => [buildTokenKey(row.chain, row.token), row]))
+  const carried: ExactPriceRecord[] = []
+  for (const miss of openDayMisses) {
+    const previous = previousByToken.get(buildTokenKey(miss.chain, miss.token))
+    if (previous) {
+      carried.push({ ...previous, timestamp: miss.timestamp })
+    }
+  }
+  return carried
 }
 
 export function buildOriginalKeyMap(raw: string): Map<string, string> {
