@@ -187,6 +187,19 @@ describe('fetchJsonWithRetry opt-in hardening', () => {
     expect(onRetry.mock.calls[0][1]).toBe(3000)
   })
 
+  it('can surface the first rate limit without retrying', async () => {
+    const fetchMock = stubFetch(Response.json({}, { status: 429 }), Response.json({ ok: true }))
+
+    await expect(
+      fetchJsonWithRetry(URL_UNDER_TEST, {
+        service: 'Test',
+        rateLimiter: limiter(),
+        retryRateLimits: false
+      })
+    ).rejects.toMatchObject({ responseStatus: 429, attempts: 1 })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('honors a Retry-After HTTP-date header', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-08-19T00:00:00.000Z'))

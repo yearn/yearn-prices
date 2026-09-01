@@ -7,7 +7,7 @@ import { createMarketPriceResolver } from '../src/registries/market-price'
 import { handleBatchHistorical } from '../src/routes/historical/batch'
 import { handleRangeHistorical } from '../src/routes/historical/range'
 import { createOnchainHistoricalSource } from '../src/sources/onchain'
-import type { HistoricalPriceSource } from '../src/sources/types'
+import type { HistoricalPriceSource, HistoricalPriceTarget } from '../src/sources/types'
 import type { Env } from '../src/types'
 import { normalizeToEndOfDay } from '../src/utils'
 import { BLOCK_TIMESTAMP, fakeClient } from './sources/onchain/helpers'
@@ -40,24 +40,43 @@ function pool(rows: unknown[]): Pool {
   return { query: vi.fn(async () => ({ rows, rowCount: rows.length })) } as unknown as Pool
 }
 
-function notFoundRegistry(): HistoricalSourceRegistry {
+function mockRegistry(resolve: (chainId: number, token: string, timestamp: number) => Promise<unknown>) {
   return {
-    resolve: vi.fn(async () => {
-      throw new ApiError('NOT_FOUND', 'No historical price available for this token')
-    })
+    resolve,
+    resolveBatch: (targets: HistoricalPriceTarget[], onSettled: (t: HistoricalPriceTarget, r: unknown) => void) =>
+      Promise.all(
+        targets.map(async (target) => {
+          try {
+            onSettled(target, {
+              status: 'fulfilled',
+              value: await resolve(target.chainId, target.token, target.timestamp)
+            })
+          } catch (reason) {
+            onSettled(target, { status: 'rejected', reason })
+          }
+        })
+      ).then(() => undefined)
   } as unknown as HistoricalSourceRegistry
 }
 
+function notFoundRegistry(): HistoricalSourceRegistry {
+  return mockRegistry(
+    vi.fn(async () => {
+      throw new ApiError('NOT_FOUND', 'No historical price available for this token')
+    })
+  )
+}
+
 function resolvingRegistry(price: number): HistoricalSourceRegistry {
-  return {
-    resolve: vi.fn(async (_chainId: number, _token: string, timestamp: number) => ({
+  return mockRegistry(
+    vi.fn(async (_chainId: number, _token: string, timestamp: number) => ({
       price,
       timestamp,
       symbol: 'WETH',
       confidence: 0.99,
       source: 'defillama'
     }))
-  } as unknown as HistoricalSourceRegistry
+  )
 }
 
 describe('handleBatchHistorical', () => {
@@ -134,12 +153,79 @@ describe('handleBatchHistorical', () => {
     })
   })
 
+  it('uses a provider batch method instead of one request per miss', async () => {
+    const otherAddress = '0x6b175474e89094c44da98b954eedeac495271d0f'
+    const getHistoricalPrice = vi.fn(async () => {
+      throw new Error('individual path should not run')
+    })
+    const getBatchHistoricalPrices = vi.fn(async (targets: HistoricalPriceTarget[]) =>
+      targets.map((target) => ({
+        target,
+        price: {
+          price: 2,
+          timestamp: target.timestamp,
+          symbol: 'TOKEN',
+          confidence: 0.99
+        }
+      }))
+    )
+    const source: HistoricalPriceSource = {
+      name: 'defillama',
+      priority: 10,
+      supports: () => true,
+      getHistoricalPrice,
+      getBatchHistoricalPrices
+    }
+    const registry = new HistoricalSourceRegistry([source])
+
+    const response = await handleBatchHistorical(
+      url('batchHistorical', {
+        [CHECKSUM_KEY]: [DAY_ONE],
+        [`ethereum:${otherAddress}`]: [DAY_ONE]
+      }),
+      ENV,
+      pool([]),
+      registry
+    )
+
+    expect(response.status).toBe(200)
+    expect(getBatchHistoricalPrices).toHaveBeenCalledTimes(1)
+    expect(getBatchHistoricalPrices.mock.calls[0][0]).toHaveLength(2)
+    expect(getHistoricalPrice).not.toHaveBeenCalled()
+  })
+
+  it('returns completed partial results when the route resolution deadline expires', async () => {
+    vi.useFakeTimers()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const registry = mockRegistry(vi.fn(() => new Promise<never>(() => undefined)))
+
+    try {
+      const responsePromise = handleBatchHistorical(
+        url('batchHistorical', { [CHECKSUM_KEY]: [DAY_ONE, DAY_TWO] }),
+        ENV,
+        pool([row(DAY_ONE, '1')]),
+        registry
+      )
+      await vi.advanceTimersByTimeAsync(5_000)
+      const response = await responsePromise
+
+      expect(response.status).toBe(200)
+      const body = (await response.json()) as { coins: Record<string, { prices: unknown[] }> }
+      expect(body.coins[CHECKSUM_KEY].prices).toHaveLength(1)
+      expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('batch-resolution-deadline'))
+    } finally {
+      warn.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
   it('leaves a failed upstream resolution absent instead of failing the batch', async () => {
-    const registry = {
-      resolve: vi.fn(async () => {
+    const registry = mockRegistry(
+      vi.fn(async () => {
         throw new Error('defillama 503')
       })
-    } as unknown as HistoricalSourceRegistry
+    )
 
     const response = await handleBatchHistorical(
       url('batchHistorical', { [CHECKSUM_KEY]: [DAY_ONE, DAY_TWO] }),
@@ -194,15 +280,15 @@ describe('handleBatchHistorical', () => {
   })
 
   it('does not mark a batch immutable when a resolution falls outside the observation window', async () => {
-    const registry = {
-      resolve: vi.fn(async (_chainId: number, _token: string, timestamp: number) => ({
+    const registry = mockRegistry(
+      vi.fn(async (_chainId: number, _token: string, timestamp: number) => ({
         price: 2,
         timestamp: timestamp - 86_400,
         symbol: 'WETH',
         confidence: 0.99,
         source: 'defillama'
       }))
-    } as unknown as HistoricalSourceRegistry
+    )
 
     const response = await handleBatchHistorical(
       url('batchHistorical', { [CHECKSUM_KEY]: [DAY_ONE, DAY_TWO] }),
@@ -219,15 +305,15 @@ describe('handleBatchHistorical', () => {
 
   it('serves but does not persist a derived observation outside the search window', async () => {
     const queryPool = pool([])
-    const registry = {
-      resolve: vi.fn(async (_chainId: number, _token: string, timestamp: number) => ({
+    const registry = mockRegistry(
+      vi.fn(async (_chainId: number, _token: string, timestamp: number) => ({
         price: 2,
         timestamp: timestamp - 2 * 86_400,
         symbol: 'WETH',
         confidence: 0.99,
         source: 'derived'
       }))
-    } as unknown as HistoricalSourceRegistry
+    )
 
     const response = await handleBatchHistorical(
       url('batchHistorical', { [CHECKSUM_KEY]: [DAY_ONE] }),
@@ -250,15 +336,15 @@ describe('handleBatchHistorical', () => {
 
   it('persists a chainlink observation older than the search window', async () => {
     const queryPool = pool([])
-    const registry = {
-      resolve: vi.fn(async (_chainId: number, _token: string, timestamp: number) => ({
+    const registry = mockRegistry(
+      vi.fn(async (_chainId: number, _token: string, timestamp: number) => ({
         price: 2,
         timestamp: timestamp - 2 * 86_400,
         symbol: 'WETH',
         confidence: 0.99,
         source: 'chainlink'
       }))
-    } as unknown as HistoricalSourceRegistry
+    )
 
     const response = await handleBatchHistorical(
       url('batchHistorical', { [CHECKSUM_KEY]: [DAY_ONE] }),
@@ -373,14 +459,14 @@ describe('handleBatchHistorical', () => {
     const OTHER_ADDR = '0x6b175474e89094c44da98b954eedeac495271d0f'
     const OTHER_KEY = `ethereum:${OTHER_ADDR}`
     const blockedDays = Array.from({ length: 12 }, (_, index) => DAY_ONE - index * 86_400)
-    const registry = {
-      resolve: vi.fn(async (_chainId: number, token: string, timestamp: number) => {
+    const registry = mockRegistry(
+      vi.fn(async (_chainId: number, token: string, timestamp: number) => {
         if (token.toLowerCase() !== OTHER_ADDR) {
           throw new Error('defillama 503')
         }
         return { price: 7, timestamp, symbol: 'DAI', confidence: 0.99, source: 'defillama' }
       })
-    } as unknown as HistoricalSourceRegistry
+    )
 
     const response = await handleBatchHistorical(
       url('batchHistorical', { [CHECKSUM_KEY]: blockedDays, [OTHER_KEY]: [DAY_TWO] }),

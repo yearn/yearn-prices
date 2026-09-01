@@ -10,6 +10,8 @@ import {
   readEdgeCache,
   writeEdgeCache
 } from '../src/cache'
+import worker from '../src/index'
+import type { Env } from '../src/types'
 import { normalizeToEndOfDay } from '../src/utils'
 
 const BASE = 'https://svc/api/prices/spot'
@@ -69,6 +71,27 @@ describe('canonicalCacheKey', () => {
       })
     )
     expect(a).toBe(b)
+  })
+
+  it('normalizes, sorts, and deduplicates batch timestamps by UTC day', () => {
+    const dayOneMorning = 1695196800
+    const dayOneEvening = 1695250000
+    const dayTwoMorning = dayOneMorning + 86_400
+    const token = 'ethereum:0xaaa0000000000000000000000000000000000000'
+    const a = canonicalCacheKey(batchUrl('batchHistorical', { [token]: [dayTwoMorning, dayOneMorning, dayOneEvening] }))
+    const b = canonicalCacheKey(
+      batchUrl('batchHistorical', { [token]: [String(dayOneEvening), String(dayTwoMorning)] })
+    )
+
+    expect(a).toBe(b)
+  })
+
+  it('keeps batch timestamps from different UTC days distinct', () => {
+    const token = 'ethereum:0xaaa0000000000000000000000000000000000000'
+    const a = canonicalCacheKey(batchUrl('batchHistorical', { [token]: [1695196800] }))
+    const b = canonicalCacheKey(batchUrl('batchHistorical', { [token]: [1695283200] }))
+
+    expect(a).not.toBe(b)
   })
 
   it('ignores query-parameter ordering', () => {
@@ -162,6 +185,32 @@ describe('readEdgeCache / writeEdgeCache', () => {
 
     await expect(response.text()).resolves.toBe('{"coins":{}}')
     await expect(store.get(canonicalCacheKey(request.url))!.text()).resolves.toBe('{"coins":{}}')
+  })
+})
+
+describe('validation before the edge-cache read', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('rejects an over-limit batch payload without consulting the cache', async () => {
+    const { cache } = stubEdgeCache()
+    const coins = { [TOKEN]: Array.from({ length: 91 }, () => PAST) }
+    const request = new Request(batchUrl('batchHistorical', coins), {
+      headers: { authorization: 'Bearer k' }
+    })
+
+    const response = await worker.fetch(
+      request,
+      { API_KEY_TEST: 'k' } as unknown as Env,
+      {
+        waitUntil: vi.fn()
+      } as unknown as ExecutionContext
+    )
+
+    expect(response.status).toBe(400)
+    expect(cache.match).not.toHaveBeenCalled()
   })
 })
 

@@ -16,6 +16,7 @@ export interface DefiLlamaRequestOptions {
   timeoutMs?: number
   honorRetryAfter?: boolean
   retryAfterCapMs?: number
+  retryRateLimits?: boolean
   retryTransportErrors?: boolean
   retryInvalidJson?: boolean
 }

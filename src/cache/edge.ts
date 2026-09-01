@@ -17,13 +17,13 @@ export function canonicalCacheKey(rawUrl: string): string {
   const url = new URL(rawUrl)
   const coins = url.searchParams.get('coins')
   if (coins !== null) {
-    url.searchParams.set('coins', canonicalizeCoins(coins))
+    url.searchParams.set('coins', canonicalizeCoins(coins, url.pathname))
   }
   url.searchParams.sort()
   return url.toString()
 }
 
-function canonicalizeCoins(raw: string): string {
+function canonicalizeCoins(raw: string, pathname: string): string {
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
@@ -31,14 +31,50 @@ function canonicalizeCoins(raw: string): string {
     return raw // not JSON — leave untouched; the handler will reject it.
   }
 
-  // The spot payload is a top-level array of token-key strings — order is irrelevant,
-  // so sort it. Batch/range payloads are objects keyed by token; their array *values*
-  // (timestamp sets / [start, end]) are positional, so nested arrays are never reordered
-  // — sorting them would collapse a valid [start, end] range onto its invalid mirror.
+  // The spot payload is a top-level array of token-key strings, so sort it.
+  // Batch timestamp arrays are sets and are normalized separately by UTC day.
+  // Range [start, end] arrays stay positional: sorting them would collapse a
+  // valid range onto its invalid mirror.
   if (Array.isArray(parsed)) {
     return JSON.stringify(parsed.map(canonicalizeValue).sort())
   }
+  if (pathname === '/api/prices/batchHistorical') {
+    return JSON.stringify(canonicalizeBatchValue(parsed))
+  }
   return JSON.stringify(canonicalizeValue(parsed))
+}
+
+function canonicalizeBatchValue(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return canonicalizeValue(value)
+  }
+
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    const timestamps = (value as Record<string, unknown>)[key]
+    if (!Array.isArray(timestamps)) {
+      out[key.toLowerCase()] = canonicalizeValue(timestamps)
+      continue
+    }
+    const normalized: number[] = []
+    let valid = true
+    for (const timestamp of timestamps) {
+      if (!(typeof timestamp === 'number' || /^\d+$/.test(String(timestamp)))) {
+        valid = false
+        break
+      }
+      const numeric = Number(timestamp)
+      if (!Number.isFinite(numeric)) {
+        valid = false
+        break
+      }
+      normalized.push(Math.floor(numeric / 86_400) * 86_400 + 86_399)
+    }
+    out[key.toLowerCase()] = valid
+      ? [...new Set(normalized)].sort((left, right) => left - right)
+      : canonicalizeValue(timestamps)
+  }
+  return out
 }
 
 function canonicalizeValue(value: unknown): unknown {

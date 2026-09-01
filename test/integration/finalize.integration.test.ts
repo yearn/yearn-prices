@@ -154,7 +154,7 @@ describe('finalization writes', () => {
       'LOCK TABLE token_prices IN SHARE ROW EXCLUSIVE MODE'
     ])
     expect(statements.at(-1)).toBe('COMMIT')
-    expect(statements.filter((statement) => statement.startsWith('WITH requested'))).toHaveLength(1)
+    expect(statements.filter((statement) => statement.startsWith('SELECT DISTINCT ON'))).toHaveLength(1)
   })
 
   it('performs no network work inside the transaction', async () => {

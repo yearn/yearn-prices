@@ -40,6 +40,116 @@ describe('createDefiLlamaHistoricalSource', () => {
     await expect(source.getHistoricalPrice(1, ADDRESS, 100)).resolves.toBeNull()
   })
 
+  it('resolves multiple targets through the provider batch endpoint', async () => {
+    const secondAddress = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'
+    const timestamp = 1695254399
+    const getBatchHistorical = vi.fn(async () => ({
+      coins: {
+        [`ethereum:${ADDRESS}`]: {
+          symbol: 'WETH',
+          prices: [{ price: 1800, timestamp, confidence: 0.99 }]
+        },
+        [`ethereum:${secondAddress}`]: {
+          symbol: 'USDC',
+          prices: [{ price: 1, timestamp, confidence: 0.98 }]
+        }
+      }
+    }))
+    const source = createDefiLlamaHistoricalSource({ getBatchHistorical } as unknown as DefiLlamaClient)
+    const targets = [
+      { chainId: 1, token: ADDRESS, timestamp },
+      { chainId: 1, token: secondAddress, timestamp }
+    ]
+
+    await expect(source.getBatchHistoricalPrices(targets)).resolves.toEqual([
+      {
+        target: targets[0],
+        price: { price: 1800, timestamp, symbol: 'WETH', confidence: 0.99 }
+      },
+      {
+        target: targets[1],
+        price: { price: 1, timestamp, symbol: 'USDC', confidence: 0.98 }
+      }
+    ])
+    expect(getBatchHistorical).toHaveBeenCalledTimes(1)
+    expect(getBatchHistorical).toHaveBeenCalledWith({
+      [`ethereum:${ADDRESS}`]: [timestamp],
+      [`ethereum:${secondAddress}`]: [timestamp]
+    })
+  })
+
+  it('keeps requesting later payload groups after one group fails', async () => {
+    const timestamp = 1695254399
+    const tokens = Array.from({ length: 6 }, (_, index) => `0x${String(index + 1).repeat(40)}`)
+    const getBatchHistorical = vi
+      .fn()
+      .mockRejectedValueOnce(new ApiError('INTERNAL_ERROR', 'rate limited'))
+      .mockResolvedValueOnce({
+        coins: {
+          [`ethereum:${tokens[5]}`]: { symbol: 'LAST', prices: [{ price: 7, timestamp, confidence: 0.9 }] }
+        }
+      })
+    const source = createDefiLlamaHistoricalSource({ getBatchHistorical } as unknown as DefiLlamaClient)
+    const targets = tokens.map((token) => ({ chainId: 1, token, timestamp }))
+
+    await expect(source.getBatchHistoricalPrices(targets)).resolves.toEqual([
+      { target: targets[5], price: { price: 7, timestamp, symbol: 'LAST', confidence: 0.9 } }
+    ])
+    expect(getBatchHistorical).toHaveBeenCalledTimes(2)
+  })
+
+  it('requests payload groups concurrently so one hung group cannot eat the route budget', async () => {
+    const timestamp = 1695254399
+    const tokens = Array.from({ length: 6 }, (_, index) => `0x${String(index + 1).repeat(40)}`)
+    let started = 0
+    let release: () => void = () => {}
+    const bothStarted = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const getBatchHistorical = vi.fn(async () => {
+      started += 1
+      if (started === 2) release()
+      await bothStarted
+      return { coins: {} }
+    })
+    const source = createDefiLlamaHistoricalSource({ getBatchHistorical } as unknown as DefiLlamaClient)
+
+    await Promise.race([
+      source.getBatchHistoricalPrices(tokens.map((token) => ({ chainId: 1, token, timestamp }))),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('payload groups ran sequentially')), 500))
+    ])
+
+    expect(getBatchHistorical).toHaveBeenCalledTimes(2)
+  })
+
+  it("reports the failed group's targets with its error and the answered group's without one", async () => {
+    const timestamp = 1695254399
+    const tokens = Array.from({ length: 6 }, (_, index) => `0x${String(index + 1).repeat(40)}`)
+    const getBatchHistorical = vi
+      .fn()
+      .mockRejectedValueOnce(new ApiError('INTERNAL_ERROR', 'rate limited'))
+      .mockResolvedValueOnce({ coins: {} })
+    const source = createDefiLlamaHistoricalSource({ getBatchHistorical } as unknown as DefiLlamaClient)
+    const targets = tokens.map((token) => ({ chainId: 1, token, timestamp }))
+    const onSettled = vi.fn()
+
+    await source.getBatchHistoricalPrices(targets, undefined, onSettled)
+
+    expect(onSettled).toHaveBeenCalledTimes(2)
+    expect(onSettled).toHaveBeenCalledWith(targets.slice(0, 5), expect.objectContaining({ code: 'INTERNAL_ERROR' }))
+    expect(onSettled).toHaveBeenCalledWith(targets.slice(5))
+  })
+
+  it('reports every target as failed when every payload group fails', async () => {
+    const getBatchHistorical = vi.fn().mockRejectedValue(new ApiError('INTERNAL_ERROR', 'rate limited'))
+    const source = createDefiLlamaHistoricalSource({ getBatchHistorical } as unknown as DefiLlamaClient)
+    const targets = [{ chainId: 1, token: ADDRESS, timestamp: 1695254399 }]
+    const onFailed = vi.fn()
+
+    await expect(source.getBatchHistoricalPrices(targets, undefined, onFailed)).resolves.toEqual([])
+    expect(onFailed).toHaveBeenCalledWith(targets, expect.objectContaining({ code: 'INTERNAL_ERROR' }))
+  })
+
   it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])('returns null for an invalid price (%s)', async (price) => {
     const source = createDefiLlamaHistoricalSource(
       client({

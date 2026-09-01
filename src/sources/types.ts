@@ -47,6 +47,17 @@ export interface HistoricalPriceResult {
   confidence: number | null
 }
 
+export interface HistoricalPriceTarget {
+  chainId: number
+  token: string
+  timestamp: number
+}
+
+export interface HistoricalBatchPrice {
+  target: HistoricalPriceTarget
+  price: HistoricalPriceResult
+}
+
 export interface HistoricalPriceSource {
   /** Stable id; stamped on every price this source returns. */
   name: string
@@ -61,4 +72,17 @@ export interface HistoricalPriceSource {
    * The registry guarantees `source` is stamped.
    */
   getHistoricalPrice(chainId: number, token: string, timestamp: number): Promise<HistoricalPriceResult | null>
+  /**
+   * Optional provider-native batch path. The registry falls back per unresolved
+   * target. `onSettled` reports a payload group's targets once that group is
+   * done: with an `error` when the group failed, so only those targets skip this
+   * source in the fallback chain, and without one when the group answered, so
+   * its unmatched targets keep their single-coin retry even if a sibling group
+   * is still running when the batch stage runs out of budget.
+   */
+  getBatchHistoricalPrices?(
+    targets: HistoricalPriceTarget[],
+    onResolved?: (entry: HistoricalBatchPrice) => void,
+    onSettled?: (targets: HistoricalPriceTarget[], error?: unknown) => void
+  ): Promise<HistoricalBatchPrice[]>
 }

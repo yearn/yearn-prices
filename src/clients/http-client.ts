@@ -63,6 +63,8 @@ export interface FetchJsonConfig {
   timeoutMs?: number
   honorRetryAfter?: boolean
   retryAfterCapMs?: number
+  // When false, surface the first 429 immediately instead of adding a synchronized retry burst.
+  retryRateLimits?: boolean
   // Retry a request that never reached the server (socket/DNS failure or timeout abort).
   retryTransportErrors?: boolean
   // Retry a 2xx response whose body fails JSON parsing (e.g. a truncated payload).
@@ -186,7 +188,7 @@ export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig
       throw new ApiError('NOT_FOUND', `${config.service} has no price for ${url}`)
     }
 
-    const shouldRetry = response.status === 429 || response.status >= 500
+    const shouldRetry = (response.status === 429 && config.retryRateLimits !== false) || response.status >= 500
     if (!shouldRetry || attempt === lastAttempt) {
       throw new HttpRequestError(
         'INTERNAL_ERROR',

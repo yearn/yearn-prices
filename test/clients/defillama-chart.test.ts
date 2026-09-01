@@ -180,4 +180,16 @@ describe('DefiLlamaClient.getChart', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(response.coins[WETH].prices).toHaveLength(5)
   })
+
+  it('fails immediately on a 429 when the caller opts out of rate-limit retries', async () => {
+    const fetchMock = stubFetch({ status: 429, body: { message: 'rate limited' } }, { body: multiDay })
+    const client = new DefiLlamaClient(undefined, undefined, { retryRateLimits: false })
+
+    await expect(client.getChart([WETH], { start: START, span: 5, period: '1d' })).rejects.toMatchObject({
+      responseStatus: 429,
+      attempts: 1
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
 })

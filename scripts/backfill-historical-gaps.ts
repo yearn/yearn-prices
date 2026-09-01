@@ -638,6 +638,7 @@ export function createChartFetcher(searchWidth: string): ChartFetch {
         timeoutMs: CHART_REQUEST_TIMEOUT_MS,
         honorRetryAfter: true,
         retryAfterCapMs: CHART_RETRY_AFTER_CAP_MS,
+        retryRateLimits: true,
         retryTransportErrors: true,
         retryInvalidJson: true
       }

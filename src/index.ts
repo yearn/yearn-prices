@@ -8,6 +8,7 @@ import { handleHistorical } from './routes/historical/exact'
 import { handleRangeHistorical } from './routes/historical/range'
 import { handleSpot } from './routes/spot'
 import type { Env } from './types'
+import { parseBatchCoins } from './utils'
 
 function logRequest(request: Request, clientId: string | null, extra?: Record<string, unknown>): void {
   console.info(
@@ -79,6 +80,13 @@ export default {
 
       ;({ clientId } = authenticateRequest(request, env))
       logRequest(request, clientId)
+
+      // The batch cache key normalizes timestamps by UTC day and dedupes them, so an
+      // over-limit payload shares a key with its valid twin. Reject it before the
+      // lookup, otherwise the limit holds only while the edge is cold.
+      if (pathname === '/api/prices/batchHistorical' && request.method === 'GET') {
+        parseBatchCoins(url.searchParams.get('coins'))
+      }
 
       // Serve from Cloudflare's edge cache before doing any work (Enso fetch / DB query).
       const cached = request.method === 'GET' ? await readEdgeCache(request) : undefined

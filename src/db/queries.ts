@@ -54,19 +54,16 @@ export async function getBatchHistoricalPrices(
     params.push(request.chain, request.token, unixToIsoTimestamp(request.timestamp))
   }
 
-  let sql = `
-    WITH requested(chain, token, timestamp) AS (
-      VALUES ${valuesSql.join(', ')}
-    )
-  `
+  const requestedSql = `(VALUES ${valuesSql.join(', ')}) AS r(chain, token, timestamp)`
+  let sql: string
 
   if (source) {
     params.push(source)
     const sourceIndex = params.length
-    sql += `
+    sql = `
       SELECT tp.chain, tp.token, tp.timestamp, tp.price, tp.symbol, tp.confidence, tp.source
       FROM token_prices tp
-      INNER JOIN requested r
+      INNER JOIN ${requestedSql}
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp = r.timestamp
@@ -74,11 +71,11 @@ export async function getBatchHistoricalPrices(
       ORDER BY tp.chain, tp.token, tp.timestamp
     `
   } else {
-    sql += `
+    sql = `
       SELECT DISTINCT ON (tp.chain, tp.token, tp.timestamp)
         tp.chain, tp.token, tp.timestamp, tp.price, tp.symbol, tp.confidence, tp.source
       FROM token_prices tp
-      INNER JOIN requested r
+      INNER JOIN ${requestedSql}
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp = r.timestamp
