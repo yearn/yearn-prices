@@ -72,7 +72,7 @@ export async function handleHistorical(
             observedAt: historical.timestamp
           }
         ])
- mar
+
         return jsonResponse(
           {
             coins: {
