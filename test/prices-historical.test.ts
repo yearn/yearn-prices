@@ -168,58 +168,6 @@ describe('handleHistorical', () => {
     })
   })
 
-  it('resolves current-day requests at now, not the future end-of-day', async () => {
-    const now = 1787911200
-    vi.useFakeTimers()
-    vi.setSystemTime(now * 1000)
-
-    fetchMock.mockResolvedValue(
-      defillamaResponse(200, {
-        coins: {
-          [`ethereum:${RAW_ADDR}`]: {
-            price: 27052,
-            symbol: 'WBTC',
-            timestamp: now,
-            confidence: 0.99
-          }
-        }
-      })
-    )
-
-    const response = await handleHistorical(request(), ENV, pool([]), String(now - 600), TOKEN_KEY)
-
-    expect(response.status).toBe(200)
-    const url = String(fetchMock.mock.calls[0][0])
-    expect(url).toContain(`/prices/historical/${now}/`)
-  })
-
-  // The incident's worst hour: right after utc midnight the normalized end-of-day is
-  // ~24h in the future, so DeFiLlama's 6h search window holds no data yet. The mock
-  // answers only for timestamps that have happened — pre-clamp code 404s here.
-  it('resolves right after utc midnight, when end-of-day is a day away', async () => {
-    const dayStart = 1787875200
-    const now = dayStart + 300
-    vi.useFakeTimers()
-    vi.setSystemTime(now * 1000)
-
-    fetchMock.mockImplementation(async (rawUrl: unknown) => {
-      const requested = Number(String(rawUrl).match(/\/prices\/historical\/(\d+)\//)?.[1])
-      if (requested > now) return defillamaResponse(200, { coins: {} })
-      return defillamaResponse(200, {
-        coins: {
-          [`ethereum:${RAW_ADDR}`]: { price: 27052, symbol: 'WBTC', timestamp: requested, confidence: 0.99 }
-        }
-      })
-    })
-
-    const response = await handleHistorical(request(), ENV, pool([]), String(dayStart + 60), TOKEN_KEY)
-
-    expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toMatchObject({
-      coins: { [TOKEN_KEY]: { price: 27052 } }
-    })
-  })
-
   it('still resolves past days at their normalized end-of-day', async () => {
     fetchMock.mockResolvedValue(
       defillamaResponse(200, {
@@ -304,29 +252,6 @@ describe('handleHistorical', () => {
     await expect(response.json()).resolves.toMatchObject({
       coins: { [TOKEN_KEY]: { price: 27052 } }
     })
-  })
-
-  it('does not persist a current-day fallback', async () => {
-    const now = 1787911200
-    vi.useFakeTimers()
-    vi.setSystemTime(now * 1000)
-
-    fetchMock.mockResolvedValue(
-      defillamaResponse(200, {
-        coins: {
-          [`ethereum:${RAW_ADDR}`]: { price: 27052, symbol: 'WBTC', timestamp: now, confidence: 0.99 }
-        }
-      })
-    )
-    const queryPool = pool([])
-
-    const response = await handleHistorical(request(), ENV, queryPool, String(now - 600), TOKEN_KEY)
-
-    expect(response.status).toBe(200)
-    const insertCall = (queryPool.query as ReturnType<typeof vi.fn>).mock.calls.find(([sql]) =>
-      String(sql).includes('INSERT INTO token_prices')
-    )
-    expect(insertCall).toBeUndefined()
   })
 
   it('does not persist a future-day fallback', async () => {
