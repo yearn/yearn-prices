@@ -51,8 +51,17 @@ export class DefiLlamaHistoricalSource extends HistoricalPriceSourceBase {
     }
 
     const resolved: HistoricalBatchPrice[] = []
+    let groupError: unknown
     for (const payload of buildDefiLlamaPayloads(grouped, currentTimestamp)) {
-      const response = await this.client.getBatchHistorical(payload)
+      let response: Awaited<ReturnType<DefiLlamaClient['getBatchHistorical']>>
+      try {
+        response = await this.client.getBatchHistorical(payload)
+      } catch (error) {
+        // One rate-limited or malformed group must not cancel the groups after
+        // it; their pairs would never be requested at all.
+        groupError ??= error
+        continue
+      }
       for (const [coinKey, fetchTimestamps] of Object.entries(payload)) {
         const samples = (response.coins?.[coinKey]?.prices ?? []).filter((sample) =>
           this.isUsablePrice(sample.price, sample.timestamp)
@@ -76,6 +85,9 @@ export class DefiLlamaHistoricalSource extends HistoricalPriceSourceBase {
           onResolved?.(entry)
         }
       }
+    }
+    if (resolved.length === 0 && groupError !== undefined) {
+      throw groupError
     }
     return resolved
   }

@@ -33,8 +33,10 @@ function marketPriceResolver(marketSources: HistoricalPriceSource[]) {
 
 export function createHistoricalSources(env?: Env): HistoricalPriceSource[] {
   // Leave enough room inside the route's five-second resolution budget to
-  // return already-completed partial results when the provider hangs.
-  const client = new DefiLlamaClient(undefined, undefined, { timeoutMs: 4_000 })
+  // return already-completed partial results when the provider hangs. Retrying
+  // every member of a rate-limited batch in lockstep amplifies the provider
+  // burst and blows that budget; offline jobs keep their retry policy.
+  const client = new DefiLlamaClient(undefined, undefined, { timeoutMs: 4_000, retryRateLimits: false })
   const marketSources = [
     createDefiLlamaHistoricalSource(client),
     createChainlinkHistoricalSource({ env }),
@@ -115,13 +117,12 @@ export class HistoricalSourceRegistry extends SourceRegistry<HistoricalPriceSour
       }
     }
 
-    const fallback = new HistoricalSourceRegistry(this.all().filter((source) => source !== batchSource))
     await Promise.all(
       [...pending.values()].map(async (target) => {
         try {
           onSettled(target, {
             status: 'fulfilled',
-            value: await fallback.resolve(target.chainId, target.token, target.timestamp)
+            value: await this.resolve(target.chainId, target.token, target.timestamp)
           })
         } catch (reason) {
           const batchError = batchErrors.get(key(target))

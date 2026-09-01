@@ -78,6 +78,35 @@ describe('createDefiLlamaHistoricalSource', () => {
     })
   })
 
+  it('keeps requesting later payload groups after one group fails', async () => {
+    const timestamp = 1695254399
+    const tokens = Array.from({ length: 6 }, (_, index) => `0x${String(index + 1).repeat(40)}`)
+    const getBatchHistorical = vi
+      .fn()
+      .mockRejectedValueOnce(new ApiError('INTERNAL_ERROR', 'rate limited'))
+      .mockResolvedValueOnce({
+        coins: {
+          [`ethereum:${tokens[5]}`]: { symbol: 'LAST', prices: [{ price: 7, timestamp, confidence: 0.9 }] }
+        }
+      })
+    const source = createDefiLlamaHistoricalSource({ getBatchHistorical } as unknown as DefiLlamaClient)
+    const targets = tokens.map((token) => ({ chainId: 1, token, timestamp }))
+
+    await expect(source.getBatchHistoricalPrices(targets)).resolves.toEqual([
+      { target: targets[5], price: { price: 7, timestamp, symbol: 'LAST', confidence: 0.9 } }
+    ])
+    expect(getBatchHistorical).toHaveBeenCalledTimes(2)
+  })
+
+  it('rethrows when every payload group fails', async () => {
+    const getBatchHistorical = vi.fn().mockRejectedValue(new ApiError('INTERNAL_ERROR', 'rate limited'))
+    const source = createDefiLlamaHistoricalSource({ getBatchHistorical } as unknown as DefiLlamaClient)
+
+    await expect(
+      source.getBatchHistoricalPrices([{ chainId: 1, token: ADDRESS, timestamp: 1695254399 }])
+    ).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
+  })
+
   it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])('returns null for an invalid price (%s)', async (price) => {
     const source = createDefiLlamaHistoricalSource(
       client({
