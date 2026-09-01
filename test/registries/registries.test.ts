@@ -256,6 +256,37 @@ describe('HistoricalSourceRegistry', () => {
       }
     })
 
+    it("keeps the single lookup for an answered group's pairs when a sibling group outruns the budget", async () => {
+      vi.useFakeTimers()
+      try {
+        const single = vi.fn(async () => HISTORICAL_PRICE)
+        const batch: HistoricalPriceSource = {
+          ...historicalSource('defillama', 10, single),
+          getBatchHistoricalPrices: (targets, _onResolved, onSettled) => {
+            onSettled?.([targets[1]])
+            return new Promise(() => {})
+          }
+        }
+        const fallback = vi.fn(async () => ({ ...HISTORICAL_PRICE, price: 9 }))
+        const registry = new HistoricalSourceRegistry([batch, historicalSource('chainlink', 20, fallback)])
+        const { settled, onSettled } = settle()
+
+        const work = registry.resolveBatch([target(1), target(2)], onSettled)
+        await vi.advanceTimersByTimeAsync(2_500)
+        await work
+
+        expect(single).toHaveBeenCalledTimes(1)
+        expect(single).toHaveBeenCalledWith(1, '0xtoken', 2)
+        expect(settled.get(2)).toEqual({ status: 'fulfilled', value: { ...HISTORICAL_PRICE, source: 'defillama' } })
+        expect(settled.get(1)).toEqual({
+          status: 'fulfilled',
+          value: { ...HISTORICAL_PRICE, price: 9, source: 'chainlink' }
+        })
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
     it('runs the full chain for targets the batch source does not support', async () => {
       const batchCall = vi.fn(async () => [])
       const batch: HistoricalPriceSource = {

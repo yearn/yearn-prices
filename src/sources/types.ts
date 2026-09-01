@@ -74,12 +74,15 @@ export interface HistoricalPriceSource {
   getHistoricalPrice(chainId: number, token: string, timestamp: number): Promise<HistoricalPriceResult | null>
   /**
    * Optional provider-native batch path. The registry falls back per unresolved
-   * target. `onFailed` reports the targets of a payload group that errored, so
-   * only those skip this source in the fallback chain.
+   * target. `onSettled` reports a payload group's targets once that group is
+   * done: with an `error` when the group failed, so only those targets skip this
+   * source in the fallback chain, and without one when the group answered, so
+   * its unmatched targets keep their single-coin retry even if a sibling group
+   * is still running when the batch stage runs out of budget.
    */
   getBatchHistoricalPrices?(
     targets: HistoricalPriceTarget[],
     onResolved?: (entry: HistoricalBatchPrice) => void,
-    onFailed?: (targets: HistoricalPriceTarget[], error: unknown) => void
+    onSettled?: (targets: HistoricalPriceTarget[], error?: unknown) => void
   ): Promise<HistoricalBatchPrice[]>
 }

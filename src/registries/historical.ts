@@ -79,8 +79,8 @@ export class HistoricalSourceRegistry extends SourceRegistry<HistoricalPriceSour
    * Uses a provider-native batch method when available, then runs the source
    * chain for targets the batch did not resolve. A pair the batch matcher drops
    * is still tried against the batch source's single lookup; a pair whose own
-   * payload group failed, or that is still pending when the batch stage runs out
-   * of budget, skips that source, since the same client would fail again.
+   * payload group failed, or whose group never answered before the batch stage
+   * ran out of budget, skips that source, since the same client would fail again.
    * Settlements are emitted as they happen so a route deadline can retain
    * completed partial results.
    */
@@ -119,21 +119,23 @@ export class HistoricalSourceRegistry extends SourceRegistry<HistoricalPriceSour
       pending.delete(entryKey)
       onSettled(target, { status: 'fulfilled', value: { ...entry.price, source: batchSource.name } })
     }
-    const markFailed = (failed: HistoricalPriceTarget[], error: unknown) => {
+    const answered = new Set<string>()
+    const markSettled = (settledTargets: HistoricalPriceTarget[], error?: unknown) => {
       if (!batchStageOpen) return
-      for (const target of failed) {
-        batchErrors.set(key(target), error)
+      for (const target of settledTargets) {
+        if (error === undefined) answered.add(key(target))
+        else batchErrors.set(key(target), error)
       }
     }
 
     const batchStage = batchSource
-      .getBatchHistoricalPrices(batchTargets, settleDirect, markFailed)
+      .getBatchHistoricalPrices(batchTargets, settleDirect, markSettled)
       .then((direct) => {
         for (const entry of direct) {
           settleDirect(entry)
         }
       })
-      .catch((error: unknown) => markFailed(batchTargets, error))
+      .catch((error: unknown) => markSettled(batchTargets, error))
 
     let timeoutId: ReturnType<typeof setTimeout> | undefined
     const timedOut = await Promise.race([
@@ -144,7 +146,13 @@ export class HistoricalSourceRegistry extends SourceRegistry<HistoricalPriceSour
     ])
     if (timeoutId !== undefined) clearTimeout(timeoutId)
     if (timedOut) {
-      markFailed([...pending.values()], new ApiError('UNAVAILABLE', 'defillama batch stage exceeded its budget'))
+      // Only pairs whose own group never answered: a group that came back 200
+      // with no match keeps its single-coin retry, and targets the batch never
+      // covered keep their own not-found.
+      markSettled(
+        batchTargets.filter((target) => pending.has(key(target)) && !answered.has(key(target))),
+        new ApiError('UNAVAILABLE', 'defillama batch stage exceeded its budget')
+      )
     }
     batchStageOpen = false
 

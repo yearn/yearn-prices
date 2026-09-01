@@ -34,7 +34,7 @@ export class DefiLlamaHistoricalSource extends HistoricalPriceSourceBase {
   async getBatchHistoricalPrices(
     targets: HistoricalPriceTarget[],
     onResolved?: (entry: HistoricalBatchPrice) => void,
-    onFailed?: (targets: HistoricalPriceTarget[], error: unknown) => void
+    onSettled?: (targets: HistoricalPriceTarget[], error?: unknown) => void
   ): Promise<HistoricalBatchPrice[]> {
     const currentTimestamp = nowUnix()
     const grouped: Record<string, number[]> = {}
@@ -70,7 +70,7 @@ export class DefiLlamaHistoricalSource extends HistoricalPriceSourceBase {
           // their pairs would never be requested at all. Only this group's pairs
           // are reported failed: a sibling group's pairs keep their single-coin
           // retry, and this group's skip a call the same client just failed.
-          onFailed?.(targetsOf(payload), error)
+          onSettled?.(targetsOf(payload), error)
           return []
         }
         const entries: HistoricalBatchPrice[] = []
@@ -97,6 +97,10 @@ export class DefiLlamaHistoricalSource extends HistoricalPriceSourceBase {
             onResolved?.(entry)
           }
         }
+        // This group answered: its unmatched pairs are a not-found, not a
+        // failure, so they keep the single-coin retry even if a sibling group
+        // is still running when the batch stage runs out of budget.
+        onSettled?.(targetsOf(payload))
         return entries
       })
     )
