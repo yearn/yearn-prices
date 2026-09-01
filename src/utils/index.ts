@@ -20,7 +20,6 @@ export {
   nowUnix,
   parseCliDate,
   pgTimestampToUnix,
-  previousClosedDayEnd,
   toFetchTimestamp,
   toUnixSeconds,
   unixToIsoTimestamp
