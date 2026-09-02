@@ -1,6 +1,11 @@
 import type { Pool } from '@neondatabase/serverless'
 import { describe, expect, it, vi } from 'vitest'
-import { CACHE_CONTROL_IMMUTABLE, CACHE_CONTROL_PARTIAL, CACHE_CONTROL_TODAY } from '../src/cache'
+import {
+  CACHE_CONTROL_IMMUTABLE,
+  CACHE_CONTROL_NO_STORE,
+  CACHE_CONTROL_PARTIAL,
+  CACHE_CONTROL_TODAY
+} from '../src/cache'
 import { ApiError } from '../src/http'
 import { HistoricalSourceRegistry } from '../src/registries'
 import { createMarketPriceResolver } from '../src/registries/market-price'
@@ -122,7 +127,7 @@ describe('handleBatchHistorical', () => {
     expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
   })
 
-  it('resolves table misses upstream, persists them, and returns a complete batch', async () => {
+  it('resolves table misses upstream, persists them, and caches the first fill partial', async () => {
     const queryPool = pool([row(DAY_ONE, '1')])
     const registry = resolvingRegistry(2)
 
@@ -139,7 +144,7 @@ describe('handleBatchHistorical', () => {
       String(sql).includes('INSERT INTO token_prices')
     )
     expect(insertCall?.[1]).toContain(CHECKSUM_ADDR)
-    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
     await expect(response.json()).resolves.toEqual({
       coins: {
         [CHECKSUM_KEY]: {
@@ -212,7 +217,7 @@ describe('handleBatchHistorical', () => {
       expect(response.status).toBe(200)
       const body = (await response.json()) as { coins: Record<string, { prices: unknown[] }> }
       expect(body.coins[CHECKSUM_KEY].prices).toHaveLength(1)
-      expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
+      expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_NO_STORE)
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('batch-resolution-deadline'))
     } finally {
       warn.mockRestore()
@@ -237,10 +242,154 @@ describe('handleBatchHistorical', () => {
     expect(response.status).toBe(200)
     const body = (await response.json()) as { coins: Record<string, { prices: unknown[] }> }
     expect(body.coins[CHECKSUM_KEY].prices).toHaveLength(1)
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_NO_STORE)
+  })
+
+  it('returns the stored rows with no-store when the whole batch resolution rejects', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const registry = {
+      resolveBatch: vi.fn(() => Promise.reject(new Error('boom')))
+    } as unknown as HistoricalSourceRegistry
+
+    try {
+      const response = await handleBatchHistorical(
+        url('batchHistorical', { [CHECKSUM_KEY]: [DAY_ONE, DAY_TWO] }),
+        ENV,
+        pool([row(DAY_ONE, '1')]),
+        registry
+      )
+
+      expect(response.status).toBe(200)
+      const body = (await response.json()) as { coins: Record<string, { prices: unknown[] }> }
+      expect(body.coins[CHECKSUM_KEY].prices).toHaveLength(1)
+      expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_NO_STORE)
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('resolve-batch-failed'))
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('keeps a partial header when the deadline expires with every settlement already in', async () => {
+    vi.useFakeTimers()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const registry = {
+      resolveBatch: (targets: HistoricalPriceTarget[], onSettled: (t: HistoricalPriceTarget, r: unknown) => void) => {
+        for (const target of targets) {
+          onSettled(target, {
+            status: 'fulfilled',
+            value: {
+              price: 2,
+              timestamp: target.timestamp,
+              symbol: 'WETH',
+              confidence: 0.99,
+              source: 'defillama'
+            }
+          })
+        }
+        return new Promise<never>(() => undefined)
+      }
+    } as unknown as HistoricalSourceRegistry
+
+    try {
+      const responsePromise = handleBatchHistorical(
+        url('batchHistorical', { [CHECKSUM_KEY]: [DAY_ONE, DAY_TWO] }),
+        ENV,
+        pool([row(DAY_ONE, '1')]),
+        registry
+      )
+      await vi.advanceTimersByTimeAsync(5_000)
+      const response = await responsePromise
+
+      expect(response.status).toBe(200)
+      const body = (await response.json()) as { coins: Record<string, { prices: unknown[] }> }
+      expect(body.coins[CHECKSUM_KEY].prices).toHaveLength(2)
+      expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('batch-resolution-deadline'))
+    } finally {
+      warn.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('marks an empty batch immutable', async () => {
+    const response = await handleBatchHistorical(url('batchHistorical', {}), ENV, pool([]))
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({ coins: {} })
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+  })
+
+  it('marks a batch with no requested timestamps immutable', async () => {
+    const response = await handleBatchHistorical(url('batchHistorical', { [CHECKSUM_KEY]: [] }), ENV, pool([]))
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual({ coins: {} })
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+  })
+
+  it('marks unbudgeted leftover misses partial rather than failed', async () => {
+    const blockedDays = Array.from({ length: 12 }, (_, index) => DAY_ONE - index * 86_400)
+
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [CHECKSUM_KEY]: blockedDays }),
+      ENV,
+      pool([]),
+      notFoundRegistry()
+    )
+
+    expect(response.status).toBe(200)
     expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
   })
 
-  it('resolves duplicate-cased keys for the same token once and keeps the immutable header', async () => {
+  it('marks a batch touching today no-store when the upstream resolution fails', async () => {
+    const registry = mockRegistry(
+      vi.fn(async () => {
+        throw new Error('defillama 503')
+      })
+    )
+
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [CHECKSUM_KEY]: [TODAY, DAY_ONE] }),
+      ENV,
+      pool([]),
+      registry
+    )
+
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_NO_STORE)
+  })
+
+  it('marks a batch touching today with the short-lived policy when the misses are not found', async () => {
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [CHECKSUM_KEY]: [TODAY, DAY_ONE] }),
+      ENV,
+      pool([]),
+      notFoundRegistry()
+    )
+
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_TODAY)
+  })
+
+  it('marks an explicit-source batch partial when the row is missing', async () => {
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE] }, '&source=enso'),
+      ENV,
+      pool([])
+    )
+
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
+  })
+
+  it('marks an explicit-source batch immutable when every row is stored', async () => {
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE] }, '&source=enso'),
+      ENV,
+      pool([row(DAY_ONE, '1', 'enso')])
+    )
+
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+  })
+
+  it('resolves duplicate-cased keys for the same token once and caches the first fill partial', async () => {
     const queryPool = pool([])
     const registry = resolvingRegistry(2)
 
@@ -252,10 +401,26 @@ describe('handleBatchHistorical', () => {
     )
 
     expect(registry.resolve).toHaveBeenCalledTimes(1)
-    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
     const body = (await response.json()) as { coins: Record<string, { prices: unknown[] }> }
     expect(Object.values(body.coins)).toHaveLength(1)
     expect(Object.values(body.coins)[0].prices).toHaveLength(1)
+  })
+
+  it('keeps duplicate-cased keys immutable when the row is already stored', async () => {
+    const registry = resolvingRegistry(2)
+
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE], [CHECKSUM_KEY]: [DAY_ONE] }),
+      ENV,
+      pool([row(DAY_ONE, '1')]),
+      registry
+    )
+
+    expect(registry.resolve).not.toHaveBeenCalled()
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+    const body = (await response.json()) as { coins: Record<string, { prices: unknown[] }> }
+    expect(Object.values(body.coins)).toHaveLength(1)
   })
 
   it('still returns 200 with resolved prices when the persistence write fails', async () => {
@@ -276,7 +441,7 @@ describe('handleBatchHistorical', () => {
     expect(response.status).toBe(200)
     const body = (await response.json()) as { coins: Record<string, { prices: unknown[] }> }
     expect(body.coins[CHECKSUM_KEY].prices).toHaveLength(2)
-    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_NO_STORE)
   })
 
   it('does not mark a batch immutable when a resolution falls outside the observation window', async () => {
@@ -357,7 +522,7 @@ describe('handleBatchHistorical', () => {
       String(sql).includes('INSERT INTO token_prices')
     )
     expect(insertCall).toBeDefined()
-    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
   })
 
   it('persists a derived price whose chainlink leaf is older than the search window', async () => {

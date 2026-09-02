@@ -158,12 +158,12 @@ export class HistoricalSourceRegistry extends SourceRegistry<HistoricalPriceSour
 
     await Promise.all(
       [...pending.values()].map(async (target) => {
-        const batchError = batchErrors.get(key(target))
+        const batchFailed = batchErrors.has(key(target))
         try {
           onSettled(target, {
             status: 'fulfilled',
             value: await this.resolveSkipping(
-              batchError ? batchSource.name : undefined,
+              batchFailed ? batchSource.name : undefined,
               target.chainId,
               target.token,
               target.timestamp
@@ -171,7 +171,9 @@ export class HistoricalSourceRegistry extends SourceRegistry<HistoricalPriceSour
           })
         } catch (reason) {
           const finalReason =
-            reason instanceof ApiError && reason.code === 'NOT_FOUND' && batchError ? batchError : reason
+            reason instanceof ApiError && reason.code === 'NOT_FOUND' && batchFailed
+              ? batchErrors.get(key(target))
+              : reason
           onSettled(target, { status: 'rejected', reason: finalReason })
         }
       })

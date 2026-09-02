@@ -1,6 +1,6 @@
 import type { Pool } from '@neondatabase/serverless'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CACHE_CONTROL_IMMUTABLE, CACHE_CONTROL_PARTIAL } from '../src/cache'
+import { CACHE_CONTROL_IMMUTABLE, CACHE_CONTROL_NO_STORE, CACHE_CONTROL_PARTIAL } from '../src/cache'
 import { handleHistorical } from '../src/routes/historical/exact'
 import type { Env } from '../src/types'
 import { normalizeToEndOfDay } from '../src/utils'
@@ -281,6 +281,7 @@ describe('handleHistorical', () => {
       String(sql).includes('INSERT INTO token_prices')
     )
     expect(insertCall).toBeUndefined()
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
   })
 
   it('still returns the resolved price when the persistence write fails', async () => {
@@ -304,6 +305,7 @@ describe('handleHistorical', () => {
     await expect(response.json()).resolves.toMatchObject({
       coins: { [TOKEN_KEY]: { price: 27052 } }
     })
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_NO_STORE)
   })
 
   it('does not persist a current-day fallback', async () => {

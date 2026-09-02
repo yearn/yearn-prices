@@ -1,9 +1,15 @@
 import type { Pool } from '@neondatabase/serverless'
-import { CACHE_CONTROL_PARTIAL, CACHE_CONTROL_TODAY, cacheControlForHistorical } from '../../cache'
+import {
+  CACHE_CONTROL_NO_STORE,
+  CACHE_CONTROL_PARTIAL,
+  CACHE_CONTROL_TODAY,
+  cacheControlForHistorical
+} from '../../cache'
 import { getExactHistoricalPrice } from '../../db'
 import { ApiError, jsonResponse } from '../../http'
 import { type HistoricalSourceRegistry, historicalSourceRegistry } from '../../registries'
-import type { Env, PriceSource } from '../../types'
+import type { HistoricalPrice } from '../../sources/types'
+import type { Env, ExactPriceRecord } from '../../types'
 import {
   chainNameToId,
   isTodayNormalized,
@@ -12,7 +18,39 @@ import {
   parseTokenKey,
   toFetchTimestamp
 } from '../../utils'
-import { persistResolvedPrices } from './shared'
+import { persistResolvedPrices, toResolvedRecord } from './persist'
+import { isNotFound } from './shared'
+
+function respond(tokenKeySegment: string, record: ExactPriceRecord, cacheControl: string): Response {
+  return jsonResponse(
+    {
+      coins: {
+        [tokenKeySegment]: {
+          price: record.price,
+          symbol: record.symbol,
+          timestamp: record.timestamp,
+          confidence: record.confidence,
+          source: record.source
+        }
+      }
+    },
+    { headers: { 'cache-control': cacheControl } }
+  )
+}
+
+async function resolveUpstream(
+  registry: HistoricalSourceRegistry,
+  chainId: number,
+  token: string,
+  timestamp: number
+): Promise<HistoricalPrice | null> {
+  try {
+    return await registry.resolve(chainId, token, toFetchTimestamp(timestamp))
+  } catch (error) {
+    if (isNotFound(error)) return null
+    throw error
+  }
+}
 
 export async function handleHistorical(
   request: Request,
@@ -26,74 +64,23 @@ export async function handleHistorical(
   const { chain, token, tokenKey } = parseTokenKey(tokenKeySegment)
   const source = parseOptionalSource(new URL(request.url).searchParams.get('source'))
 
-  const record = await getExactHistoricalPrice(pool, { chain, token, timestamp }, source)
-  if (!record && !source) {
-    const chainId = chainNameToId(chain)
-    if (chainId !== undefined) {
-      try {
-        const historical = await registry.resolve(chainId, token, toFetchTimestamp(timestamp))
-
-        // Persist under the normalized day key so the next request — and the
-        // batch route — is a table hit instead of another upstream resolution.
-        await persistResolvedPrices(pool, [
-          {
-            chain,
-            token,
-            timestamp,
-            price: historical.price,
-            symbol: historical.symbol,
-            confidence: historical.confidence,
-            source: historical.source as PriceSource,
-            observedAt: historical.timestamp
-          }
-        ])
-
-        return jsonResponse(
-          {
-            coins: {
-              [tokenKeySegment]: {
-                price: historical.price,
-                symbol: historical.symbol,
-                timestamp,
-                confidence: historical.confidence,
-                source: historical.source
-              }
-            }
-          },
-          {
-            headers: {
-              'cache-control': isTodayNormalized(timestamp) ? CACHE_CONTROL_TODAY : CACHE_CONTROL_PARTIAL
-            }
-          }
-        )
-      } catch (error) {
-        if (!(error instanceof ApiError && error.code === 'NOT_FOUND')) {
-          throw error
-        }
-      }
-    }
+  const stored = await getExactHistoricalPrice(pool, { chain, token, timestamp }, source)
+  if (stored) {
+    return respond(tokenKeySegment, stored, cacheControlForHistorical(stored.timestamp))
   }
 
-  if (!record) {
+  const chainId = chainNameToId(chain)
+  const historical = source || chainId === undefined ? null : await resolveUpstream(registry, chainId, token, timestamp)
+  if (!historical) {
     throw new ApiError('NOT_FOUND', `No historical price found for ${tokenKey} at ${timestamp}`)
   }
 
-  return jsonResponse(
-    {
-      coins: {
-        [tokenKeySegment]: {
-          price: record.price,
-          symbol: record.symbol,
-          timestamp: record.timestamp,
-          confidence: record.confidence,
-          source: record.source
-        }
-      }
-    },
-    {
-      headers: {
-        'cache-control': cacheControlForHistorical(record.timestamp)
-      }
-    }
-  )
+  const record = toResolvedRecord({ chain, token, timestamp }, historical)
+  const persisted = await persistResolvedPrices(pool, [record])
+  const cacheControl = !persisted
+    ? CACHE_CONTROL_NO_STORE
+    : isTodayNormalized(timestamp)
+      ? CACHE_CONTROL_TODAY
+      : CACHE_CONTROL_PARTIAL
+  return respond(tokenKeySegment, record, cacheControl)
 }

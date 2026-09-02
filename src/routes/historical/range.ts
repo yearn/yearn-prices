@@ -9,30 +9,24 @@ import { buildOriginalKeyMap, groupRowsByToken, toExactKey } from './shared'
 export async function handleRangeHistorical(request: Request, _env: Env, pool: Pool): Promise<Response> {
   const url = new URL(request.url)
   const source = parseOptionalSource(url.searchParams.get('source'))
-  const rawCoins = url.searchParams.get('coins')
+  const rawCoins = url.searchParams.get('coins') ?? ''
   const requests = parseRangeCoins(rawCoins)
-  const originalKeyMap = buildOriginalKeyMap(rawCoins!)
   const rows = await getRangeHistoricalPrices(pool, requests, source)
 
-  const grouped = groupRowsByToken(rows, originalKeyMap)
-
-  const expectedTimestamps = new Set<string>()
-  for (const requestRange of requests) {
-    for (const timestamp of normalizedDaysInRange(requestRange.startTimestamp, requestRange.endTimestamp)) {
-      expectedTimestamps.add(`${requestRange.chain}:${requestRange.token}:${timestamp}`)
-    }
-  }
-
-  const resolvedTimestamps = new Set(rows.map(toExactKey))
-  const allResolved = resolvedTimestamps.size === expectedTimestamps.size
+  const expected = new Set(
+    requests.flatMap(({ chain, token, startTimestamp, endTimestamp }) =>
+      normalizedDaysInRange(startTimestamp, endTimestamp).map((timestamp) => toExactKey({ chain, token, timestamp }))
+    )
+  )
+  const found = new Set(rows.map(toExactKey))
 
   return jsonResponse(
-    { coins: Object.fromEntries(grouped.entries()) },
+    { coins: Object.fromEntries(groupRowsByToken(rows, buildOriginalKeyMap(rawCoins))) },
     {
       headers: {
         'cache-control': cacheControlForRange(
           requests.map((entry) => entry.endTimestamp),
-          allResolved
+          found.size === expected.size
         )
       }
     }

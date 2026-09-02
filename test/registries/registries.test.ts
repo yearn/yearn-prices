@@ -208,6 +208,26 @@ describe('HistoricalSourceRegistry', () => {
       expect(settled.get(1)).toEqual({ status: 'rejected', reason: rateLimited })
     })
 
+    it('skips the batch source single lookup when its batch group failed with a null error', async () => {
+      const single = vi.fn(async () => HISTORICAL_PRICE)
+      const batch: HistoricalPriceSource = {
+        ...historicalSource('defillama', 10, single),
+        getBatchHistoricalPrices: async (targets, _onResolved, onFailed) => {
+          onFailed?.(targets, null)
+          return []
+        }
+      }
+      const fallback = vi.fn(async () => null)
+      const registry = new HistoricalSourceRegistry([batch, historicalSource('chainlink', 20, fallback)])
+      const { settled, onSettled } = settle()
+
+      await registry.resolveBatch([target(1)], onSettled)
+
+      expect(single).not.toHaveBeenCalled()
+      expect(fallback).toHaveBeenCalledTimes(1)
+      expect(settled.get(1)).toEqual({ status: 'rejected', reason: null })
+    })
+
     it("sends only the failed group's pairs past the batch source single lookup", async () => {
       const single = vi.fn(async () => HISTORICAL_PRICE)
       const rateLimited = new ApiError('RATE_LIMITED', 'defillama 429')

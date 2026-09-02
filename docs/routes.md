@@ -135,7 +135,7 @@ Response:
 }
 ```
 
-If no stored row exists for the normalized timestamp and no `source` filter was given, the route falls back to the live historical source registry for that day. A fallback resolved for a closed past day is stored in `token_prices` under the normalized day key, so the next request is a table hit; current-day and future-day results are never persisted. A non-chainlink resolution is stored only when its underlying observation falls within the DeFiLlama search width of the day key; an out-of-window result is served but not stored, so it resolves upstream again on the next cache miss. A `source` filter disables the fallback: the route answers from stored rows only.
+If no stored row exists for the normalized timestamp and no `source` filter was given, the route falls back to the live historical source registry for that day. A fallback resolved for a closed past day is stored in `token_prices` under the normalized day key, so the next request is a table hit; current-day and future-day results are never persisted. A non-chainlink resolution is stored only when its underlying observation falls within the DeFiLlama search width of the day key; an out-of-window result is served but not stored, so it resolves upstream again on the next cache miss. A fallback response is cached for an hour (`public, max-age=3600`), not as immutable: the stored row is the canonical value, and the next cache miss serves it from the table. If the store write itself fails, the response is still `200` but carries `no-store`, so the next request retries the write. A `source` filter disables the fallback: the route answers from stored rows only.
 
 The fallback shares the request-path DeFiLlama client with `batchHistorical`: each upstream attempt is capped at 2.5 seconds and DeFiLlama `429` responses are not retried, so a rate-limited lookup fails on the first attempt instead of backing off. `5xx` responses still retry with backoff, so one degraded call can take up to three attempts. Offline jobs keep the retrying client.
 
@@ -283,6 +283,8 @@ Response:
 
 When no `source` filter is given, up to `10` pairs missing from the table are resolved through the source registry. The initial DeFiLlama lookup uses its provider-native batch endpoint; unresolved pairs then fall through to the full source registry, so a pair the batch matcher drops is still tried against the single-coin lookup this route's exact counterpart uses. DeFiLlama `429` responses are not retried on the request path, and each upstream attempt is capped at 2.5 seconds (`5xx` responses retry with backoff inside the route deadline). A pair whose own payload group failed is not retried against the DeFiLlama single-coin lookup; pairs from groups that answered are, even when the group matched no sample for them. Payload groups are requested concurrently, and the whole batch stage is capped at 2.5 seconds, so a slow or retrying provider cannot consume the whole deadline and starve the fallback: pairs still pending at that cap fall through to the remaining sources, and only those whose own group never answered skip the single-coin lookup. Upstream resolution has a five-second deadline measured from route entry, after which prices already completed are returned and the rest stay absent. Results for closed past days are stored in `token_prices` and returned in the same response. A non-chainlink resolution is stored only when its underlying observation falls within the DeFiLlama search width of the day key; an out-of-window result is served but not stored, so it resolves upstream again on the next cache miss. A `source` filter disables that resolution: the route answers from stored rows only.
 
+The response is always `200`, but its cache policy depends on how the misses were resolved. If any resolution failed for a reason other than not-found (an upstream error, the deadline expiring with lookups still pending, or the store write failing), the response is `no-store`: it is served once and never cached, so a transient blip is not frozen as "no price exists". Otherwise a batch answered entirely from stored rows is immutable, and a batch that resolved anything upstream, hit a genuine not-found, or left misses beyond the per-request budget is cached for an hour; once every requested day is served from stored rows the response turns immutable, while a genuine not-found stores nothing and stays at an hour. See [Cache-Control](#cache-control).
+
 Only found prices are returned. Pairs that upstream cannot resolve, and misses past the `10` per-request limit, are omitted from the response.
 
 ## `GET /api/prices/rangeHistorical`
@@ -379,12 +381,14 @@ Common error cases:
 
 ## Cache-Control
 
-Price responses set cache headers based on the requested timestamps and whether every requested value was found.
+Price responses set cache headers based on the requested timestamps, whether every requested value came from stored rows, and whether any request-path resolution failed.
 
-- Historical non-today exact price: `public, max-age=31536000, immutable`
+- Historical exact response where the store write failed, or batch response where an upstream resolution or the store write failed (anything other than not-found): `no-store`; an exact upstream error other than not-found is an error response, not a `200`
+- Historical non-today exact price served from a stored row: `public, max-age=31536000, immutable`
+- Historical non-today exact price resolved upstream on this request: `public, max-age=3600`
 - Requests involving today's UTC day, or a batch pair whose day has not closed yet: `public, s-maxage=300, max-age=3600, stale-while-revalidate=14400`
-- Fully resolved batch or range for past days: `public, max-age=31536000, immutable`
-- Partially resolved batch or range for past days: `public, max-age=3600`
+- Batch or range for past days answered entirely from stored rows: `public, max-age=31536000, immutable`
+- Batch or range for past days with any value resolved upstream, not found, or left unresolved: `public, max-age=3600`
 - Historical not found responses: `public, max-age=3600, stale-while-revalidate=14400`
 - Spot: `public, s-maxage=120, stale-while-revalidate=600`
 
