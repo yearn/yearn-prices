@@ -66,7 +66,7 @@ Price routes accept an optional `source` query parameter. Supported values are:
 - `defillama-alias`
 - `enso`
 
-`source` filters the stored price rows only. `chainlink` and `defillama-alias` are resolved live. When request-path persistence fills a gap for a closed past day, the result is stored under the resolving source's name, so filters match those rows afterward. Before any such fill, filtering returns `404` for the single-token route and `200` with an empty `coins` object for `batchHistorical` and `rangeHistorical`.
+`source` filters the stored price rows only. `chainlink` and `defillama-alias` are resolved live by the offline jobs. Filtering on a source with no stored rows returns `404` for the single-token route and `200` with an empty `coins` object for `batchHistorical` and `rangeHistorical`.
 
 When `source` is omitted, the API returns the first available row by priority:
 
@@ -135,13 +135,9 @@ Response:
 }
 ```
 
-If no stored row exists for the normalized timestamp and no `source` filter was given, the route falls back to the live historical source registry for that day. A fallback resolved for a closed past day is stored in `token_prices` under the normalized day key, so the next request is a table hit; current-day and future-day results are never persisted. A non-chainlink resolution is stored only when its underlying observation falls within the DeFiLlama search width of the day key; an out-of-window result is served but not stored, so it resolves upstream again on the next cache miss. A `source` filter disables the fallback: the route answers from stored rows only.
+If no stored row exists for the normalized timestamp, the route returns `NOT_FOUND`. It never resolves upstream on the request path; gaps are filled by the offline warmup and backfill jobs.
 
-The fallback shares the request-path DeFiLlama client with `batchHistorical`: each upstream attempt is capped at 2.5 seconds and DeFiLlama `429` responses are not retried, so a rate-limited lookup fails on the first attempt instead of backing off. `5xx` responses still retry with backoff, so one degraded call can take up to three attempts. Offline jobs keep the retrying client.
-
-If the fallback upstream is degraded, the request fails with `INTERNAL_ERROR` (`500`, `no-store`) rather than `NOT_FOUND` — a not-found response is cached for an hour, so a transient blip must not be recorded as "no price exists".
-
-If neither the stored rows nor the fallback have a price, the route returns:
+When no stored row exists, the route returns:
 
 ```json
 {
@@ -281,9 +277,9 @@ Response:
 }
 ```
 
-When no `source` filter is given, up to `10` pairs missing from the table are resolved through the source registry. The initial DeFiLlama lookup uses its provider-native batch endpoint; unresolved pairs then fall through to the full source registry, so a pair the batch matcher drops is still tried against the single-coin lookup this route's exact counterpart uses. DeFiLlama `429` responses are not retried on the request path, and each upstream attempt is capped at 2.5 seconds (`5xx` responses retry with backoff inside the route deadline). A pair whose own payload group failed is not retried against the DeFiLlama single-coin lookup; pairs from groups that answered are, even when the group matched no sample for them. Payload groups are requested concurrently, and the whole batch stage is capped at 2.5 seconds, so a slow or retrying provider cannot consume the whole deadline and starve the fallback: pairs still pending at that cap fall through to the remaining sources, and only those whose own group never answered skip the single-coin lookup. Upstream resolution has a five-second deadline measured from route entry, after which prices already completed are returned and the rest stay absent. Results for closed past days are stored in `token_prices` and returned in the same response. A non-chainlink resolution is stored only when its underlying observation falls within the DeFiLlama search width of the day key; an out-of-window result is served but not stored, so it resolves upstream again on the next cache miss. A `source` filter disables that resolution: the route answers from stored rows only.
+The route answers from stored rows only. It never resolves upstream on the request path; gaps are filled by the offline warmup and backfill jobs.
 
-Only found prices are returned. Pairs that upstream cannot resolve, and misses past the `10` per-request limit, are omitted from the response.
+Only found prices are returned. Pairs missing from the table are omitted from the response, and the batch is marked partial.
 
 ## `GET /api/prices/rangeHistorical`
 
