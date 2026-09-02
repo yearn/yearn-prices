@@ -21,20 +21,6 @@ function request(): Request {
   return new Request(`https://svc/api/prices/historical/0/${TOKEN_KEY}`)
 }
 
-// DeFiLlama has no samples at timestamps that have not happened yet. Answering only
-// for requested timestamps <= now reproduces the incident: pre-clamp code asked for
-// the future end-of-day and got nothing.
-function stubDefiLlamaSemantics(): void {
-  fetchMock.mockImplementation(async (rawUrl: unknown) => {
-    const requested = Number(String(rawUrl).match(/\/prices\/historical\/(\d+)\//)?.[1])
-    const coins =
-      requested <= nowUnix()
-        ? { [TOKEN_KEY]: { price: 3421.5, symbol: 'WETH', timestamp: requested, confidence: 0.99 } }
-        : {}
-    return { ok: true, status: 200, json: async () => ({ coins }) }
-  })
-}
-
 async function seedPrice(timestamp: number, price: number): Promise<void> {
   await pool.query(
     `INSERT INTO token_prices (chain, token, timestamp, price, symbol, confidence, source)
@@ -59,19 +45,14 @@ afterAll(async () => {
 })
 
 describe('current-day historical lookups (incident regression)', () => {
-  it('serves a current-day block with no stored row by resolving live at a real timestamp', async () => {
-    stubDefiLlamaSemantics()
+  it('returns NOT_FOUND for a current-day block with no stored row, without any upstream call', async () => {
     const blockTime = nowUnix() - 600
 
-    const response = await handleHistorical(request(), ENV, neonPool(), String(blockTime), TOKEN_KEY)
-
-    expect(response.status).toBe(200)
-    await expect(response.json()).resolves.toMatchObject({
-      coins: { [TOKEN_KEY]: { price: 3421.5, source: 'defillama' } }
+    await expect(handleHistorical(request(), ENV, neonPool(), String(blockTime), TOKEN_KEY)).rejects.toMatchObject({
+      code: 'NOT_FOUND'
     })
 
-    const requested = Number(String(fetchMock.mock.calls[0][0]).match(/\/prices\/historical\/(\d+)\//)?.[1])
-    expect(requested).toBeLessThanOrEqual(nowUnix())
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('serves a past-day block from the end-of-day keyed row without any upstream call', async () => {
