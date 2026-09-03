@@ -1,9 +1,10 @@
 import type { Pool } from '@neondatabase/serverless'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CACHE_CONTROL_NOT_FOUND } from '../src/cache'
+import { CACHE_CONTROL_IMMUTABLE, CACHE_CONTROL_NOT_FOUND, CACHE_CONTROL_TODAY } from '../src/cache'
 import worker from '../src/index'
 import { handleHistorical } from '../src/routes/historical/exact'
 import type { Env } from '../src/types'
+import { normalizeToEndOfDay } from '../src/utils'
 
 vi.mock('../src/db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/db')>()),
@@ -35,6 +36,31 @@ describe('handleHistorical', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+  })
+
+  it('marks a closed-day hit immutable and a today hit short-lived', async () => {
+    const today = normalizeToEndOfDay(Math.floor(Date.now() / 1000))
+    const hit = (timestamp: number) =>
+      handleHistorical(
+        new Request(`https://svc/api/prices/historical/${timestamp}/${TOKEN_KEY}`),
+        ENV,
+        pool([
+          {
+            chain: 'ethereum',
+            token: RAW_ADDR,
+            timestamp: new Date(timestamp * 1000),
+            price: '1',
+            symbol: 'WETH',
+            confidence: '0.9',
+            source: 'defillama'
+          }
+        ]),
+        String(timestamp),
+        TOKEN_KEY
+      )
+
+    expect((await hit(TIMESTAMP)).headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+    expect((await hit(today)).headers.get('cache-control')).toBe(CACHE_CONTROL_TODAY)
   })
 
   it('returns a DB hit without calling an upstream source', async () => {
