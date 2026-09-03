@@ -52,9 +52,9 @@ Full route reference, request/response shapes, error codes, and caching behavior
 Prices are fetched through a pluggable source layer that tries providers in priority order until one returns a result. Currently:
 
 - **Spot prices**: Enso (live prices for any token on supported chains)
-- **Historical prices**: DefiLlama → Chainlink → derived (on-chain) → DefiLlama alias, tried in that order on single-token lookups when the DB has no record
+- **Historical prices**: read from `token_prices` only. No historical route calls an upstream provider; a row that is not in the table returns `404` (single token) or is omitted from the response (batch, range), and stays that way until an offline job writes it.
 
-Batch and range historical endpoints remain DB-only (a registry fallback inside a large batch would generate many upstream requests).
+Historical rows are written by `scripts/warmup-prices.ts` (hourly: DefiLlama, Curve, derived) and `scripts/backfill-historical-gaps.ts`. `docs/routes.md` lists which job writes each `source` value.
 
 ### Adding a new price source
 
