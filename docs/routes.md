@@ -68,7 +68,7 @@ Price routes accept an optional `source` query parameter. Supported values are:
 
 `source` filters the stored price rows only. Rows reach the table from the offline jobs:
 
-- `defillama`: `scripts/warmup-prices.ts` and `scripts/backfill-historical-gaps.ts` (alias hits are stored as `defillama`).
+- `defillama`: `scripts/warmup-prices.ts`, `scripts/backfill-historical-gaps.ts` (alias hits are stored as `defillama`) and `scripts/backfill-defillama-day-alignment.ts` (re-aligns existing rows).
 - `curve`, `derived`: `scripts/warmup-prices.ts`.
 - `chainlink`, `defillama-alias`: no writer. Only rows stored before the request-path registry was removed can match; a token priceable only through Chainlink has no price on any route.
 - `on-chain-oracle`, `bobs-api`: no writer in this repo.
@@ -388,10 +388,10 @@ Price responses set cache headers based on the requested timestamps and whether 
 - Historical non-today exact price: `public, max-age=31536000, immutable`
 - Requests involving today's UTC day, or a batch pair whose day has not closed yet: `public, s-maxage=300, max-age=3600, stale-while-revalidate=14400`
 - Fully resolved batch or range for past days: `public, max-age=31536000, immutable`
-- Partially resolved batch or range for past days: `public, max-age=3600`
+- Partially resolved batch or range for past days: `public, s-maxage=300, max-age=300`
 - Historical not found responses: `public, s-maxage=300, max-age=300`
 
-A historical `404` is not permanent: it means the row is not in `token_prices` yet, and the hourly warmup or a gap backfill can write it later. The negative TTL is kept below the warmup cadence, so a consumer that retries after five minutes sees the row as soon as a job lands it.
+A historical `404`, or a pair omitted from a partial batch or range, is not permanent: it means the row is not in `token_prices` yet, and the hourly warmup or a gap backfill can write it later. The negative TTL is kept below the warmup cadence, so a consumer that retries after five minutes sees the row as soon as a job lands it.
 - Spot: `public, s-maxage=120, stale-while-revalidate=600`
 
 ## Edge caching

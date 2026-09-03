@@ -54,7 +54,7 @@ Prices are fetched through a pluggable source layer that tries providers in prio
 - **Spot prices**: Enso (live prices for any token on supported chains)
 - **Historical prices**: read from `token_prices` only. No historical route calls an upstream provider; a row that is not in the table returns `404` (single token) or is omitted from the response (batch, range), and stays that way until an offline job writes it.
 
-Historical rows are written by `scripts/warmup-prices.ts` (hourly: DefiLlama, Curve, derived) and `scripts/backfill-historical-gaps.ts`. `docs/routes.md` lists which job writes each `source` value.
+Historical rows are written by `scripts/warmup-prices.ts` (hourly: DefiLlama, Curve, derived), `scripts/backfill-historical-gaps.ts` and `scripts/backfill-defillama-day-alignment.ts`. `docs/routes.md` lists which job writes each `source` value.
 
 ### Adding a new price source
 

@@ -82,6 +82,27 @@ describe('handleBatchHistorical', () => {
     expect(insertCall).toBeUndefined()
   })
 
+  it('counts duplicate-cased keys for the same token once and keeps the immutable header', async () => {
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE], [CHECKSUM_KEY]: [DAY_ONE] }),
+      ENV,
+      pool([row(DAY_ONE, '1')])
+    )
+
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+  })
+
+  it('never marks a batch touching a future day immutable', async () => {
+    const future = TODAY + 86400
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE, future] }),
+      ENV,
+      pool([row(DAY_ONE, '1'), row(future, '2')])
+    )
+
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_TODAY)
+  })
+
   it('marks a batch touching today with the short-lived policy', async () => {
     const response = await handleBatchHistorical(
       url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [TODAY] }),

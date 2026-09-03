@@ -156,7 +156,7 @@ export function renderLandingPage(env: Env, baseUrl: string): string {
 <main>
   <header>
     <h1>Yearn Price Service</h1>
-    <p class="lede">Spot and historical token prices for Yearn, aggregated from DefiLlama, on-chain oracles, Curve, Bob's API, and Enso.</p>
+    <p class="lede">Spot token prices for Yearn from Enso, and historical prices from DefiLlama, Curve, and on-chain derived pricing.</p>
   </header>
 
   <section>

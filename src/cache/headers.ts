@@ -5,10 +5,11 @@ export const CACHE_CONTROL_IMMUTABLE = 'public, max-age=31536000, immutable'
 // shared edge refresh every ~5min — far tighter than the warmup cadence — while browsers
 // keep the gentler 1h max-age.
 export const CACHE_CONTROL_TODAY = 'public, s-maxage=300, max-age=3600, stale-while-revalidate=14400'
-export const CACHE_CONTROL_PARTIAL = 'public, max-age=3600'
-// A historical miss means the row is not in the table yet, not that no price exists:
-// the hourly warmup or a gap backfill can fill it at any time. Keep the negative TTL
-// under the warmup cadence so a client stops seeing 404 soon after the row lands.
+// A historical miss (a 404, or a pair omitted from a batch/range) means the row is not
+// in the table yet, not that no price exists: the hourly warmup or a gap backfill can
+// fill it at any time. Keep both negative TTLs under the warmup cadence so a client
+// stops seeing the gap soon after the row lands.
+export const CACHE_CONTROL_PARTIAL = 'public, s-maxage=300, max-age=300'
 export const CACHE_CONTROL_NOT_FOUND = 'public, s-maxage=300, max-age=300'
 // Spot is a live proxy with no upstream cache policy. Short shared-cache TTL so the
 // edge absorbs bursts without serving long-stale prices; mirrors yearn.fi's Enso proxy.

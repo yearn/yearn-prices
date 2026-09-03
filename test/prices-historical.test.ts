@@ -1,7 +1,14 @@
 import type { Pool } from '@neondatabase/serverless'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { CACHE_CONTROL_NOT_FOUND } from '../src/cache'
+import worker from '../src/index'
 import { handleHistorical } from '../src/routes/historical/exact'
 import type { Env } from '../src/types'
+
+vi.mock('../src/db', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../src/db')>()),
+  createPool: () => ({ query: async () => ({ rows: [] }), end: async () => {} })
+}))
 
 const RAW_ADDR = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
 const TOKEN_KEY = `ethereum:${RAW_ADDR}`
@@ -82,6 +89,22 @@ describe('handleHistorical', () => {
     await expect(handleHistorical(request(), ENV, pool([]), String(TIMESTAMP), TOKEN_KEY)).rejects.toMatchObject({
       code: 'NOT_FOUND'
     })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('serves a table miss as a 404 whose negative TTL stays under the hourly warmup cadence', async () => {
+    vi.stubGlobal('caches', { default: { match: async () => undefined, put: async () => {} } })
+    const response = await worker.fetch(
+      new Request(request().url, { headers: { authorization: 'Bearer k' } }),
+      { ...ENV, API_KEY_TEST: 'k' } as unknown as Env,
+      { waitUntil: vi.fn() } as unknown as ExecutionContext
+    )
+
+    expect(response.status).toBe(404)
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_NOT_FOUND)
+    for (const directive of ['max-age', 's-maxage']) {
+      expect(Number(CACHE_CONTROL_NOT_FOUND.match(new RegExp(`${directive}=(\\d+)`))?.[1])).toBeLessThanOrEqual(3600)
+    }
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })
