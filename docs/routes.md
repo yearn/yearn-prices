@@ -390,9 +390,9 @@ Price responses set cache headers based on the requested timestamps and whether 
 - Fully resolved batch or range for past days: `public, max-age=31536000, immutable`
 - Partially resolved batch or range for past days: `public, s-maxage=300, max-age=300`
 - Historical not found responses: `public, s-maxage=300, max-age=300`
+- Spot: `public, s-maxage=120, stale-while-revalidate=600`
 
 A historical `404`, or a pair omitted from a partial batch or range, is not permanent: it means the row is not in `token_prices` yet, and the hourly warmup or a gap backfill can write it later. The negative TTL is kept below the warmup cadence, so a consumer that retries after five minutes sees the row as soon as a job lands it.
-- Spot: `public, s-maxage=120, stale-while-revalidate=600`
 
 ## Edge caching
 

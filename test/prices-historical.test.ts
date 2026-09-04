@@ -1,11 +1,6 @@
 import type { Pool } from '@neondatabase/serverless'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  CACHE_CONTROL_IMMUTABLE,
-  CACHE_CONTROL_NOT_FOUND,
-  CACHE_CONTROL_PARTIAL,
-  CACHE_CONTROL_TODAY
-} from '../src/cache'
+import { CACHE_CONTROL_IMMUTABLE, CACHE_CONTROL_TODAY } from '../src/cache'
 import worker from '../src/index'
 import { handleHistorical } from '../src/routes/historical/exact'
 import type { Env } from '../src/types'
@@ -132,12 +127,7 @@ describe('handleHistorical', () => {
     )
 
     expect(response.status).toBe(404)
-    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_NOT_FOUND)
-    for (const policy of [CACHE_CONTROL_NOT_FOUND, CACHE_CONTROL_PARTIAL]) {
-      for (const directive of ['max-age', 's-maxage']) {
-        expect(Number(policy.match(new RegExp(`${directive}=(\\d+)`))?.[1])).toBeLessThanOrEqual(3600)
-      }
-    }
+    expect(response.headers.get('cache-control')).toBe('public, s-maxage=300, max-age=300')
     expect(fetchMock).not.toHaveBeenCalled()
   })
 })

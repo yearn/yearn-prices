@@ -75,7 +75,15 @@ describe('handleBatchHistorical', () => {
       queryPool
     )
 
-    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_PARTIAL)
+    expect(response.headers.get('cache-control')).toBe('public, s-maxage=300, max-age=300')
+    await expect(response.json()).resolves.toEqual({
+      coins: {
+        [`ethereum:${RAW_ADDR}`]: {
+          symbol: 'WETH',
+          prices: [{ timestamp: DAY_ONE, price: 1, confidence: 0.9, source: 'defillama' }]
+        }
+      }
+    })
     const insertCall = (queryPool.query as ReturnType<typeof vi.fn>).mock.calls.find(([sql]) =>
       String(sql).includes('INSERT INTO token_prices')
     )
