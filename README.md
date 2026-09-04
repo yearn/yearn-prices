@@ -1,6 +1,6 @@
 # price-service
 
-Cloudflare Worker that serves spot and historical token prices for Yearn. It aggregates prices from DefiLlama, on-chain oracles, Curve, Bob's API, and Enso, and persists historical prices to a Neon Postgres database.
+Cloudflare Worker that serves Enso spot prices and historical prices from Neon Postgres. Historical rows are written by offline warmup and backfill jobs, not by the worker.
 
 ## Requirements
 
@@ -49,16 +49,14 @@ Full route reference, request/response shapes, error codes, and caching behavior
 
 ## Price sources
 
-Prices are fetched through a pluggable source layer that tries providers in priority order until one returns a result. Currently:
-
 - **Spot prices**: Enso (live prices for any token on supported chains)
-- **Historical prices**: DefiLlama → Chainlink → derived (on-chain) → DefiLlama alias, tried in that order on single-token lookups when the DB has no record
+- **Historical prices**: read from `token_prices` only. No historical route calls an upstream provider; a row that is not in the table returns `404` (single token) or is omitted from the response (batch, range), and stays that way until an offline job writes it.
 
-Batch and range historical endpoints remain DB-only (a registry fallback inside a large batch would generate many upstream requests).
+Historical rows are written by `scripts/warmup-prices.ts` (hourly: DefiLlama, Curve, derived), `scripts/backfill-historical-gaps.ts` and `scripts/backfill-defillama-day-alignment.ts`. One-off migrations (`scripts/backfill-token-address-checksums.ts`) copy existing rows and add no new prices. `docs/routes.md` lists which job writes each `source` value.
 
 ### Adding a new price source
 
-Sources are pluggable adapters under `src/sources/`, registered in `src/registries/spot.ts` or `src/registries/historical.ts`. See [`src/sources/README.md`](src/sources/README.md) for the full authoring guide (interface, registration steps, test checklist).
+Sources are pluggable adapters under `src/sources/`. Spot sources register in `src/registries/spot.ts` and are served live. Historical sources register in `src/registries/historical.ts` but have no request-path consumer — extend a warmup or backfill job so rows reach the table. See [`src/sources/README.md`](src/sources/README.md).
 
 ## Authentication
 
