@@ -6,9 +6,11 @@ export const CACHE_CONTROL_IMMUTABLE = 'public, max-age=31536000, immutable'
 // keep the gentler 1h max-age.
 export const CACHE_CONTROL_TODAY = 'public, s-maxage=300, max-age=3600, stale-while-revalidate=14400'
 // A historical miss (a 404, or a pair omitted from a batch/range) means the row is not
-// in the table yet, not that no price exists: the hourly warmup or a gap backfill can
-// fill it at any time. Keep both negative TTLs under the warmup cadence so a client
-// stops seeing the gap soon after the row lands.
+// in the table yet, not that no price exists: the hourly warmup (Kong origin=yearn vaults
+// and underlyings, trailing 7 days) or a manually run backfill can fill it. Keep both
+// negative TTLs under the warmup cadence so a client stops seeing the gap soon after the
+// row lands. CACHE_CONTROL_PARTIAL only reaches responses made entirely of closed days —
+// a batch/range touching today takes CACHE_CONTROL_TODAY before the partial check runs.
 export const CACHE_CONTROL_PARTIAL = 'public, s-maxage=300, max-age=300'
 export const CACHE_CONTROL_NOT_FOUND = 'public, s-maxage=300, max-age=300'
 // Spot is a live proxy with no upstream cache policy. Short shared-cache TTL so the

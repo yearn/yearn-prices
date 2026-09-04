@@ -1,5 +1,5 @@
 import type { Pool } from '@neondatabase/serverless'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CACHE_CONTROL_IMMUTABLE, CACHE_CONTROL_PARTIAL, CACHE_CONTROL_TODAY } from '../src/cache'
 import { handleBatchHistorical } from '../src/routes/historical/batch'
 import { handleRangeHistorical } from '../src/routes/historical/range'
@@ -35,6 +35,18 @@ function pool(rows: unknown[]): Pool {
 }
 
 describe('handleBatchHistorical', () => {
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
   it('groups rows under the caller original token key and sorts by timestamp', async () => {
     const response = await handleBatchHistorical(
       url('batchHistorical', { [CHECKSUM_KEY]: [DAY_TWO, DAY_ONE] }),
@@ -88,6 +100,7 @@ describe('handleBatchHistorical', () => {
       String(sql).includes('INSERT INTO token_prices')
     )
     expect(insertCall).toBeUndefined()
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('counts duplicate-cased keys for the same token once and keeps the immutable header', async () => {

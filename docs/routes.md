@@ -143,7 +143,7 @@ Response:
 }
 ```
 
-If no stored row exists for the normalized timestamp, the route returns `NOT_FOUND`. It never resolves upstream on the request path; gaps are filled by the offline warmup and backfill jobs.
+If no stored row exists for the normalized timestamp, the route returns `NOT_FOUND`. It never resolves upstream on the request path. The only scheduled writer is the hourly warmup, which covers Kong `origin=yearn` vault and underlying tokens over the trailing 7 days. A token or day outside that set only gets a row when someone runs a backfill script by hand, so a `404` there does not resolve on its own.
 
 When no stored row exists, the route returns:
 
@@ -285,7 +285,7 @@ Response:
 }
 ```
 
-The route answers from stored rows only. It never resolves upstream on the request path; gaps are filled by the offline warmup and backfill jobs.
+The route answers from stored rows only. It never resolves upstream on the request path. The hourly warmup covers Kong `origin=yearn` vault and underlying tokens over the trailing 7 days; any other token or older day only gets a row from a manually run backfill, so an omitted pair there stays omitted.
 
 Only found prices are returned. Pairs missing from the table are omitted from the response, and the batch is marked partial.
 
@@ -392,7 +392,7 @@ Price responses set cache headers based on the requested timestamps and whether 
 - Historical not found responses: `public, s-maxage=300, max-age=300`
 - Spot: `public, s-maxage=120, stale-while-revalidate=600`
 
-A historical `404`, or a pair omitted from a partial batch or range, is not permanent: it means the row is not in `token_prices` yet, and the hourly warmup or a gap backfill can write it later. The negative TTL is kept below the warmup cadence, so a consumer that retries after five minutes sees the row as soon as a job lands it.
+A historical `404`, or a pair omitted from a partial batch or range, means the row is not in `token_prices` yet. It self-heals only for what the hourly warmup covers (Kong `origin=yearn` vault and underlying tokens, trailing 7 days); anything else waits on a manually run backfill. The 300s negative TTL applies to a `404` and to a partial batch or range made entirely of closed days — it is kept below the warmup cadence so a covered consumer sees the row soon after a job lands it. A batch or range that touches today's UTC day takes the today policy instead, so a missing closed day in that response carries the 1h browser `max-age` and 4h `stale-while-revalidate`.
 
 ## Edge caching
 
