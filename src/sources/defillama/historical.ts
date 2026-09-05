@@ -7,6 +7,8 @@ import { buildDefiLlamaPayloads } from './batch'
 import { toHistoricalPrice } from './coin'
 import { matchPricesToRequests } from './match'
 
+export const DEFILLAMA_UNSUPPORTED_CHAINS: ReadonlySet<number> = new Set([4663])
+
 export class DefiLlamaHistoricalSource extends HistoricalPriceSourceBase {
   readonly name = 'defillama'
   readonly priority = 10
@@ -16,7 +18,7 @@ export class DefiLlamaHistoricalSource extends HistoricalPriceSourceBase {
   }
 
   supports(chainId: number): boolean {
-    return chainIdToName(chainId) !== undefined
+    return chainIdToName(chainId) !== undefined && !DEFILLAMA_UNSUPPORTED_CHAINS.has(chainId)
   }
 
   async getHistoricalPrice(chainId: number, token: string, timestamp: number): Promise<HistoricalPriceResult | null> {
@@ -41,6 +43,7 @@ export class DefiLlamaHistoricalSource extends HistoricalPriceSourceBase {
     const targetsByCoin = new Map<string, HistoricalPriceTarget[]>()
 
     for (const target of targets) {
+      if (DEFILLAMA_UNSUPPORTED_CHAINS.has(target.chainId)) continue
       const chain = chainIdToName(target.chainId)
       if (!chain) continue
       const coinKey = `${chain}:${target.token.toLowerCase()}`

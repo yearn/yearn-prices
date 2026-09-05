@@ -196,5 +196,6 @@ describe('createDefiLlamaHistoricalSource', () => {
     expect(source.supports(80094)).toBe(true)
     expect(source.supports(0)).toBe(false)
     expect(source.supports(80095)).toBe(false)
+    expect(source.supports(4663)).toBe(false)
   })
 })

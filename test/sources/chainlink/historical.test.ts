@@ -262,4 +262,10 @@ describe('CHAINLINK_FEEDS', () => {
       expect(Object.keys(feeds).length).toBeGreaterThan(0)
     }
   })
+
+  it('resolves the robinhood WETH feed to the ETH/USD proxy', () => {
+    expect(getChainlinkFeed(4663, '0x0bd7d308f8e1639fab988df18a8011f41eacad73')).toBe(
+      '0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9'
+    )
+  })
 })

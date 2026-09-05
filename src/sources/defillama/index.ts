@@ -6,4 +6,4 @@ export {
   isDefiLlamaAliasValidAt,
   listDefiLlamaCoinGeckoAliases
 } from './aliases'
-export { createDefiLlamaHistoricalSource, DefiLlamaHistoricalSource } from './historical'
+export { createDefiLlamaHistoricalSource, DEFILLAMA_UNSUPPORTED_CHAINS, DefiLlamaHistoricalSource } from './historical'

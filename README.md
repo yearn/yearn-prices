@@ -53,6 +53,7 @@ Prices are fetched through a pluggable source layer that tries providers in prio
 
 - **Spot prices**: Enso (live prices for any token on supported chains)
 - **Historical prices**: DefiLlama → Chainlink → derived (on-chain) → DefiLlama alias, tried in that order on single-token lookups when the DB has no record
+- Chain 4663 (Robinhood Chain) has no DefiLlama coverage; prices go through Chainlink → on-chain instead
 
 Batch and range historical endpoints remain DB-only (a registry fallback inside a large batch would generate many upstream requests).
 

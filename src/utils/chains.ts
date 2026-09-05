@@ -11,7 +11,8 @@ export const CHAIN_ID_TO_NAME = {
   8453: 'base',
   42161: 'arbitrum',
   80094: 'berachain',
-  747474: 'katana'
+  747474: 'katana',
+  4663: 'robinhood'
 } as const
 
 export const SUPPORTED_CHAIN_NAMES: ReadonlySet<string> = new Set(Object.values(CHAIN_ID_TO_NAME))
