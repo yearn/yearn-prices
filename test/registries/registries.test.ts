@@ -310,6 +310,30 @@ describe('HistoricalSourceRegistry', () => {
         value: { ...HISTORICAL_PRICE, price: 9, source: 'onchain' }
       })
     })
+
+    it('lands chain 4663 on chainlink when defillama does not support it', async () => {
+      const batchCall = vi.fn(async () => [])
+      const batch: HistoricalPriceSource = {
+        ...historicalSource(
+          'defillama',
+          10,
+          async () => HISTORICAL_PRICE,
+          (chainId) => chainId !== 4663
+        ),
+        getBatchHistoricalPrices: batchCall
+      }
+      const chainlinkAnswer = vi.fn(async () => ({ ...HISTORICAL_PRICE, price: 9 }))
+      const registry = new HistoricalSourceRegistry([batch, historicalSource('chainlink', 20, chainlinkAnswer)])
+      const { settled, onSettled } = settle()
+
+      await registry.resolveBatch([target(1, 4663)], onSettled)
+
+      expect(batchCall).toHaveBeenCalledWith([], expect.any(Function), expect.any(Function))
+      expect(settled.get(1)).toEqual({
+        status: 'fulfilled',
+        value: { ...HISTORICAL_PRICE, price: 9, source: 'chainlink' }
+      })
+    })
   })
 
   it('rejects duplicate historical source names', () => {

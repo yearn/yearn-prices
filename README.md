@@ -19,6 +19,14 @@ cp .env.example .env        # scripts (warmup, backfill, migrate) read from .env
 
 Fill in `.dev.vars` and `.env` with real values: a `DATABASE_URL`, one `API_KEY_*` per consumer, `ENSO_API_KEY`, and an `RPC_URL_<chainId>` per supported chain. Both files are gitignored — never commit them.
 
+Local Neon (Postgres 16 + serverless HTTP proxy, no cloud project):
+
+```bash
+bun run db:up
+```
+
+Point `DATABASE_URL` in `.env` and `.dev.vars` at `postgres://postgres:postgres@db.localtest.me:54329/price_service`, then `bun run dev` / `bun run warmup`. Tear down with `bun run db:down`. Postgres is on host port **54329** (5432 is already taken by other stacks).
+
 ```bash
 bun run dev
 ```
@@ -52,7 +60,9 @@ Full route reference, request/response shapes, error codes, and caching behavior
 - **Spot prices**: Enso (live prices for any token on supported chains)
 - **Historical prices**: read from `token_prices` only. No historical route calls an upstream provider; a row that is not in the table returns `404` (single token) or is omitted from the response (batch, range), and stays that way until an offline job writes it.
 
-Historical rows are written by `scripts/warmup-prices.ts` (hourly: DefiLlama, Curve, derived), `scripts/backfill-historical-gaps.ts` and `scripts/backfill-defillama-day-alignment.ts`. One-off migrations (`scripts/backfill-token-address-checksums.ts`) copy existing rows and add no new prices. `docs/routes.md` lists which job writes each `source` value.
+Chain 4663 (Robinhood) has no DefiLlama coverage. Warmup writes WETH/USDG/USDC/USDT from Chainlink (`bun run warmup -- --chain 4663`).
+
+Historical rows are written by `scripts/warmup-prices.ts` (hourly: DefiLlama, Chainlink, Curve, derived), `scripts/backfill-historical-gaps.ts` and `scripts/backfill-defillama-day-alignment.ts`. One-off migrations (`scripts/backfill-token-address-checksums.ts`) copy existing rows and add no new prices. `docs/routes.md` lists which job writes each `source` value.
 
 ### Adding a new price source
 
