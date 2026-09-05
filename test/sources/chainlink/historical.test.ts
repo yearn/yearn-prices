@@ -44,9 +44,19 @@ function historicalClient(reads: Record<string, unknown>) {
       const number = blockNumber ?? LATEST_BLOCK
       return { number, timestamp: blockTimestamp(number) }
     },
-    async readContract({ address, functionName, blockNumber }: Record<string, unknown>) {
+    async readContract({ address, functionName, blockNumber, args }: Record<string, unknown>) {
       readBlocks.push(blockNumber as bigint)
       const contract = reads[(address as string).toLowerCase()] as Record<string, unknown> | undefined
+      if (functionName === 'getRoundData') {
+        const rounds = contract?.getRoundData as Record<string, unknown> | undefined
+        const value = rounds?.[String((args as bigint[])[0])]
+        if (value === undefined) {
+          throw Object.assign(new Error(`execution reverted: ${address}.${functionName}`), {
+            name: 'ContractFunctionExecutionError'
+          })
+        }
+        return value
+      }
       const value = contract?.[functionName as string]
       if (value === undefined) {
         throw Object.assign(new Error(`execution reverted: ${address}.${functionName}`), {
@@ -104,14 +114,23 @@ describe('ChainlinkHistoricalSource', () => {
     })
   })
 
-  it('reads the feed at the estimated historical block, not latest', async () => {
+  it('reads latestRoundData at head when that round is already at or before the request', async () => {
     readBlocks = []
     const client = historicalClient({
       [FEED.toLowerCase()]: {
-        latestRoundData: [1n, 200_000_000_000n, BigInt(HISTORICAL_TIMESTAMP), BigInt(HISTORICAL_TIMESTAMP), 1n],
+        latestRoundData: [
+          5n,
+          200_000_000_000n,
+          BigInt(HISTORICAL_TIMESTAMP - 100),
+          BigInt(HISTORICAL_TIMESTAMP - 100),
+          5n
+        ],
         decimals: 8
       }
     })
+    client.getBlock = async () => {
+      throw new Error('historical eth_call is unavailable; do not search blocks')
+    }
 
     const result = await createChainlinkHistoricalSource({ clientForChain: () => client }).getHistoricalPrice(
       1,
@@ -120,8 +139,37 @@ describe('ChainlinkHistoricalSource', () => {
     )
 
     expect(result?.price).toBe(2000)
-    expect(readBlocks.length).toBeGreaterThan(0)
-    expect(new Set(readBlocks)).toEqual(new Set([LATEST_BLOCK / 2n]))
+    expect(new Set(readBlocks)).toEqual(new Set([undefined]))
+  })
+
+  it('walks getRoundData backward when latest is newer than the request', async () => {
+    readBlocks = []
+    const client = historicalClient({
+      [FEED.toLowerCase()]: {
+        latestRoundData: [5n, 250_000_000_000n, 1_600_000_500n, 1_600_000_500n, 5n],
+        getRoundData: {
+          '4': [4n, 150_000_000_000n, 1_599_999_000n, 1_599_999_000n, 4n]
+        },
+        decimals: 8
+      }
+    })
+    client.getBlock = async () => {
+      throw new Error('historical eth_call is unavailable; do not search blocks')
+    }
+
+    const result = await createChainlinkHistoricalSource({ clientForChain: () => client }).getHistoricalPrice(
+      1,
+      TOKEN,
+      HISTORICAL_TIMESTAMP
+    )
+
+    expect(result).toEqual({
+      price: 1500,
+      timestamp: 1_599_999_000,
+      symbol: null,
+      confidence: null
+    })
+    expect(new Set(readBlocks)).toEqual(new Set([undefined]))
   })
 
   it('rejects when the read fails on transport, instead of reading as no price', async () => {
@@ -157,7 +205,7 @@ describe('ChainlinkHistoricalSource', () => {
     )
   })
 
-  it('rejects when the block lookup fails on transport, instead of reading as no price', async () => {
+  it('still prices when historical block lookup is unavailable', async () => {
     const client = {
       async getBlockNumber() {
         return LATEST_BLOCK
@@ -165,18 +213,29 @@ describe('ChainlinkHistoricalSource', () => {
       async getBlock() {
         throw Object.assign(new Error(`HTTP request failed. URL: ${RPC_URL}`), { name: 'HttpRequestError' })
       },
-      async readContract() {
-        return 8
+      async readContract({ functionName }: { functionName: string }) {
+        if (functionName === 'decimals') return 8
+        if (functionName === 'latestRoundData') {
+          return [1n, 100_000_000n, BigInt(HISTORICAL_TIMESTAMP), BigInt(HISTORICAL_TIMESTAMP), 1n]
+        }
+        throw Object.assign(new Error(`execution reverted: ${functionName}`), {
+          name: 'ContractFunctionExecutionError'
+        })
       }
     } as unknown as PublicClient
 
-    const error = await createChainlinkHistoricalSource({ clientForChain: () => client })
-      .getHistoricalPrice(1, TOKEN, HISTORICAL_TIMESTAMP)
-      .catch((thrown: unknown) => thrown)
-
-    expect(error).toBeInstanceOf(ApiError)
-    expect((error as ApiError).code).toBe('UNAVAILABLE')
-    expect((error as ApiError).message).not.toContain(RPC_URL)
+    await expect(
+      createChainlinkHistoricalSource({ clientForChain: () => client }).getHistoricalPrice(
+        1,
+        TOKEN,
+        HISTORICAL_TIMESTAMP
+      )
+    ).resolves.toEqual({
+      price: 1,
+      timestamp: HISTORICAL_TIMESTAMP,
+      symbol: null,
+      confidence: null
+    })
   })
 
   it('prices a non-mainnet chain end to end', async () => {
@@ -208,7 +267,7 @@ describe('ChainlinkHistoricalSource', () => {
       symbol: null,
       confidence: null
     })
-    expect(new Set(readBlocks)).toEqual(new Set([LATEST_BLOCK / 2n]))
+    expect(new Set(readBlocks)).toEqual(new Set([undefined]))
   })
 
   it('does not name the feed asset when the token symbol differs', async () => {
