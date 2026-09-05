@@ -35,8 +35,8 @@ export function createHistoricalSources(env?: Env): HistoricalPriceSource[] {
   // Per-attempt timeout only; 5xx responses still retry with backoff, so the
   // batch stage is capped separately by BATCH_STAGE_BUDGET_MS. Retrying every
   // member of a rate-limited batch in lockstep amplifies the provider burst;
-  // offline jobs keep their retry policy. The exact route shares this client,
-  // so it also loses 429 retries — see docs/routes.md.
+  // offline jobs keep their retry policy. No route calls this registry today;
+  // the budgets bound any future request-path caller.
   const client = new DefiLlamaClient(undefined, undefined, { timeoutMs: 2_500, retryRateLimits: false })
   const marketSources = [
     createDefiLlamaHistoricalSource(client),
@@ -55,9 +55,9 @@ export function createHistoricalSources(env?: Env): HistoricalPriceSource[] {
 }
 
 /**
- * Half the route's five-second resolution budget. A slow or retrying provider
- * batch call must not consume the whole deadline: the rest of the source chain
- * still needs time to price the pairs the batch never returned.
+ * Cap on the provider batch stage. A slow or retrying provider batch call must
+ * not consume a caller's whole budget: the rest of the source chain still needs
+ * time to price the pairs the batch never returned.
  */
 const BATCH_STAGE_BUDGET_MS = 2_500
 

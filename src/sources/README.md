@@ -86,6 +86,8 @@ export function createMySpotSource(): MySpotSource {
 
 Export your source factory from `src/sources/<name>/index.ts` and from `src/sources/index.ts`, then register it by adding one line in `src/registries/spot.ts` (`createSpotSources`) or `src/registries/historical.ts` (`createHistoricalSources`). Specify the priority explicitly.
 
+> **Historical sources have no request-path consumer.** The historical routes read `token_prices` only, and nothing in the worker instantiates `createHistoricalSources`. Registering a historical source changes production behavior only once an offline job uses it — extend `scripts/warmup-prices.ts` (hourly) or `scripts/backfill-historical-gaps.ts` so its rows reach the table. Spot sources are still served live through `createSpotSources`.
+
 ```ts
 // src/registries/spot.ts
 export function createSpotSources(env: Env): SpotPriceSource[] {
@@ -100,7 +102,7 @@ export function createSpotSources(env: Env): SpotPriceSource[] {
 }
 ```
 
-If callers must be able to filter on your source with `?source=<name>`, or its rows must rank against other sources in the database, also add the name to `SOURCE_PRIORITY` in `src/types.ts`. Without that, `?source=<name>` returns `INVALID_INPUT` even though the registry will serve the source.
+If callers must be able to filter on your source with `?source=<name>`, or its rows must rank against other sources in the database, also add the name to `SOURCE_PRIORITY` in `src/types.ts`. Without that, `?source=<name>` returns `INVALID_INPUT`.
 
 ### 3. Add tests
 
