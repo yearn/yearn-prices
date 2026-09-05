@@ -198,4 +198,27 @@ describe('createDefiLlamaHistoricalSource', () => {
     expect(source.supports(80095)).toBe(false)
     expect(source.supports(4663)).toBe(false)
   })
+
+  it('does not call DefiLlama for a 4663 single lookup', async () => {
+    const getHistorical = vi.fn(async () => ({ coins: {} }))
+    const source = createDefiLlamaHistoricalSource({ getHistorical } as unknown as DefiLlamaClient)
+
+    await expect(source.getHistoricalPrice(4663, ADDRESS, 100)).resolves.toBeNull()
+    expect(getHistorical).not.toHaveBeenCalled()
+  })
+
+  it('omits 4663 targets from the batch provider call', async () => {
+    const timestamp = 1695254399
+    const getBatchHistorical = vi.fn(async () => ({ coins: {} }))
+    const source = createDefiLlamaHistoricalSource({ getBatchHistorical } as unknown as DefiLlamaClient)
+
+    await expect(
+      source.getBatchHistoricalPrices([
+        { chainId: 4663, token: ADDRESS, timestamp },
+        { chainId: 1, token: ADDRESS, timestamp }
+      ])
+    ).resolves.toEqual([])
+    expect(getBatchHistorical).toHaveBeenCalledTimes(1)
+    expect(getBatchHistorical).toHaveBeenCalledWith({ [`ethereum:${ADDRESS}`]: [timestamp] })
+  })
 })

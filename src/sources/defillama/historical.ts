@@ -22,6 +22,9 @@ export class DefiLlamaHistoricalSource extends HistoricalPriceSourceBase {
   }
 
   async getHistoricalPrice(chainId: number, token: string, timestamp: number): Promise<HistoricalPriceResult | null> {
+    if (DEFILLAMA_UNSUPPORTED_CHAINS.has(chainId)) {
+      return null
+    }
     const chain = chainIdToName(chainId)
     if (!chain) {
       return null

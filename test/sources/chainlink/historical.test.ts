@@ -172,6 +172,36 @@ describe('ChainlinkHistoricalSource', () => {
     expect(new Set(readBlocks)).toEqual(new Set([undefined]))
   })
 
+  it('still finds a round 150 steps behind latest', async () => {
+    const latestId = 200
+    const targetId = 50
+    const rounds: Record<string, unknown> = {}
+    for (let id = 1; id <= latestId; id += 1) {
+      const ts = BigInt(HISTORICAL_TIMESTAMP + id)
+      rounds[String(id)] = [BigInt(id), BigInt(id) * 100_000_000n, ts, ts, BigInt(id)]
+    }
+    const client = historicalClient({
+      [FEED.toLowerCase()]: {
+        latestRoundData: rounds[String(latestId)],
+        getRoundData: rounds,
+        decimals: 8
+      }
+    })
+
+    const result = await createChainlinkHistoricalSource({ clientForChain: () => client }).getHistoricalPrice(
+      1,
+      TOKEN,
+      HISTORICAL_TIMESTAMP + targetId
+    )
+
+    expect(result).toEqual({
+      price: targetId,
+      timestamp: HISTORICAL_TIMESTAMP + targetId,
+      symbol: null,
+      confidence: null
+    })
+  })
+
   it('rejects when the read fails on transport, instead of reading as no price', async () => {
     const client = {
       async getBlockNumber() {

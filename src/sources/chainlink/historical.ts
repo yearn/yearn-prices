@@ -11,7 +11,7 @@ import { getChainlinkFeed, hasChainlinkFeeds } from './feeds'
 // feeds): a healthy feed reaches its heartbeat age before the next update.
 const MAX_STALENESS_SECONDS = 172_800
 const AGGREGATOR_ROUND_MASK = (1n << 64n) - 1n
-const MAX_ROUND_WALK = 128
+const MAX_ROUND_WALK = 2048
 
 const FEED_ABI = parseAbi([
   'function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)',
