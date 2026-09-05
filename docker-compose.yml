@@ -1,0 +1,29 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: price_service
+    ports:
+      - '127.0.0.1:54329:5432'
+    volumes:
+      - price_service_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d price_service']
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  neon-proxy:
+    image: ghcr.io/timowilhelm/local-neon-http-proxy:main
+    environment:
+      PG_CONNECTION_STRING: postgres://postgres:postgres@postgres:5432/price_service
+    ports:
+      - '127.0.0.1:4444:4444'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  price_service_pg:
