@@ -24,6 +24,7 @@ import {
   runInGroups,
   toFetchTimestamp
 } from '../src/utils'
+import { isWarmupDegraded, MAX_FAILURE_RATE } from './warmup-status'
 
 const databaseUrl = process.env.DATABASE_URL
 if (!databaseUrl) {
@@ -35,7 +36,9 @@ const stats: WarmupStats = {
   cacheHits: 0,
   apiCalls: 0,
   retries: 0,
+  attempts: 0,
   failures: 0,
+  gaps: 0,
   insertedDirect: 0,
   insertedDerived: 0,
   insertedCurve: 0
@@ -61,7 +64,9 @@ interface WarmupStats {
   cacheHits: number
   apiCalls: number
   retries: number
+  attempts: number
   failures: number
+  gaps: number
   insertedDirect: number
   insertedDerived: number
   insertedCurve: number
@@ -177,6 +182,7 @@ async function warmDirectPrices(vaults: NormalizedVault[], timestamps: number[],
 
   await runInGroups(payloads, REQUEST_GROUP_SIZE, REQUEST_GROUP_DELAY_MS, async (payload) => {
     stats.apiCalls += 1
+    stats.attempts += 1
     try {
       const response = await defiLlama.getBatchHistorical(payload)
       const writes: TokenPriceWrite[] = []
@@ -186,6 +192,7 @@ async function warmDirectPrices(vaults: NormalizedVault[], timestamps: number[],
         const built = buildDefiLlamaWrites(chain, token, requestedTimestamps, response.coins[tokenKey])
         writes.push(...built.writes)
         for (const requestedTimestamp of built.missing) {
+          stats.gaps += 1
           console.warn(`gap:defillama ${tokenKey} ${requestedTimestamp}`)
         }
       }
@@ -233,11 +240,13 @@ async function warmCurveFallbackPrices(
   })
 
   await runInGroups(missing, REQUEST_GROUP_SIZE, REQUEST_GROUP_DELAY_MS, async (request) => {
+    stats.attempts += 1
     try {
       const underlying = underlyings.get(`${request.chain}:${request.token}`)!
 
       const client = getChainClient(underlying.chainId)
       if (!client) {
+        stats.gaps += 1
         console.warn(`gap:missing-rpc chainId=${underlying.chainId}`)
         return
       }
@@ -252,6 +261,7 @@ async function warmCurveFallbackPrices(
       })
 
       if (price == null) {
+        stats.gaps += 1
         console.warn(`gap:curve ${request.chain}:${request.token} ${request.timestamp}`)
         return
       }
@@ -313,15 +323,18 @@ async function warmDerivedVaultPrices(
   )
 
   await runInGroups(missingVaults, REQUEST_GROUP_SIZE, REQUEST_GROUP_DELAY_MS, async ({ vault, timestamp }) => {
+    stats.attempts += 1
     try {
       const underlying = underlyingMap.get(`${vault.chain}:${vault.underlyingToken}:${timestamp}`)
       if (!underlying) {
+        stats.gaps += 1
         console.warn(`gap:derived-underlying ${vault.chain}:${vault.underlyingToken} ${timestamp}`)
         return
       }
 
       const client = getChainClient(vault.chainId)
       if (!client) {
+        stats.gaps += 1
         console.warn(`gap:missing-rpc chainId=${vault.chainId}`)
         return
       }
@@ -366,15 +379,31 @@ try {
   await warmCurveFallbackPrices(vaults, timestamps, stats)
   await warmDerivedVaultPrices(vaults, timestamps, stats)
 
+  const failureRate = stats.attempts > 0 ? stats.failures / stats.attempts : 0
+  const inserted = stats.insertedDirect + stats.insertedCurve + stats.insertedDerived
+  const degraded = isWarmupDegraded(stats)
+
   console.info(
     JSON.stringify({
-      message: 'warmup-complete',
+      message: degraded ? 'warmup-degraded' : 'warmup-complete',
       range: { start, end },
       timestamps: timestamps.length,
       vaults: vaults.length,
+      failureRate: Number(failureRate.toFixed(4)),
+      gapRate: stats.attempts > 0 ? Number((stats.gaps / stats.attempts).toFixed(4)) : 0,
+      inserted,
       ...stats
     })
   )
+
+  // Swallowed per-item errors must still fail the run, otherwise the schedule stays green
+  // while prices stop refreshing.
+  if (degraded) {
+    process.exitCode = 1
+    console.error(
+      `Warmup degraded: ${stats.failures}/${stats.attempts} attempts failed (cap ${MAX_FAILURE_RATE}), ${inserted} rows written`
+    )
+  }
 } finally {
   await pool.end()
 }

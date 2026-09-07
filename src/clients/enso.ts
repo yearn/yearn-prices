@@ -6,6 +6,10 @@ const BASE_URL = 'https://api.enso.build'
 // Module-level so the limit is shared across per-request EnsoClient instances within an isolate.
 const sharedRateLimiter = new SlidingWindowRateLimiter(10, 1000)
 
+// Spot is request-path work behind an overall deadline; a stalled socket must not
+// hold the batch open until the platform kills the worker.
+const REQUEST_TIMEOUT_MS = 5_000
+
 export class EnsoClient {
   constructor(
     private readonly apiKey: string,
@@ -20,6 +24,8 @@ export class EnsoClient {
       rateLimiter: this.rateLimiter,
       headers: { authorization: `Bearer ${this.apiKey}` },
       notFoundAsError: true,
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      retryTransportErrors: true,
       onRetry: this.onRetry
     })
   }

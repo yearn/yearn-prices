@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  CACHE_CONTROL_IMMUTABLE,
+  CACHE_CONTROL_CLOSED_DAY,
+  CACHE_CONTROL_NO_STORE,
   CACHE_CONTROL_PARTIAL,
+  CACHE_CONTROL_SPOT,
   CACHE_CONTROL_TODAY,
   cacheControlForBatch,
   cacheControlForHistorical,
@@ -10,6 +12,7 @@ import {
   readEdgeCache,
   writeEdgeCache
 } from '../src/cache'
+import { renderLandingPage } from '../src/lander'
 import worker from '../src/index'
 import type { Env } from '../src/types'
 import { normalizeToEndOfDay } from '../src/utils'
@@ -41,10 +44,10 @@ describe('canonicalCacheKey', () => {
     expect(a).toBe(b)
   })
 
-  it('ignores token-address casing', () => {
+  it('keeps token-address casing distinct (responses echo the submitted key)', () => {
     const lower = canonicalCacheKey(spotUrl(['ethereum:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2']))
     const checksummed = canonicalCacheKey(spotUrl(['Ethereum:0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2']))
-    expect(lower).toBe(checksummed)
+    expect(lower).not.toBe(checksummed)
   })
 
   it('ignores JSON whitespace', () => {
@@ -57,11 +60,11 @@ describe('canonicalCacheKey', () => {
     expect(compact).toBe(spaced)
   })
 
-  it('ignores batch object key ordering and casing', () => {
+  it('ignores batch object key ordering', () => {
     const a = canonicalCacheKey(
       batchUrl('batchHistorical', {
-        'ethereum:0xAAA0000000000000000000000000000000000000': [1],
-        'base:0xBBB0000000000000000000000000000000000000': [2]
+        'ethereum:0xaaa0000000000000000000000000000000000000': [1],
+        'base:0xbbb0000000000000000000000000000000000000': [2]
       })
     )
     const b = canonicalCacheKey(
@@ -71,6 +74,19 @@ describe('canonicalCacheKey', () => {
       })
     )
     expect(a).toBe(b)
+  })
+
+  it('does not collapse two casing variants that carry different timestamp lists', () => {
+    const key = canonicalCacheKey(
+      batchUrl('batchHistorical', {
+        'ethereum:0xAAA0000000000000000000000000000000000000': [1695196800],
+        'ethereum:0xaaa0000000000000000000000000000000000000': [1695283200]
+      })
+    )
+    const dropped = canonicalCacheKey(
+      batchUrl('batchHistorical', { 'ethereum:0xaaa0000000000000000000000000000000000000': [1695283200] })
+    )
+    expect(key).not.toBe(dropped)
   })
 
   it('normalizes, sorts, and deduplicates batch timestamps by UTC day', () => {
@@ -156,13 +172,14 @@ describe('readEdgeCache / writeEdgeCache', () => {
     const { cache, store } = stubEdgeCache()
     const waitUntil = vi.fn()
     const ctx = { waitUntil } as unknown as ExecutionContext
-    const written = new Request(spotUrl(['Ethereum:0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2']))
+    const other = 'base:0xbbb0000000000000000000000000000000000000'
+    const written = new Request(spotUrl([other, TOKEN]))
 
     writeEdgeCache(ctx, written, new Response('{"coins":{}}'))
     await waitUntil.mock.calls[0][0]
 
     expect([...store.keys()]).toEqual([canonicalCacheKey(written.url)])
-    const hit = await readEdgeCache(new Request(spotUrl([TOKEN])))
+    const hit = await readEdgeCache(new Request(spotUrl([TOKEN, other])))
     expect(hit).toBeDefined()
     await expect(hit!.text()).resolves.toBe('{"coins":{}}')
     expect(cache.match).toHaveBeenCalledOnce()
@@ -215,21 +232,35 @@ describe('validation before the edge-cache read', () => {
 })
 
 describe('cache-control policies', () => {
-  it('marks a settled past day immutable and today short-lived', () => {
-    expect(cacheControlForHistorical(PAST)).toBe(CACHE_CONTROL_IMMUTABLE)
+  it('gives closed days a long shared TTL and a short browser TTL, not immutable', () => {
+    expect(CACHE_CONTROL_CLOSED_DAY).toBe(
+      'public, s-maxage=31536000, max-age=3600, stale-while-revalidate=86400'
+    )
+    expect(CACHE_CONTROL_CLOSED_DAY.includes('immutable')).toBe(false)
+    expect(cacheControlForHistorical(PAST)).toBe(CACHE_CONTROL_CLOSED_DAY)
     expect(cacheControlForHistorical(TODAY)).toBe(CACHE_CONTROL_TODAY)
   })
 
   it('downgrades an incomplete batch to partial and lets today win', () => {
-    expect(cacheControlForBatch([PAST], true)).toBe(CACHE_CONTROL_IMMUTABLE)
+    expect(cacheControlForBatch([PAST], true)).toBe(CACHE_CONTROL_CLOSED_DAY)
     expect(cacheControlForBatch([PAST], false)).toBe(CACHE_CONTROL_PARTIAL)
     expect(cacheControlForBatch([PAST, TODAY], true)).toBe(CACHE_CONTROL_TODAY)
     expect(cacheControlForBatch([PAST, TODAY], false)).toBe(CACHE_CONTROL_TODAY)
   })
 
   it('applies the same rules to ranges', () => {
-    expect(cacheControlForRange([PAST], true)).toBe(CACHE_CONTROL_IMMUTABLE)
+    expect(cacheControlForRange([PAST], true)).toBe(CACHE_CONTROL_CLOSED_DAY)
     expect(cacheControlForRange([PAST], false)).toBe(CACHE_CONTROL_PARTIAL)
     expect(cacheControlForRange([TODAY], true)).toBe(CACHE_CONTROL_TODAY)
+  })
+
+  it('documents the live cache-control policies on the landing page', () => {
+    const html = renderLandingPage({} as Env, 'https://svc')
+    expect(html).toContain(CACHE_CONTROL_CLOSED_DAY)
+    expect(html).toContain(CACHE_CONTROL_TODAY)
+    expect(html).toContain(CACHE_CONTROL_PARTIAL)
+    expect(html).toContain(CACHE_CONTROL_SPOT)
+    expect(html).toContain(CACHE_CONTROL_NO_STORE)
+    expect(html.includes('immutable')).toBe(false)
   })
 })

@@ -11,7 +11,7 @@ export async function handleRangeHistorical(request: Request, _env: Env, pool: P
   const source = parseOptionalSource(url.searchParams.get('source'))
   const rawCoins = url.searchParams.get('coins')
   const requests = parseRangeCoins(rawCoins)
-  const originalKeyMap = buildOriginalKeyMap(rawCoins!)
+  const originalKeyMap = buildOriginalKeyMap(rawCoins!, 'range')
   const rows = await getRangeHistoricalPrices(pool, requests, source)
 
   const grouped = groupRowsByToken(rows, originalKeyMap)
