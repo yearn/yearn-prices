@@ -47,9 +47,9 @@ function historicalClient(reads: Record<string, unknown>) {
     async readContract({ address, functionName, blockNumber, args }: Record<string, unknown>) {
       readBlocks.push(blockNumber as bigint)
       const contract = reads[(address as string).toLowerCase()] as Record<string, unknown> | undefined
-      if (functionName === 'getRoundData') {
-        const rounds = contract?.getRoundData as Record<string, unknown> | undefined
-        const value = rounds?.[String((args as bigint[])[0])]
+      if (functionName === 'getRoundData' || functionName === 'phaseAggregators') {
+        const keyed = contract?.[functionName] as Record<string, unknown> | undefined
+        const value = keyed?.[String((args as bigint[])[0])]
         if (value === undefined) {
           throw Object.assign(new Error(`execution reverted: ${address}.${functionName}`), {
             name: 'ContractFunctionExecutionError'
@@ -334,6 +334,89 @@ describe('ChainlinkHistoricalSource', () => {
         HISTORICAL_TIMESTAMP
       )
     ).resolves.toBeNull()
+  })
+
+  it('returns the previous-phase round for a 4663 USDC day before the 2026-07-24 aggregator swap', async () => {
+    const usdc = '0x80e0e24718dbfcad49ecaa6f1e6c89a190586ca8'
+    const usdcFeed = getChainlinkFeed(4663, usdc)
+    if (!usdcFeed) {
+      throw new Error('Robinhood USDC feed is not configured')
+    }
+
+    const phase1Aggregator = '0x1111111111111111111111111111111111111111'
+    const beforeSwap = 1_784_851_199
+    const phase2Round1 = (2n << 64n) | 1n
+    const client = historicalClient({
+      [usdcFeed.toLowerCase()]: {
+        latestRoundData: [phase2Round1, 100_020_000n, 1_784_851_800n, 1_784_851_800n, phase2Round1],
+        phaseAggregators: { '1': phase1Aggregator },
+        decimals: 8
+      },
+      [phase1Aggregator]: {
+        latestRoundData: [80n, 100_010_000n, BigInt(beforeSwap - 60), BigInt(beforeSwap - 60), 80n]
+      }
+    })
+    client.getBlock = async () => {
+      throw new Error('historical eth_call is unavailable; do not search blocks')
+    }
+
+    const result = await createChainlinkHistoricalSource({ clientForChain: () => client }).getHistoricalPrice(
+      4663,
+      usdc,
+      beforeSwap
+    )
+
+    expect(result).toEqual({
+      price: 1.0001,
+      timestamp: beforeSwap - 60,
+      symbol: null,
+      confidence: null
+    })
+  })
+
+  it('walks getRoundData inside the previous phase when that phase latest is still newer', async () => {
+    const usdt = '0xe246bc49b0598d7cd9f0ead48b885034f1254380'
+    const usdtFeed = getChainlinkFeed(4663, usdt)
+    if (!usdtFeed) {
+      throw new Error('Robinhood USDT feed is not configured')
+    }
+
+    const phase1Aggregator = '0x2222222222222222222222222222222222222222'
+    const beforeSwap = 1_784_851_199
+    const phase2Round1 = (2n << 64n) | 1n
+    const phase1Round79 = (1n << 64n) | 79n
+    const client = historicalClient({
+      [usdtFeed.toLowerCase()]: {
+        latestRoundData: [phase2Round1, 100_030_000n, 1_784_851_800n, 1_784_851_800n, phase2Round1],
+        phaseAggregators: { '1': phase1Aggregator },
+        getRoundData: {
+          [String(phase1Round79)]: [
+            phase1Round79,
+            99_990_000n,
+            BigInt(beforeSwap - 120),
+            BigInt(beforeSwap - 120),
+            phase1Round79
+          ]
+        },
+        decimals: 8
+      },
+      [phase1Aggregator]: {
+        latestRoundData: [80n, 100_020_000n, BigInt(beforeSwap + 30), BigInt(beforeSwap + 30), 80n]
+      }
+    })
+
+    const result = await createChainlinkHistoricalSource({ clientForChain: () => client }).getHistoricalPrice(
+      4663,
+      usdt,
+      beforeSwap
+    )
+
+    expect(result).toEqual({
+      price: 0.9999,
+      timestamp: beforeSwap - 120,
+      symbol: null,
+      confidence: null
+    })
   })
 })
 
