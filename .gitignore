@@ -7,3 +7,6 @@ dist
 # backfill artifacts
 backfill-report*.json
 backfill-retry*.json
+
+# Local replay evidence and private review pages
+/artifacts/historical-adapter-replay-20260908/

@@ -74,7 +74,7 @@ function errorMessage(error: unknown): string {
   return (error instanceof Error ? error.message : String(error)) || 'Unknown pricing error'
 }
 
-function classifyError(error: unknown): PriceResolutionFailureReason {
+export function classifyError(error: unknown): PriceResolutionFailureReason {
   if (error instanceof RecursiveDependencyError) return error.failure.reason
   if (error instanceof ReadBudgetExceededError) return 'budget'
   if (error instanceof ApiError) return 'retryable'
@@ -101,7 +101,7 @@ function toInputEvidence(input: RecursivePriceInput): PriceInputEvidence {
   }
 }
 
-function validatePath(path: ResolvedPricePath, target: RecursivePriceTarget): ResolvedPricePath {
+export function validatePath(path: ResolvedPricePath, target: RecursivePriceTarget): ResolvedPricePath {
   if (path.chainId !== target.chainId || path.token.toLowerCase() !== target.token.toLowerCase()) {
     throw new InvalidPricingError('Resolved path does not match its requested chain and token')
   }
@@ -119,7 +119,7 @@ function validatePath(path: ResolvedPricePath, target: RecursivePriceTarget): Re
   return path
 }
 
-function buildAdapterPath(
+export function buildAdapterPath(
   target: RecursivePriceTarget,
   adapter: RecursivePriceAdapter,
   quote: RecursiveAdapterQuote

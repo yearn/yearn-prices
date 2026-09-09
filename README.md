@@ -37,11 +37,58 @@ bun run dev
 | `bun run warmup` | Pre-populate today's prices for known vaults/tokens |
 | `bun run backfill:token-address-checksums` | One-off backfill of checksummed token addresses |
 | `bun run backfill:defillama-day-alignment` | One-off repair of DeFiLlama prices stored against the wrong day |
+| `bun run replay:historical-adapters --manifest <file> --out <new.jsonl>` | Read-only historical adapter coverage experiment |
 
 `backfill:defillama-day-alignment` takes a phase (`prices`, `derived`, `verify`, `cleanup`, default `all`) and
 `--out <file>` (report path, default `backfill-report.json`), `--retry[=db|<file>]` (retry only tokens that failed,
 from the progress table or a prior report), `--concurrency <n>` (tokens in flight, default 4). `verify` samples a
 fixed YFI/WBTC 2025-08-16..21 window. Pause the hourly warmup workflow while `prices`/`derived` run.
+
+The adapter replay accepts the version-1 gap manifest (`chainId`, `token`,
+`eodTimestamp` targets) and writes local candidate/failure evidence, never database
+rows. By default it prefetches DeFiLlama observations via `/batchHistorical`, using
+the existing five-token/twenty-timestamp grouping and six-hour observation matcher.
+A run-wide cache deduplicates root and child lookups, including confirmed misses;
+new dependencies are collected across the workload before fetching each group.
+Provider failures remain
+retryable errors in the run cache and do not trigger individual-request retries.
+
+The default `--scheduler graph` discovers a workload-wide dependency graph.
+Each of the 13 on-chain adapters exposes `discover(target)`: historical reads
+produce a complete child list, conversion evidence, and a pure evaluation
+function. Discovery does not require child prices. The runner batches each
+new market frontier, deduplicates nodes by chain/token/timestamp/block context,
+and discovers every applicable alternative route. Captured plans are evaluated
+bottom-up with no further RPC, sharing derived results across their parents.
+The existing recursive request path uses these same plans and pricing formulas.
+
+The graph has a depth limit of 8 and `--max-nodes <n>` (default 32000), with a
+400-read budget per discovered node. Cutoffs, cycles, invalid state and retryable
+provider/RPC errors remain explicit; they are not evidence of unsupported tokens.
+The output `<out>.graph.json` retains nodes, all route edges, parent links,
+conversion state, raw market attempts, selected price paths and failure reasons.
+JSONL `graph-frontier` records provide progress; `target` records summarize roots.
+Only successful provider responses establish absent observations. A graph can
+explain a missing leaf but cannot invent its historical price.
+
+`--scheduler recursive` retains the earlier replay for comparison. Its optional
+`--discovery-rounds <0..8>` controls repeated adapter probes (default 8).
+The graph scheduler does not use provisional probes or repeated discovery rounds.
+Neither scheduler writes production database rows.
+
+Use `--prefetch-evidence <previous.jsonl>` to prefetch child targets discovered in
+a previous replay, or `--prefetch-manifest <children.json>` for an explicit
+version-1 child request set (requests only; no prices imported). Use
+`--concurrency <1..8>` (default 2) for root processing, and
+`--provider-rps <1..10>` (default 1) for batch pacing. `--not-before <ISO timestamp>`
+delays all provider work; 429 responses share the full `Retry-After` cooldown
+(minimum 60 seconds, maximum 12 hours). Output files must not already exist.
+
+Use `--no-defillama` for an independent run using only Chainlink and the existing
+on-chain adapters. This disables direct DeFiLlama requests, aliases, and its cache;
+it does not add feed mappings, peg assumptions, or spot fallbacks. Returned prices
+are candidates, not certified EOD prices. Raw observation times and dependency
+paths remain available for review.
 
 ## API
 

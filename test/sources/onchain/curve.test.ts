@@ -22,6 +22,39 @@ describe('curveAdapter', () => {
     expect(result.path?.metadata.coinCountSource).toBe('pool-N_COINS')
   })
 
+  it('discovers all constituents without prices and evaluates captured state without more RPC', async () => {
+    const client = fakeClient(reads)
+    let calls = 0
+    const counting = {
+      ...client,
+      readContract: (args: never) => {
+        calls += 1
+        return client.readContract(args)
+      }
+    } as typeof client
+    const adapter = curveAdapter({ clientForChain: () => counting })
+    const plan = await adapter.discover({ chainId: 1, token: LP, timestamp: null })
+    expect(plan?.dependencies).toHaveLength(2)
+    expect(plan?.metadata.totalSupplyRaw).toBe((100n * 10n ** 18n).toString())
+    const before = calls
+    const inputs = plan!.dependencies.map(({ target }) => ({
+      chainId: target.chainId,
+      token: target.token,
+      requestedTimestamp: target.timestamp,
+      observedTimestamp: 100,
+      priceUsd: 1,
+      symbol: null,
+      confidence: null,
+      source: 'defillama' as const,
+      adapter: 'defillama',
+      inputs: [],
+      metadata: {}
+    }))
+    expect(plan!.evaluate(inputs).priceUsd).toBeCloseTo(2)
+    expect(plan!.evaluate(inputs).priceUsd).toBeCloseTo(2)
+    expect(calls).toBe(before)
+  })
+
   it('prices native pool legs as wrapped native', async () => {
     const nativeReads = {
       ...reads,
@@ -112,7 +145,11 @@ describe('curveAdapter', () => {
   })
 
   it('returns no price when no coin count is authoritative', async () => {
-    const result = await priceWith(curveAdapter(adapterOptions({ [LP]: { minter: CURVE_POOL, decimals: 18 } })), {}, LP)
+    const result = await priceWith(
+      curveAdapter(adapterOptions({ [LP]: { minter: CURVE_POOL, decimals: 18 } })),
+      {},
+      LP
+    )
 
     expect(result.path).toBeNull()
   })

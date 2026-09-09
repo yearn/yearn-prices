@@ -9,13 +9,14 @@ import {
   type OnchainAdapterOptions,
   rawState,
   recursiveInput,
-  requireChildren,
+  childTarget,
   tokenDecimals
 } from '../context'
 import { InvalidPricingError } from '../errors'
 import { calculatePoolNavPrice } from '../math'
 import { WRAPPED_NATIVE } from '../tokens'
-import type { RecursivePriceAdapter, RecursivePriceTarget } from '../types'
+import { plannedAdapter, type PlannedPriceAdapter } from '../plan'
+import type { RecursivePriceTarget } from '../types'
 
 const CURVE_ADDRESS_PROVIDER = '0x0000000022D53366457F9d5E68Ec105046FC4383' as Address
 const CURVE_NATIVE_TOKEN = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
@@ -65,7 +66,9 @@ type RegistryWalk = <T>(visit: (registry: Address) => Promise<T | null>) => Prom
 function registryWalk(client: PublicClient, blockNumber: bigint): RegistryWalk {
   const seen = new Map<number, Address | null>()
 
-  return async function forEachRegistry<T>(visit: (registry: Address) => Promise<T | null>): Promise<T | null> {
+  return async function forEachRegistry<T>(
+    visit: (registry: Address) => Promise<T | null>
+  ): Promise<T | null> {
     for (let registryId = 0; registryId <= MAX_REGISTRY_ID; registryId += 1) {
       let registry = seen.get(registryId)
       if (registry === undefined) {
@@ -246,7 +249,10 @@ async function resolvePool(
   )
   if (minterRaw) {
     const minter = normalizedAddress(minterRaw)
-    if (minter && (await poolClaimsLpToken(state.client, minter as Address, target.token, state.blockNumber))) {
+    if (
+      minter &&
+      (await poolClaimsLpToken(state.client, minter as Address, target.token, state.blockNumber))
+    ) {
       return minter
     }
   }
@@ -256,95 +262,101 @@ async function resolvePool(
   return poolFromRegistry(state.client, state.address, state.blockNumber, forEachRegistry)
 }
 
-export function curveAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
-  return {
-    name: 'curve-reserve-nav',
-    async resolve(target, context) {
-      const state = await contractContext(target, options)
-      const forEachRegistry = registryWalk(state.client, state.blockNumber)
-      const poolAddress = await resolvePool(target, state, forEachRegistry)
-      if (!poolAddress) {
-        return null
-      }
-      const coinCount = await readCoinCount(state.client, poolAddress as Address, state.blockNumber, forEachRegistry)
-      if (!coinCount) {
-        return null
-      }
+export function curveAdapter(options: OnchainAdapterOptions): PlannedPriceAdapter {
+  return plannedAdapter('curve-reserve-nav', async (target) => {
+    const state = await contractContext(target, options)
+    const forEachRegistry = registryWalk(state.client, state.blockNumber)
+    const poolAddress = await resolvePool(target, state, forEachRegistry)
+    if (!poolAddress) {
+      return null
+    }
+    const coinCount = await readCoinCount(
+      state.client,
+      poolAddress as Address,
+      state.blockNumber,
+      forEachRegistry
+    )
+    if (!coinCount) {
+      return null
+    }
 
-      const coins: CurveCoin[] = []
-      for (let index = 0; index < coinCount.count; index += 1) {
-        const coin = await readCoinAddress(state.client, poolAddress as Address, index, state.blockNumber)
-        if (!coin) {
-          throw new InvalidPricingError(
-            `Curve coin ${index} is unavailable despite authoritative count ${coinCount.count}`
-          )
-        }
-        const isNative = coin.address.toLowerCase() === CURVE_NATIVE_TOKEN
-        const pricingAddress = isNative ? WRAPPED_NATIVE[state.chainId] : coin.address
-        if (!pricingAddress) {
-          throw new Error(`No wrapped native asset is configured for Curve on chain ${state.chainId}`)
-        }
-        const decimals = isNative ? 18 : await tokenDecimals(state.client, coin.address, state.blockNumber)
-        const balanceRaw = await state.client.readContract({
-          address: poolAddress as Address,
-          abi: coin.indexType === 'uint256' ? coinUintAbi : coinIntAbi,
-          functionName: 'balances',
-          args: [BigInt(index)],
-          blockNumber: state.blockNumber
-        })
-        coins.push({ address: pricingAddress, onchainAddress: coin.address, decimals, balanceRaw })
-      }
-      if (coins.length === 0) {
-        return null
-      }
-
-      const [poolDecimals, totalSupplyRaw, inputs] = await Promise.all([
-        tokenDecimals(state.client, target.token, state.blockNumber),
-        state.client.readContract({
-          address: state.address,
-          abi: erc20Abi,
-          functionName: 'totalSupply',
-          blockNumber: state.blockNumber
-        }),
-        requireChildren(
-          context,
-          target,
-          coins.map((coin) => coin.address),
-          state.numericBlockNumber,
-          'Curve constituent'
+    const coins: CurveCoin[] = []
+    for (let index = 0; index < coinCount.count; index += 1) {
+      const coin = await readCoinAddress(state.client, poolAddress as Address, index, state.blockNumber)
+      if (!coin) {
+        throw new InvalidPricingError(
+          `Curve coin ${index} is unavailable despite authoritative count ${coinCount.count}`
         )
-      ])
-      const metadata = {
-        ...blockEvidence(state, target),
-        poolAddress,
-        coinCount: coinCount.count,
-        coinCountSource: coinCount.source,
-        valuationRule: 'all-constituents-required',
-        totalSupplyRaw: rawState(totalSupplyRaw),
-        poolDecimals,
-        coins: coins.map((coin) => ({
-          address: coin.address,
-          onchainAddress: coin.onchainAddress,
-          decimals: coin.decimals,
-          balanceRaw: rawState(coin.balanceRaw)
-        }))
       }
-      return {
-        priceUsd: calculatePoolNavPrice(
-          coins.map((coin, index) => ({ ...coin, priceUsd: inputs[index].priceUsd })),
-          totalSupplyRaw,
-          poolDecimals
-        ),
-        blockNumber: state.numericBlockNumber,
-        inputs: inputs.map((path, index) =>
-          recursiveInput(path, {
-            method: 'curve-reserve-nav',
-            balanceRaw: rawState(coins[index].balanceRaw),
-            decimals: coins[index].decimals
-          })
-        ),
-        metadata
+      const isNative = coin.address.toLowerCase() === CURVE_NATIVE_TOKEN
+      const pricingAddress = isNative ? WRAPPED_NATIVE[state.chainId] : coin.address
+      if (!pricingAddress) {
+        throw new Error(`No wrapped native asset is configured for Curve on chain ${state.chainId}`)
+      }
+      const decimals = isNative ? 18 : await tokenDecimals(state.client, coin.address, state.blockNumber)
+      const balanceRaw = await state.client.readContract({
+        address: poolAddress as Address,
+        abi: coin.indexType === 'uint256' ? coinUintAbi : coinIntAbi,
+        functionName: 'balances',
+        args: [BigInt(index)],
+        blockNumber: state.blockNumber
+      })
+      coins.push({ address: pricingAddress, onchainAddress: coin.address, decimals, balanceRaw })
+    }
+    if (coins.length === 0) {
+      return null
+    }
+
+    const [poolDecimals, totalSupplyRaw] = await Promise.all([
+      tokenDecimals(state.client, target.token, state.blockNumber),
+      state.client.readContract({
+        address: state.address,
+        abi: erc20Abi,
+        functionName: 'totalSupply',
+        blockNumber: state.blockNumber
+      })
+    ])
+    const metadata = {
+      ...blockEvidence(state, target),
+      poolAddress,
+      coinCount: coinCount.count,
+      coinCountSource: coinCount.source,
+      valuationRule: 'all-constituents-required',
+      totalSupplyRaw: rawState(totalSupplyRaw),
+      poolDecimals,
+      coins: coins.map((coin) => ({
+        address: coin.address,
+        onchainAddress: coin.onchainAddress,
+        decimals: coin.decimals,
+        balanceRaw: rawState(coin.balanceRaw)
+      }))
+    }
+    return {
+      dependencies: coins
+        .map((coin) => coin.address)
+        .map((address) => ({
+          target: childTarget(target, address, state.numericBlockNumber),
+          label: 'Curve constituent'
+        })),
+      metadata,
+      evaluate(inputs) {
+        return {
+          priceUsd: calculatePoolNavPrice(
+            coins.map((coin, index) => ({ ...coin, priceUsd: inputs[index].priceUsd })),
+            totalSupplyRaw,
+            poolDecimals
+          ),
+          blockNumber: state.numericBlockNumber,
+          inputs: inputs.map((path, index) =>
+            recursiveInput(path, {
+              method: 'curve-reserve-nav',
+              balanceRaw: rawState(coins[index].balanceRaw),
+              decimals: coins[index].decimals
+            })
+          ),
+          metadata
+        }
       }
     }
-  }
+  })
 }
