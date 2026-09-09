@@ -69,8 +69,8 @@ Price routes accept an optional `source` query parameter. Supported values are:
 `source` filters the stored price rows only. Rows reach the table from the offline jobs:
 
 - `defillama`: `scripts/warmup-prices.ts`, `scripts/backfill-historical-gaps.ts` (alias hits are stored as `defillama`) and `scripts/backfill-defillama-day-alignment.ts` (re-aligns existing rows).
-- `curve`, `derived`: `scripts/warmup-prices.ts`.
-- `chainlink`, `defillama-alias`: no writer. Only rows stored before the request-path registry was removed can match; a token priceable only through Chainlink has no price on any route.
+- `curve`, `derived`, `chainlink`: `scripts/warmup-prices.ts`.
+- `defillama-alias`: no writer. Only rows stored before the request-path registry was removed can match.
 - `on-chain-oracle`, `bobs-api`: no writer in this repo.
 - `enso`: spot only; the spot route never writes `token_prices`, so no historical row carries this source.
 
