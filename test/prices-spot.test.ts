@@ -119,7 +119,7 @@ describe('handleSpot', () => {
     expect(response.headers.get('cache-control')).toBe(SPOT_CACHE_CONTROL)
   })
 
-  it('marks upstream failures as retryable', async () => {
+  it('marks upstream failures as retryable and refuses to cache them', async () => {
     fetchMock.mockRejectedValue(new Error('network down'))
 
     const response = await handleSpot(spotRequest([ETH_KEY]), ENV)
@@ -128,6 +128,27 @@ describe('handleSpot', () => {
     expect(body.coins).toEqual({
       [ETH_KEY]: SPOT_UNAVAILABLE
     })
+    expect(response.headers.get('cache-control')).toBe('no-store')
+  })
+
+  it('returns completed prices when a token stalls past the batch deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      fetchMock.mockImplementation((url: string) =>
+        url.includes('/prices/1/') ? Promise.resolve(ensoRes(200, okBody())) : new Promise(() => {})
+      )
+
+      const pending = handleSpot(spotRequest([ETH_KEY, BASE_KEY]), ENV)
+      await vi.advanceTimersByTimeAsync(13_000)
+      const response = await pending
+      const body = (await response.json()) as SpotBody
+
+      expect(priced(body.coins[ETH_KEY]).prices[0].price).toBe(27052)
+      expect(body.coins[BASE_KEY]).toEqual(SPOT_UNAVAILABLE)
+      expect(response.headers.get('cache-control')).toBe('no-store')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('dedupes token keys that normalize to the same value', async () => {

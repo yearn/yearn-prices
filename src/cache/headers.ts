@@ -1,6 +1,9 @@
 import { isClosedDay, isTodayNormalized } from '../utils/time'
 
-export const CACHE_CONTROL_IMMUTABLE = 'public, max-age=31536000, immutable'
+// Closed days are stable but not immutable: the backfill/repair scripts overwrite
+// historical rows. Keep the long shared-cache lifetime (the edge is purgeable) and a
+// short browser lifetime, otherwise a repair stays invisible to a client for a year.
+export const CACHE_CONTROL_CLOSED_DAY = 'public, s-maxage=31536000, max-age=3600, stale-while-revalidate=86400'
 // Today's value changes intraday as warmup (hourly) backfills it. s-maxage=300 lets the
 // shared edge refresh every ~5min — far tighter than the warmup cadence — while browsers
 // keep the gentler 1h max-age.
@@ -23,7 +26,7 @@ export const CACHE_CONTROL_SPOT = 'public, s-maxage=120, stale-while-revalidate=
 export const CACHE_CONTROL_NO_STORE = 'no-store'
 
 export function cacheControlForHistorical(timestamp: number): string {
-  return isTodayNormalized(timestamp) ? CACHE_CONTROL_TODAY : CACHE_CONTROL_IMMUTABLE
+  return isTodayNormalized(timestamp) ? CACHE_CONTROL_TODAY : CACHE_CONTROL_CLOSED_DAY
 }
 
 export function cacheControlForBatch(timestamps: number[], allResolved: boolean): string {
@@ -31,7 +34,7 @@ export function cacheControlForBatch(timestamps: number[], allResolved: boolean)
     return CACHE_CONTROL_TODAY
   }
 
-  return allResolved ? CACHE_CONTROL_IMMUTABLE : CACHE_CONTROL_PARTIAL
+  return allResolved ? CACHE_CONTROL_CLOSED_DAY : CACHE_CONTROL_PARTIAL
 }
 
 export function cacheControlForRange(rangeEnds: number[], allResolved: boolean): string {
@@ -39,5 +42,5 @@ export function cacheControlForRange(rangeEnds: number[], allResolved: boolean):
     return CACHE_CONTROL_TODAY
   }
 
-  return allResolved ? CACHE_CONTROL_IMMUTABLE : CACHE_CONTROL_PARTIAL
+  return allResolved ? CACHE_CONTROL_CLOSED_DAY : CACHE_CONTROL_PARTIAL
 }

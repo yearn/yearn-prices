@@ -11,7 +11,7 @@ export async function handleBatchHistorical(request: Request, _env: Env, pool: P
   const source = parseOptionalSource(url.searchParams.get('source'))
   const rawCoins = url.searchParams.get('coins')
   const requests = parseBatchCoins(rawCoins)
-  const originalKeyMap = buildOriginalKeyMap(rawCoins!)
+  const originalKeyMap = buildOriginalKeyMap(rawCoins!, 'batch')
   const rows = await getBatchHistoricalPrices(pool, requests, source)
 
   const coins = groupRowsByToken(rows, originalKeyMap)

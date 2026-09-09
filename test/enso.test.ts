@@ -54,6 +54,27 @@ describe('EnsoClient', () => {
     expect(String(fetchMock.mock.calls[0][0])).not.toContain('secret-key')
   })
 
+  it('passes an abort signal so a stalled socket cannot hang the isolate', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout')
+    fetchMock.mockResolvedValue(res(200, OK_BODY))
+
+    await newClient().getPrice(1, ADDR)
+
+    expect(timeout).toHaveBeenCalledWith(5_000)
+    expect((fetchMock.mock.calls[0][1] as RequestInit).signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('retries a transport failure then succeeds', async () => {
+    vi.useFakeTimers()
+    fetchMock.mockRejectedValueOnce(new TypeError('network down')).mockResolvedValueOnce(res(200, OK_BODY))
+
+    const promise = newClient().getPrice(1, ADDR)
+    await vi.runAllTimersAsync()
+
+    await expect(promise).resolves.toEqual(OK_BODY)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
   it('maps a 404 to a NOT_FOUND ApiError without retrying', async () => {
     fetchMock.mockResolvedValue(res(404, {}))
 
