@@ -1,4 +1,4 @@
-import { type Address, type PublicClient, parseAbi } from 'viem'
+import { type Address, type PublicClient, encodeFunctionData, parseAbi } from 'viem'
 import {
   blockEvidence,
   type ContractContext,
@@ -35,6 +35,7 @@ const registryAbi = parseAbi([
 ])
 const metaRegistryAbi = parseAbi(['function get_n_coins(address) view returns (uint256)'])
 const poolCoinCountAbi = parseAbi(['function N_COINS() view returns (uint256)'])
+const registryCoinsAbi = parseAbi(['function get_coins(address) view returns (address[8])'])
 const coinUintAbi = parseAbi([
   'function coins(uint256) view returns (address)',
   'function balances(uint256) view returns (uint256)'
@@ -53,7 +54,9 @@ interface CurveCoin {
 
 interface CurveCoinCount {
   count: number
-  source: 'pool-N_COINS' | 'curve-registry' | 'curve-metaregistry'
+  source: 'pool-N_COINS' | 'curve-registry' | 'curve-metaregistry' | 'curve-registry-coins'
+  coins?: string[]
+  registry?: string
 }
 
 type RegistryWalk = <T>(visit: (registry: Address) => Promise<T | null>) => Promise<T | null>
@@ -158,6 +161,29 @@ function validCoinCount(value: bigint): number | null {
   return Number.isSafeInteger(count) && count > 0 && count <= MAX_COINS ? count : null
 }
 
+/** Read the complete fixed-array return data, rather than decoding a shorter
+ * ABI array and silently truncating a larger pool. Dynamic/ambiguous arrays
+ * are deliberately excluded; the supported legacy interfaces return fixed arrays. */
+async function fixedWords(
+  client: PublicClient,
+  address: Address,
+  data: `0x${string}`,
+  blockNumber: bigint
+): Promise<string[] | null> {
+  const response = await maybe(() => client.call({ to: address, data, blockNumber }))
+  const raw = response?.data
+  if (!raw || !/^0x(?:[0-9a-fA-F]{64})+$/.test(raw)) return null
+  const words = raw.slice(2).match(/.{64}/g)!
+  if (words.length < 1 || words.length > MAX_COINS) return null
+  if (
+    words.length >= 2 &&
+    BigInt(`0x${words[0]}`) === 32n &&
+    BigInt(`0x${words[1]}`) === BigInt(words.length - 2)
+  )
+    return null
+  return words
+}
+
 /**
  * The coin count must come from an authoritative source. Probing `coins(i)`
  * until it reverts would silently undercount a pool and overprice the LP.
@@ -181,7 +207,7 @@ async function readCoinCount(
     return { count: directCount, source: 'pool-N_COINS' }
   }
 
-  return forEachRegistry(async (registry) => {
+  const counted = await forEachRegistry(async (registry) => {
     const registryCounts = await maybe(() =>
       client.readContract({
         address: registry,
@@ -209,6 +235,22 @@ async function readCoinCount(
     return metaRegistryCount == null
       ? null
       : ({ count: metaRegistryCount, source: 'curve-metaregistry' } satisfies CurveCoinCount)
+  })
+  if (counted) return counted
+  return forEachRegistry(async (registry) => {
+    const words = await fixedWords(
+      client,
+      registry,
+      encodeFunctionData({ abi: registryCoinsAbi, functionName: 'get_coins', args: [poolAddress] }),
+      blockNumber
+    )
+    if (!words || words.some((word) => !/^0{24}/.test(word))) return null
+    const addresses = words.map((word) => `0x${word.slice(24)}`)
+    const count = addresses.findIndex((address) => /^0x0+$/.test(address))
+    const coins = count < 0 ? addresses : addresses.slice(0, count)
+    if (!coins.length || (count >= 0 && addresses.slice(count).some((address) => !/^0x0+$/.test(address))))
+      return null
+    return { count: coins.length, source: 'curve-registry-coins', coins, registry } satisfies CurveCoinCount
   })
 }
 
@@ -288,6 +330,9 @@ export function curveAdapter(options: OnchainAdapterOptions): PlannedPriceAdapte
           `Curve coin ${index} is unavailable despite authoritative count ${coinCount.count}`
         )
       }
+      if (coinCount.coins && coin.address.toLowerCase() !== coinCount.coins[index].toLowerCase()) {
+        throw new InvalidPricingError('Curve registry coin list disagrees with pool')
+      }
       const isNative = coin.address.toLowerCase() === CURVE_NATIVE_TOKEN
       const pricingAddress = isNative ? WRAPPED_NATIVE[state.chainId] : coin.address
       if (!pricingAddress) {
@@ -321,6 +366,9 @@ export function curveAdapter(options: OnchainAdapterOptions): PlannedPriceAdapte
       poolAddress,
       coinCount: coinCount.count,
       coinCountSource: coinCount.source,
+      ...(coinCount.registry
+        ? { coinCountRegistry: coinCount.registry, registryCoins: coinCount.coins }
+        : {}),
       valuationRule: 'all-constituents-required',
       totalSupplyRaw: rawState(totalSupplyRaw),
       poolDecimals,
