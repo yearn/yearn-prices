@@ -11,7 +11,7 @@ import {
   tokenDecimals
 } from '../context'
 import { calculateWrapperPrice } from '../math'
-import { plannedAdapter, type PlannedPriceAdapter } from '../plan'
+import { type PlannedPriceAdapter, plannedAdapter } from '../plan'
 
 const BEETS_BAR_WRAPPERS: Record<number, ReadonlySet<string>> = {
   250: new Set(['0xfcef8a994209d6916eb2c86cdd2afd60aa6f54b1'])

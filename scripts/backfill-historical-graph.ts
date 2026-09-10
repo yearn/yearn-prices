@@ -1,25 +1,25 @@
 import { createHash } from 'node:crypto'
-import { readFileSync, writeFileSync, appendFileSync } from 'node:fs'
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { config } from 'dotenv'
-import { createPool } from '../src/db'
-import { parseManifest } from '../src/backfill/manifest'
 import { EXACT_READ_CHUNK_SIZE, MAXIMUM_ACCEPTED_OFFSET_SECONDS } from '../src/backfill/constants'
-import { priceKey, readPricedKeys } from '../src/backfill/priced-keys'
-import { finalizeBackfillTargets, type FinalizationTarget } from '../src/backfill/finalize'
+import { type FinalizationTarget, finalizeBackfillTargets } from '../src/backfill/finalize'
 import { validateGraphResolution } from '../src/backfill/graph-validation'
-import type { GraphNode } from '../src/sources/onchain/graph'
-import { replayGraph } from './lib/graph-replay'
-import { storedHistoricalPrices } from './lib/stored-historical-prices'
-import { offlineProvider } from './lib/offline-provider'
+import { parseManifest } from '../src/backfill/manifest'
+import { priceKey, readPricedKeys } from '../src/backfill/priced-keys'
+import { gitRevision } from '../src/backfill/provenance'
+import { createPool } from '../src/db'
 import {
   createChainlinkHistoricalSource,
-  createDefiLlamaHistoricalSource,
-  createDefiLlamaAliasHistoricalSource
+  createDefiLlamaAliasHistoricalSource,
+  createDefiLlamaHistoricalSource
 } from '../src/sources'
+import type { GraphNode } from '../src/sources/onchain/graph'
 import { preflightTokenCasings } from './backfill-historical-gaps'
-import { gitRevision } from '../src/backfill/provenance'
+import { replayGraph } from './lib/graph-replay'
+import { offlineProvider } from './lib/offline-provider'
+import { storedHistoricalPrices } from './lib/stored-historical-prices'
 
 config({ quiet: true })
 const { values } = parseArgs({
@@ -134,6 +134,8 @@ try {
       unresolved: pending.length - finalTargets.length + result.unresolved
     })
   }
+  if (!pending.length)
+    emit({ type: 'summary', inserted: 0, wouldInsert: 0, skippedConcurrentExisting: 0, unresolved: 0 })
   emit({ type: 'complete', finishedAt: new Date().toISOString() })
 } catch (error) {
   emit({

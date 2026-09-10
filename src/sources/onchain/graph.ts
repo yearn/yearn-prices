@@ -39,14 +39,7 @@ export interface GraphNode {
   reason: PriceResolutionFailureReason | null
   height: number
 }
-const order: PriceResolutionFailureReason[] = [
-  'retryable',
-  'budget',
-  'invalid',
-  'cycle',
-  'max-depth',
-  'unsupported'
-]
+const order: PriceResolutionFailureReason[] = ['retryable', 'budget', 'invalid', 'cycle', 'max-depth', 'unsupported']
 const select = (reasons: PriceResolutionFailureReason[]) =>
   order.find((reason) => reasons.includes(reason)) ?? 'unsupported'
 
@@ -185,8 +178,7 @@ export async function resolveHistoricalGraph(options: {
       if (seen.has(key)) continue
       seen.add(key)
       const selection = selected.get(key)
-      if (selection)
-        pending.push(...nodes.get(key)!.routes[selection.index].dependencies.map((dep) => dep.key))
+      if (selection) pending.push(...nodes.get(key)!.routes[selection.index].dependencies.map((dep) => dep.key))
     }
     return false
   }

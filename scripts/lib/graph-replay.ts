@@ -3,7 +3,7 @@ import { getChainClient } from '../../src/clients/rpc'
 import { HistoricalSourceRegistry } from '../../src/registries/historical'
 import { createMarketPriceResolver } from '../../src/registries/market-price'
 import { createOnchainPriceAdapters } from '../../src/sources/onchain/adapters'
-import { graphKey, resolveHistoricalGraph, type GraphNode } from '../../src/sources/onchain/graph'
+import { type GraphNode, graphKey, resolveHistoricalGraph } from '../../src/sources/onchain/graph'
 import { createReadBudget } from '../../src/sources/onchain/read-budget'
 import type { RecursivePriceTarget, ResolvedPricePath } from '../../src/sources/onchain/types'
 import type { HistoricalPriceSource } from '../../src/sources/types'
@@ -87,9 +87,7 @@ export async function replayGraph(options: {
         out,
         `${json({ type: 'graph-frontier', depth, nodes: nodes.length, batching: provider?.stats ?? null })}\n`
       )
-      console.log(
-        json({ stage: 'graph-frontier', depth, nodes: nodes.length, batching: provider?.stats ?? null })
-      )
+      console.log(json({ stage: 'graph-frontier', depth, nodes: nodes.length, batching: provider?.stats ?? null }))
     }
   })
   const byKey = new Map(graph.nodes.map((node) => [node.key, node]))

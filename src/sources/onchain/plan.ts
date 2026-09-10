@@ -1,10 +1,5 @@
 import { InvalidPricingError } from './errors'
-import type {
-  RecursiveAdapterQuote,
-  RecursivePriceAdapter,
-  RecursivePriceTarget,
-  ResolvedPricePath
-} from './types'
+import type { RecursiveAdapterQuote, RecursivePriceAdapter, RecursivePriceTarget, ResolvedPricePath } from './types'
 
 export interface PriceDependency {
   target: RecursivePriceTarget
@@ -31,9 +26,7 @@ export function plannedAdapter(name: string, discover: PlannedPriceAdapter['disc
     async resolve(target, context) {
       const plan = await discover(target)
       if (!plan) return null
-      const inputs = await Promise.all(
-        plan.dependencies.map(({ target, label }) => context.require(target, label))
-      )
+      const inputs = await Promise.all(plan.dependencies.map(({ target, label }) => context.require(target, label)))
       return evaluatePlan(plan, inputs)
     }
   }

@@ -2,11 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { BatchedHistoricalClient } from '../../scripts/lib/batched-historical-client'
 import { prefetchHistoricalFrontiers } from '../../scripts/lib/historical-frontiers'
 import { RecursivePriceEngine } from '../../src/sources/onchain/engine'
-import type {
-  MarketPriceResolver,
-  RecursivePriceAdapter,
-  RecursivePriceTarget
-} from '../../src/sources/onchain/types'
+import type { MarketPriceResolver, RecursivePriceAdapter, RecursivePriceTarget } from '../../src/sources/onchain/types'
 
 const day = 1704067199
 const token = (n: number) => `0x${n.toString(16).padStart(40, '0')}`
@@ -29,9 +25,7 @@ describe('historical dependency frontiers', () => {
     }))
     const provider = new BatchedHistoricalClient({ getBatchHistorical })
     const market: MarketPriceResolver = async (t) => {
-      const quote = (await provider.getHistorical(t.timestamp!, [`ethereum:${t.token}`])).coins[
-        `ethereum:${t.token}`
-      ]
+      const quote = (await provider.getHistorical(t.timestamp!, [`ethereum:${t.token}`])).coins[`ethereum:${t.token}`]
       return quote
         ? {
             chainId: 1,

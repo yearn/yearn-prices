@@ -1,8 +1,8 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
-import { remainingPriceProjection, remainingGapPositions } from '../src/backfill/projection'
-import { graphKey, type GraphNode } from '../src/sources/onchain/graph'
 import { dateOf, ranges } from '../src/backfill/coverage'
+import { remainingGapPositions, remainingPriceProjection } from '../src/backfill/projection'
+import { type GraphNode, graphKey } from '../src/sources/onchain/graph'
 
 const { values } = parseArgs({
   options: {
@@ -13,18 +13,24 @@ const { values } = parseArgs({
     out: { type: 'string' }
   }
 })
-if (!values.run || !values.graph || !values.inventory || !values.coverage || !values.out)
-  throw new Error('Required: --run --graph --inventory --coverage --out <prefix>')
+if (!values.run || !values.out)
+  throw new Error('Required: --run --out <prefix>; unresolved runs also require --graph --inventory --coverage')
 const records = readFileSync(values.run, 'utf8')
   .trim()
   .split('\n')
   .map((line) => JSON.parse(line))
 if (records.at(-1)?.type !== 'complete') throw new Error('Projection requires a completed backfill report')
-const graph = JSON.parse(readFileSync(values.graph, 'utf8')) as { roots: string[]; nodes: GraphNode[] }
-const inventory = JSON.parse(readFileSync(values.inventory, 'utf8')) as {
+const hasMissing = records.some((record) => ['unresolved', 'rejected'].includes(record.type))
+if (hasMissing && (!values.graph || !values.inventory || !values.coverage))
+  throw new Error('Unresolved runs require --graph --inventory --coverage')
+const graph = (values.graph ? JSON.parse(readFileSync(values.graph, 'utf8')) : { roots: [], nodes: [] }) as {
+  roots: string[]
+  nodes: GraphNode[]
+}
+const inventory = (values.inventory ? JSON.parse(readFileSync(values.inventory, 'utf8')) : { assets: [] }) as {
   assets: Array<{ chainId: number; token: string; symbol?: string }>
 }
-const coverage = JSON.parse(readFileSync(values.coverage, 'utf8')) as {
+const coverage = (values.coverage ? JSON.parse(readFileSync(values.coverage, 'utf8')) : { assets: [] }) as {
   assets: Array<{
     chainId: number
     token: string
@@ -74,16 +80,13 @@ const assets = projection.assets.map((asset) => {
         )
       ).map(([position, dates]) => [position, ranges(dates)])
     ),
-    historicalPricesFound: history
-      ? history.requestedGaps.first != null || history.storedAnyTime.rows > 0
-      : null,
+    historicalPricesFound: history ? history.requestedGaps.first != null || history.storedAnyTime.rows > 0 : null,
     historicalResearchIncomplete: history?.requestedGaps.incomplete ?? true,
     observationsOutsideBackfill: observationsOutsideBackfill.map((item) => dateOf(item.timestamp))
   }
 })
 const report = {
-  assumption:
-    'Production backfill has the same outcome as this completed local dry run; verify after execution.',
+  assumption: 'Production backfill has the same outcome as this completed local dry run; verify after execution.',
   originalTargets: records[0].targets,
   alreadyStored: existing,
   expectedNewPrices: records[0].mode === 'write' ? summary.inserted : summary.wouldInsert,

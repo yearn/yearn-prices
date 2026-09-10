@@ -146,11 +146,7 @@ describe('curveAdapter', () => {
   })
 
   it('returns no price when no coin count is authoritative', async () => {
-    const result = await priceWith(
-      curveAdapter(adapterOptions({ [LP]: { minter: CURVE_POOL, decimals: 18 } })),
-      {},
-      LP
-    )
+    const result = await priceWith(curveAdapter(adapterOptions({ [LP]: { minter: CURVE_POOL, decimals: 18 } })), {}, LP)
 
     expect(result.path).toBeNull()
   })

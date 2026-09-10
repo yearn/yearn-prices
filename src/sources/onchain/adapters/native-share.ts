@@ -9,8 +9,8 @@ import {
   tokenDecimals
 } from '../context'
 import { calculateWrapperPrice } from '../math'
+import { type PlannedPriceAdapter, plannedAdapter } from '../plan'
 import { WRAPPED_NATIVE } from '../tokens'
-import { plannedAdapter, type PlannedPriceAdapter } from '../plan'
 
 /** Wrappers that hold the chain's native asset rather than an ERC-20. */
 const NATIVE_SHARE_WRAPPERS: Record<number, ReadonlySet<string>> = {
@@ -34,12 +34,7 @@ export function nativeShareAdapter(options: OnchainAdapterOptions): PlannedPrice
     const state = await contractContext(target, options)
     const shareDecimals = await tokenDecimals(state.client, target.token, state.blockNumber)
     const oneShareRaw = 10n ** BigInt(shareDecimals)
-    const conversionRaw = await readShareConversion(
-      state.client,
-      state.address,
-      state.blockNumber,
-      oneShareRaw
-    )
+    const conversionRaw = await readShareConversion(state.client, state.address, state.blockNumber, oneShareRaw)
     if (!conversionRaw) {
       return null
     }

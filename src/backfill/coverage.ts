@@ -32,7 +32,8 @@ export function classifyCoverage(missing: number[], available: number[], incompl
           : day > last!
             ? 'trailing'
             : 'interior'
-    ;(categories[category] ??= []).push(day)
+    categories[category] ??= []
+    categories[category].push(day)
   }
   return {
     first,
@@ -49,8 +50,7 @@ export function classifyCoverage(missing: number[], available: number[], incompl
 export function validateCoverageChart(response: unknown, coins: string[]): void {
   if (!response || typeof response !== 'object' || Array.isArray(response)) throw new Error('Malformed chart')
   const entries = (response as { coins?: unknown }).coins
-  if (!entries || typeof entries !== 'object' || Array.isArray(entries))
-    throw new Error('Malformed chart coins')
+  if (!entries || typeof entries !== 'object' || Array.isArray(entries)) throw new Error('Malformed chart coins')
   for (const coin of coins) {
     if (!Object.hasOwn(entries, coin)) continue
     const entry = (entries as Record<string, unknown>)[coin]

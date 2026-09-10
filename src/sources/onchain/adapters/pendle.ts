@@ -10,7 +10,7 @@ import {
   recursiveInput
 } from '../context'
 import { calculateWrapperPrice } from '../math'
-import { plannedAdapter, type PlannedPriceAdapter } from '../plan'
+import { type PlannedPriceAdapter, plannedAdapter } from '../plan'
 
 const PENDLE_ORACLE = '0x9a9Fa8338dd5E5B2188006f1Cd2Ef26d921650C2' as Address
 const MAX_UINT32 = 4_294_967_295
@@ -18,12 +18,8 @@ const MAX_UINT32 = 4_294_967_295
 export const DEFAULT_PENDLE_TWAP_SECONDS = 900
 
 const marketAbi = parseAbi(['function readTokens() view returns (address sy, address pt, address yt)'])
-const syAbi = parseAbi([
-  'function assetInfo() view returns (uint8 assetType, address asset, uint8 assetDecimals)'
-])
-const oracleAbi = parseAbi([
-  'function getLpToAssetRate(address market, uint32 duration) view returns (uint256)'
-])
+const syAbi = parseAbi(['function assetInfo() view returns (uint8 assetType, address asset, uint8 assetDecimals)'])
+const oracleAbi = parseAbi(['function getLpToAssetRate(address market, uint32 duration) view returns (uint256)'])
 
 /** Prices a Pendle LP against its SY asset using the oracle's TWAP rate. */
 export function pendleAdapter(options: OnchainAdapterOptions, twapSeconds: number): PlannedPriceAdapter {
@@ -82,9 +78,7 @@ export function pendleAdapter(options: OnchainAdapterOptions, twapSeconds: numbe
       lpToAssetRateRaw: rawState(rateRaw)
     }
     return {
-      dependencies: [
-        { target: childTarget(target, asset, state.numericBlockNumber), label: 'Pendle SY asset' }
-      ],
+      dependencies: [{ target: childTarget(target, asset, state.numericBlockNumber), label: 'Pendle SY asset' }],
       metadata: conversion,
       evaluate([input]) {
         return {

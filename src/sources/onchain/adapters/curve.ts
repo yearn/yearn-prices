@@ -1,7 +1,8 @@
-import { type Address, type PublicClient, encodeFunctionData, parseAbi } from 'viem'
+import { type Address, encodeFunctionData, type PublicClient, parseAbi } from 'viem'
 import {
   blockEvidence,
   type ContractContext,
+  childTarget,
   contractContext,
   erc20Abi,
   maybe,
@@ -9,13 +10,12 @@ import {
   type OnchainAdapterOptions,
   rawState,
   recursiveInput,
-  childTarget,
   tokenDecimals
 } from '../context'
 import { InvalidPricingError } from '../errors'
 import { calculatePoolNavPrice } from '../math'
+import { type PlannedPriceAdapter, plannedAdapter } from '../plan'
 import { WRAPPED_NATIVE } from '../tokens'
-import { plannedAdapter, type PlannedPriceAdapter } from '../plan'
 import type { RecursivePriceTarget } from '../types'
 
 const CURVE_ADDRESS_PROVIDER = '0x0000000022D53366457F9d5E68Ec105046FC4383' as Address
@@ -69,9 +69,7 @@ type RegistryWalk = <T>(visit: (registry: Address) => Promise<T | null>) => Prom
 function registryWalk(client: PublicClient, blockNumber: bigint): RegistryWalk {
   const seen = new Map<number, Address | null>()
 
-  return async function forEachRegistry<T>(
-    visit: (registry: Address) => Promise<T | null>
-  ): Promise<T | null> {
+  return async function forEachRegistry<T>(visit: (registry: Address) => Promise<T | null>): Promise<T | null> {
     for (let registryId = 0; registryId <= MAX_REGISTRY_ID; registryId += 1) {
       let registry = seen.get(registryId)
       if (registry === undefined) {
@@ -175,11 +173,7 @@ async function fixedWords(
   if (!raw || !/^0x(?:[0-9a-fA-F]{64})+$/.test(raw)) return null
   const words = raw.slice(2).match(/.{64}/g)!
   if (words.length < 1 || words.length > MAX_COINS) return null
-  if (
-    words.length >= 2 &&
-    BigInt(`0x${words[0]}`) === 32n &&
-    BigInt(`0x${words[1]}`) === BigInt(words.length - 2)
-  )
+  if (words.length >= 2 && BigInt(`0x${words[0]}`) === 32n && BigInt(`0x${words[1]}`) === BigInt(words.length - 2))
     return null
   return words
 }
@@ -248,8 +242,7 @@ async function readCoinCount(
     const addresses = words.map((word) => `0x${word.slice(24)}`)
     const count = addresses.findIndex((address) => /^0x0+$/.test(address))
     const coins = count < 0 ? addresses : addresses.slice(0, count)
-    if (!coins.length || (count >= 0 && addresses.slice(count).some((address) => !/^0x0+$/.test(address))))
-      return null
+    if (!coins.length || (count >= 0 && addresses.slice(count).some((address) => !/^0x0+$/.test(address)))) return null
     return { count: coins.length, source: 'curve-registry-coins', coins, registry } satisfies CurveCoinCount
   })
 }
@@ -291,10 +284,7 @@ async function resolvePool(
   )
   if (minterRaw) {
     const minter = normalizedAddress(minterRaw)
-    if (
-      minter &&
-      (await poolClaimsLpToken(state.client, minter as Address, target.token, state.blockNumber))
-    ) {
+    if (minter && (await poolClaimsLpToken(state.client, minter as Address, target.token, state.blockNumber))) {
       return minter
     }
   }
@@ -312,12 +302,7 @@ export function curveAdapter(options: OnchainAdapterOptions): PlannedPriceAdapte
     if (!poolAddress) {
       return null
     }
-    const coinCount = await readCoinCount(
-      state.client,
-      poolAddress as Address,
-      state.blockNumber,
-      forEachRegistry
-    )
+    const coinCount = await readCoinCount(state.client, poolAddress as Address, state.blockNumber, forEachRegistry)
     if (!coinCount) {
       return null
     }
@@ -366,9 +351,7 @@ export function curveAdapter(options: OnchainAdapterOptions): PlannedPriceAdapte
       poolAddress,
       coinCount: coinCount.count,
       coinCountSource: coinCount.source,
-      ...(coinCount.registry
-        ? { coinCountRegistry: coinCount.registry, registryCoins: coinCount.coins }
-        : {}),
+      ...(coinCount.registry ? { coinCountRegistry: coinCount.registry, registryCoins: coinCount.coins } : {}),
       valuationRule: 'all-constituents-required',
       totalSupplyRaw: rawState(totalSupplyRaw),
       poolDecimals,

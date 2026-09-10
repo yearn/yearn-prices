@@ -56,8 +56,7 @@ export class BatchedHistoricalClient extends DefiLlamaClient {
     coins: string[],
     searchWidth = DEFI_LLAMA_SEARCH_WIDTH
   ): Promise<DefiLlamaHistoricalResponse> {
-    if (searchWidth !== DEFI_LLAMA_SEARCH_WIDTH)
-      throw new Error('Offline batching requires the standard 12h window')
+    if (searchWidth !== DEFI_LLAMA_SEARCH_WIDTH) throw new Error('Offline batching requires the standard 12h window')
     const results = await Promise.all(
       coins.map(async (coin) => ({ coin, value: await this.lookup({ coin, timestamp }) }))
     )
@@ -114,7 +113,10 @@ export class BatchedHistoricalClient extends DefiLlamaClient {
         const work = new Map(this.pending)
         this.pending.clear()
         const grouped: Record<string, number[]> = {}
-        for (const target of work.values()) (grouped[target.coin] ??= []).push(target.timestamp)
+        for (const target of work.values()) {
+          grouped[target.coin] ??= []
+          grouped[target.coin].push(target.timestamp)
+        }
         // Sequential batches share the transport's pacing and Retry-After gate.
         for (const payload of buildDefiLlamaPayloads(grouped)) {
           const members = Object.entries(payload).flatMap(([coin, times]) =>
@@ -143,14 +145,20 @@ export class BatchedHistoricalClient extends DefiLlamaClient {
               ) {
                 throw new ApiError('UNAVAILABLE', 'Malformed DeFiLlama batch observations')
               }
+              const observations = new Map<number, number>()
+              for (const sample of entry?.prices ?? []) {
+                const previous = observations.get(sample.timestamp)
+                if (previous !== undefined && previous !== sample.price)
+                  throw new ApiError('UNAVAILABLE', 'Conflicting DeFiLlama batch observations')
+                observations.set(sample.timestamp, sample.price)
+              }
               const matched = matchPricesToRequests(timestamps, entry?.prices ?? [])
               for (const timestamp of timestamps) {
                 const sample = matched.get(timestamp)
                 resolved.set(`${coin}:${timestamp}`, sample ? { ...sample, symbol: entry.symbol } : null)
               }
             }
-            for (const member of members)
-              member.resolve(resolved.get(`${member.coin}:${member.timestamp}`) ?? null)
+            for (const member of members) member.resolve(resolved.get(`${member.coin}:${member.timestamp}`) ?? null)
           } catch (error) {
             this.stats.failedBatches += 1
             for (const member of members) member.reject(error)

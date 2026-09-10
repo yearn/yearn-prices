@@ -11,7 +11,7 @@ import {
   tokenDecimals
 } from '../context'
 import { calculateCompoundTokenPrice } from '../math'
-import { plannedAdapter, type PlannedPriceAdapter } from '../plan'
+import { type PlannedPriceAdapter, plannedAdapter } from '../plan'
 
 const compoundAbi = parseAbi([
   'function underlying() view returns (address)',
@@ -66,12 +66,7 @@ export function compoundAdapter(options: OnchainAdapterOptions): PlannedPriceAda
       metadata: conversion,
       evaluate([input]) {
         return {
-          priceUsd: calculateCompoundTokenPrice(
-            exchangeRateRaw,
-            shareDecimals,
-            underlyingDecimals,
-            input.priceUsd
-          ),
+          priceUsd: calculateCompoundTokenPrice(exchangeRateRaw, shareDecimals, underlyingDecimals, input.priceUsd),
           blockNumber: state.numericBlockNumber,
           inputs: [recursiveInput(input, conversion)],
           metadata: conversion

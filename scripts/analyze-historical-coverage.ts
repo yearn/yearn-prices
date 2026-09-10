@@ -1,17 +1,17 @@
-import { needsOwnPricing } from '../src/backfill/investigation'
 import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { config } from 'dotenv'
-import { validateGraphResolution } from '../src/backfill/graph-validation'
-import type { GraphNode } from '../src/sources/onchain/graph'
-import { createPool } from '../src/db'
-import { DefiLlamaClient, DEFI_LLAMA_SEARCH_WIDTH } from '../src/clients/defillama'
-import { SlidingWindowRateLimiter } from '../src/clients/http-client'
-import { matchPricesToRequests, type DefiLlamaSample } from '../src/sources/defillama/match'
-import { getDefiLlamaCoinGeckoAlias, isDefiLlamaAliasValidAt } from '../src/sources/defillama/aliases'
 import { classifyCoverage, dateOf, ranges, validateCoverageChart } from '../src/backfill/coverage'
+import { validateGraphResolution } from '../src/backfill/graph-validation'
+import { needsOwnPricing } from '../src/backfill/investigation'
+import { DEFI_LLAMA_SEARCH_WIDTH, DefiLlamaClient } from '../src/clients/defillama'
+import { SlidingWindowRateLimiter } from '../src/clients/http-client'
+import { createPool } from '../src/db'
+import { getDefiLlamaCoinGeckoAlias, isDefiLlamaAliasValidAt } from '../src/sources/defillama/aliases'
+import { type DefiLlamaSample, matchPricesToRequests } from '../src/sources/defillama/match'
+import type { GraphNode } from '../src/sources/onchain/graph'
 import { chainIdToName } from '../src/utils/chains'
 
 interface Asset {
@@ -101,8 +101,7 @@ let cooldown = 0
 let retries = 0
 class Limiter extends SlidingWindowRateLimiter {
   override async waitTurn() {
-    while (Date.now() < cooldown)
-      await new Promise((done) => setTimeout(done, Math.min(60000, cooldown - Date.now())))
+    while (Date.now() < cooldown) await new Promise((done) => setTimeout(done, Math.min(60000, cooldown - Date.now())))
     await super.waitTurn()
     if (Date.now() < cooldown) await this.waitTurn()
   }
@@ -134,7 +133,7 @@ for (let offset = 0; offset < identifiers.length; offset += 5) {
   const key = createHash('sha256').update(JSON.stringify(coins)).digest('hex')
   const file = resolve(out, 'first-' + key + '.json')
   try {
-    let response
+    let response: Awaited<ReturnType<DefiLlamaClient['getFirst']>>
     if (existsSync(file)) response = JSON.parse(readFileSync(file, 'utf8'))
     else {
       requests++
@@ -160,7 +159,7 @@ for (let offset = 0; offset < identifiers.length; offset += 5) {
       firstByCoin.set(coin, sample?.timestamp ?? null)
       if (sample) {
         const day = Math.floor(sample.timestamp / DAY) * DAY + DAY - 1
-        const candidates = [day - DAY, day].filter(day => day >= start && day <= end)
+        const candidates = [day - DAY, day].filter((day) => day >= start && day <= end)
         matchedByCoin.set(coin, matchPricesToRequests(candidates, [sample]))
       }
     }
@@ -184,10 +183,7 @@ for (let offset = 0; offset < active.length; offset += 5) {
   // Provider rejects coins * span > 500. Keep our existing 365-day cap too.
   const span = Math.min(365, Math.floor(500 / coins.length))
   for (let from = Math.max(start, firstDay); from <= end; from += span * DAY) {
-    const days = Array.from(
-      { length: Math.min(span, Math.floor((end - from) / DAY) + 1) },
-      (_, n) => from + n * DAY
-    )
+    const days = Array.from({ length: Math.min(span, Math.floor((end - from) / DAY) + 1) }, (_, n) => from + n * DAY)
     const cacheKey = createHash('sha256')
       .update(JSON.stringify({ coins, from, days: days.length, window: DEFI_LLAMA_SEARCH_WIDTH }))
       .digest('hex')
@@ -207,13 +203,23 @@ for (let offset = 0; offset < active.length; offset += 5) {
       validateCoverageChart(response, [])
       let allValid = true
       for (const coin of coins) {
-        try { validateCoverageChart(response, [coin]) }
-        catch {
+        try {
+          validateCoverageChart(response, [coin])
+        } catch {
           allValid = false
           const invalid = invalidByCoin.get(coin) ?? new Set<number>()
           for (const day of days) invalid.add(day)
           invalidByCoin.set(coin, invalid)
-          appendFileSync(resolve(out, 'invalid-observations.jsonl'), JSON.stringify({ coin, from, days: days.length, status: 'invalid', reason: 'Non-positive, malformed or conflicting provider observations' }) + '\n')
+          appendFileSync(
+            resolve(out, 'invalid-observations.jsonl'),
+            JSON.stringify({
+              coin,
+              from,
+              days: days.length,
+              status: 'invalid',
+              reason: 'Non-positive, malformed or conflicting provider observations'
+            }) + '\n'
+          )
           continue
         }
 
@@ -237,9 +243,7 @@ for (let offset = 0; offset < active.length; offset += 5) {
         JSON.stringify({ coins, from, days: days.length, status: 'retryable' }) + '\n'
       )
     }
-    console.log(
-      JSON.stringify({ stage: 'coverage-chart', group: offset / 5, from: dateOf(from), requests, retries })
-    )
+    console.log(JSON.stringify({ stage: 'coverage-chart', group: offset / 5, from: dateOf(from), requests, retries }))
   }
 }
 const graphDays = new Map<string, number[]>()
@@ -276,8 +280,7 @@ const results = [...state.values()].map((item) => {
   const alias = getDefiLlamaCoinGeckoAlias(chain, item.asset.token)
   if (alias) {
     for (const [day, sample] of matchedByCoin.get(alias.identifier) ?? []) {
-      if (isDefiLlamaAliasValidAt(alias, day) && isDefiLlamaAliasValidAt(alias, sample.timestamp))
-        item.alias.push(day)
+      if (isDefiLlamaAliasValidAt(alias, day) && isDefiLlamaAliasValidAt(alias, sample.timestamp)) item.alias.push(day)
     }
     item.failed.push(
       ...[...(failedByCoin.get(alias.identifier) ?? [])].filter((day) => isDefiLlamaAliasValidAt(alias, day))
@@ -291,16 +294,18 @@ const results = [...state.values()].map((item) => {
     (a, b) => a - b
   )
   const coveredSet = new Set(covered)
-  const invalid = [...new Set([...(invalidByCoin.get(direct) ?? []), ...(alias ? invalidByCoin.get(alias.identifier) ?? [] : [])])].filter(day => !coveredSet.has(day))
+  const invalid = [
+    ...new Set([...(invalidByCoin.get(direct) ?? []), ...(alias ? (invalidByCoin.get(alias.identifier) ?? []) : [])])
+  ].filter((day) => !coveredSet.has(day))
   const unknown = [...new Set(item.failed)].filter((day) => !coveredSet.has(day))
   return {
     chainId: item.asset.chainId,
     token: item.asset.token,
     symbol: item.asset.symbol ?? item.symbol ?? null,
-    requestedGaps: classifyCoverage(missing, covered, (unknown.length + invalid.length) > 0),
+    requestedGaps: classifyCoverage(missing, covered, unknown.length + invalid.length > 0),
     storedEod: classifyCoverage(missing, item.stored),
     storedAnyTime: item.storedAny,
-    provider: classifyCoverage(missing, [...item.provider, ...item.alias], (unknown.length + invalid.length) > 0),
+    provider: classifyCoverage(missing, [...item.provider, ...item.alias], unknown.length + invalid.length > 0),
     earliestProviderObservation: firstByCoin.get(direct) ?? null,
     earliestProviderLookup: firstByCoin.has(direct) ? 'complete' : 'retryable',
     graphCandidateDays: [...new Set(reconstructed)].length,

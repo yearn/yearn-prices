@@ -46,6 +46,15 @@ bun run scripts/report-post-backfill.ts \
   --out docs/historical-pricing/post-backfill-projection
 ```
 
+When a completed run has no unresolved targets, only `--run` and `--out`
+are required. An all-existing manifest skips graph discovery and still emits
+a summary, so its report can be generated without graph or research files:
+
+```bash
+bun run scripts/report-post-backfill.ts \
+  --run path/to/completed-backfill.jsonl --out backfill-runs/post-backfill
+```
+
 The broader inventory and source-availability analysis below are research inputs,
 not predictions of backfill success. Finding a price in that research alone does
 not remove a date from the projection of a completed backfill.

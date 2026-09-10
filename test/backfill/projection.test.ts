@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest'
+import { remainingGapPositions, remainingPriceProjection } from '../../src/backfill/projection'
 import type { GraphNode } from '../../src/sources/onchain/graph'
-import { remainingPriceProjection, remainingGapPositions } from '../../src/backfill/projection'
+
 function node(key: string, dependencies: string[] = [], priced = false): GraphNode {
   return {
     key,
@@ -37,9 +38,7 @@ it('omits failures from resolved roots and unused graph branches', () => {
   expect(result.assets.map((a) => a.token)).toEqual(['remaining'])
 })
 it('keeps a rejected candidate unresolved instead of treating it as a completed write', () => {
-  expect(remainingPriceProjection([node('rejected', [], true)], ['rejected']).assets[0].token).toBe(
-    'rejected'
-  )
+  expect(remainingPriceProjection([node('rejected', [], true)], ['rejected']).assets[0].token).toBe('rejected')
 })
 it('refuses incomplete projection evidence', () => {
   expect(() => remainingPriceProjection([], ['absent'])).toThrow('Missing historical')

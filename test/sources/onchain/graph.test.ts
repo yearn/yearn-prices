@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
+import { ApiError } from '../../../src/http/errors'
 import { graphKey, resolveHistoricalGraph } from '../../../src/sources/onchain/graph'
 import { plannedAdapter } from '../../../src/sources/onchain/plan'
-import { ApiError } from '../../../src/http/errors'
 import type { RecursivePriceTarget, ResolvedPricePath } from '../../../src/sources/onchain/types'
+
 const t = (n: number, block = 10): RecursivePriceTarget => ({
   chainId: 1,
   token: `0x${n.toString(16).padStart(40, '0')}`,

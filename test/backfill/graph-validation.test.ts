@@ -1,14 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { validateGraphResolution } from '../../src/backfill/graph-validation'
-import type { GraphNode } from '../../src/sources/onchain/graph'
 import { parseManifest } from '../../src/backfill/manifest'
+import type { GraphNode } from '../../src/sources/onchain/graph'
 
 const timestamp = 1704067199
 const token = '0x1111111111111111111111111111111111111111'
 const childToken = '0x2222222222222222222222222222222222222222'
-const target = parseManifest(
-  JSON.stringify({ version: 1, targets: [{ chainId: 1, token, eodTimestamp: timestamp }] })
-).targets[0]
+const target = parseManifest(JSON.stringify({ version: 1, targets: [{ chainId: 1, token, eodTimestamp: timestamp }] }))
+  .targets[0]
 function fixture() {
   const child = {
     key: 'child',

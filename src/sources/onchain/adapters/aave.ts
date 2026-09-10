@@ -8,7 +8,7 @@ import {
   type OnchainAdapterOptions,
   recursiveInput
 } from '../context'
-import { plannedAdapter, type PlannedPriceAdapter } from '../plan'
+import { type PlannedPriceAdapter, plannedAdapter } from '../plan'
 
 const aaveAbi = parseAbi(['function UNDERLYING_ASSET_ADDRESS() view returns (address)'])
 
@@ -34,9 +34,7 @@ export function aaveAdapter(options: OnchainAdapterOptions): PlannedPriceAdapter
 
     const conversion = { ...blockEvidence(state, target), method: 'one-to-one', underlying }
     return {
-      dependencies: [
-        { target: childTarget(target, underlying, state.numericBlockNumber), label: 'Aave underlying' }
-      ],
+      dependencies: [{ target: childTarget(target, underlying, state.numericBlockNumber), label: 'Aave underlying' }],
       metadata: conversion,
       evaluate([input]) {
         return {

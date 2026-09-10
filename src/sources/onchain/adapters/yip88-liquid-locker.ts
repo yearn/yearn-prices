@@ -12,7 +12,7 @@ import {
   tokenDecimals
 } from '../context'
 import { calculateWrapperPrice } from '../math'
-import { plannedAdapter, type PlannedPriceAdapter } from '../plan'
+import { type PlannedPriceAdapter, plannedAdapter } from '../plan'
 
 const REDEMPTION_FACILITY = '0xba18d0df75a3ff58ef40a8fc0d3e4db74a0e681d' as Address
 const LIQUID_LOCKERS = new Map<string, bigint>([
@@ -167,19 +167,11 @@ export function yip88LiquidLockerAdapter(options: OnchainAdapterOptions): Planne
       references: ['https://docs.yearn.fi/contributing/governance/yips/yip-88']
     }
     return {
-      dependencies: [
-        { target: childTarget(target, yfi, state.numericBlockNumber), label: 'YIP-88 redemption YFI' }
-      ],
+      dependencies: [{ target: childTarget(target, yfi, state.numericBlockNumber), label: 'YIP-88 redemption YFI' }],
       metadata: conversion,
       evaluate([input]) {
         return {
-          priceUsd: calculateWrapperPrice(
-            netYfiRaw,
-            yfiDecimals,
-            oneTargetRaw,
-            targetDecimals,
-            input.priceUsd
-          ),
+          priceUsd: calculateWrapperPrice(netYfiRaw, yfiDecimals, oneTargetRaw, targetDecimals, input.priceUsd),
           blockNumber: state.numericBlockNumber,
           inputs: [recursiveInput(input, conversion)],
           metadata: conversion

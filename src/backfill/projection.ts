@@ -19,8 +19,7 @@ export function remainingPriceProjection(nodes: GraphNode[], remainingRoots: str
       const assetKey = node.target.chainId + ':' + node.target.token.toLowerCase()
       if (route) {
         dependentAssets.add(assetKey)
-        for (const dependency of route.dependencies)
-          if (!byKey.get(dependency.key)?.path) visit(dependency.key)
+        for (const dependency of route.dependencies) if (!byKey.get(dependency.key)?.path) visit(dependency.key)
       } else {
         const asset = assets.get(assetKey) ?? {
           chainId: node.target.chainId,
@@ -58,14 +57,9 @@ export function remainingGapPositions(dates: number[], first: number | null, las
   const groups: Record<string, number[]> = {}
   for (const date of [...new Set(dates)].sort((a, b) => a - b)) {
     const position =
-      first == null || last == null
-        ? 'no-known-history'
-        : date < first
-          ? 'before'
-          : date > last
-            ? 'after'
-            : 'interior'
-    ;(groups[position] ??= []).push(date)
+      first == null || last == null ? 'no-known-history' : date < first ? 'before' : date > last ? 'after' : 'interior'
+    groups[position] ??= []
+    groups[position].push(date)
   }
   return groups
 }

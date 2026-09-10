@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
-import type { GraphNode } from '../src/sources/onchain/graph'
-import { dependencyBlockers, needsOwnPricing } from '../src/backfill/investigation'
 import { dateOf } from '../src/backfill/coverage'
+import { dependencyBlockers, needsOwnPricing } from '../src/backfill/investigation'
+import type { GraphNode } from '../src/sources/onchain/graph'
 
 interface Observation {
   date: string
@@ -45,16 +45,13 @@ const digest = createHash('sha256').update(bytes).digest('hex')
 if (inventory.runs[values.run] && inventory.runs[values.run].sha256 !== digest)
   throw new Error('Run identifier already belongs to different evidence')
 inventory.runs[values.run] = { sha256: digest }
-const assets = new Map(
-  inventory.assets.map((asset) => [asset.chainId + ':' + asset.token.toLowerCase(), asset])
-)
+const assets = new Map(inventory.assets.map((asset) => [asset.chainId + ':' + asset.token.toLowerCase(), asset]))
 const nodes = new Map(graph.nodes.map((node) => [node.key, node]))
 const roots = new Set(graph.roots)
 for (const node of graph.nodes) {
   const token = node.target.token.toLowerCase()
   const key = node.target.chainId + ':' + token
-  if (!node.path && !assets.has(key))
-    assets.set(key, { chainId: node.target.chainId, token, observations: [] })
+  if (!node.path && !assets.has(key)) assets.set(key, { chainId: node.target.chainId, token, observations: [] })
 }
 
 for (const node of graph.nodes) {
@@ -95,9 +92,7 @@ for (const node of graph.nodes) {
   observation.lastCheckedRun = values.run
   observation.runs = [...new Set([...observation.runs, values.run])]
 }
-inventory.assets = [...assets.values()].sort(
-  (a, b) => a.chainId - b.chainId || a.token.localeCompare(b.token)
-)
+inventory.assets = [...assets.values()].sort((a, b) => a.chainId - b.chainId || a.token.localeCompare(b.token))
 for (const asset of inventory.assets)
   asset.observations.sort((a, b) => a.date.localeCompare(b.date) || a.role.localeCompare(b.role))
 const temporary = values.inventory + '.tmp'

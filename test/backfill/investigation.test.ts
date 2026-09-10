@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest'
-import type { GraphNode } from '../../src/sources/onchain/graph'
 import { dependencyBlockers, needsOwnPricing } from '../../src/backfill/investigation'
+import type { GraphNode } from '../../src/sources/onchain/graph'
+
 function fixture() {
   const child = { key: 'child', path: null, reason: 'unsupported' } as GraphNode
   const root = {
@@ -14,14 +15,11 @@ it('identifies a discovered route blocked only by constituent prices', () => {
   const { root, nodes } = fixture()
   expect(dependencyBlockers(root, nodes)).toEqual([{ chainId: 1, token: '0xabc', timestamp: 100 }])
 })
-it.each(['retryable', 'invalid', 'cycle', 'budget', 'max-depth'])(
-  'retains %s failures for investigation',
-  (reason) => {
-    const { root, nodes } = fixture()
-    root.reason = reason as GraphNode['reason']
-    expect(dependencyBlockers(root, nodes)).toBeNull()
-  }
-)
+it.each(['retryable', 'invalid', 'cycle', 'budget', 'max-depth'])('retains %s failures for investigation', (reason) => {
+  const { root, nodes } = fixture()
+  root.reason = reason as GraphNode['reason']
+  expect(dependencyBlockers(root, nodes)).toBeNull()
+})
 it('retains absent routes and discovery cutoffs', () => {
   const { root, nodes } = fixture()
   root.routes[0].dependencies[0].cutoff = 'budget'

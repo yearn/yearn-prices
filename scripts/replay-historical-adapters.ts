@@ -21,8 +21,8 @@ import { createReadBudget } from '../src/sources/onchain/read-budget'
 import type { PriceResolutionFailure, RecursivePriceTarget } from '../src/sources/onchain/types'
 import { chainIdToName } from '../src/utils/chains'
 import { BatchedHistoricalClient, type CoinTarget } from './lib/batched-historical-client'
-import { prefetchHistoricalFrontiers } from './lib/historical-frontiers'
 import { replayGraph } from './lib/graph-replay'
+import { prefetchHistoricalFrontiers } from './lib/historical-frontiers'
 
 // Diagnostic only: no database client, persistence API, or production write mode.
 config({ quiet: true })
@@ -113,9 +113,7 @@ if (provider && values['prefetch-evidence']) {
     const record = JSON.parse(line)
     if (
       record.type !== 'target' ||
-      !rootKeys.has(
-        `${record.target.chainId}:${record.target.token.toLowerCase()}:${record.target.timestamp}`
-      )
+      !rootKeys.has(`${record.target.chainId}:${record.target.token.toLowerCase()}:${record.target.timestamp}`)
     )
       continue
     for (const attempt of record.marketAttempts ?? []) {

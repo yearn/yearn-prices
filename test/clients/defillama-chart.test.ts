@@ -111,9 +111,9 @@ describe('DefiLlamaClient.getChart', () => {
   it('rejects start and end together without calling the provider', async () => {
     const fetchMock = stubFetch()
 
-    expect(() =>
-      new DefiLlamaClient().getChart([WETH], { start: START, end: START + DAY, period: '1d' })
-    ).toThrow(expect.objectContaining({ code: 'INVALID_INPUT' }))
+    expect(() => new DefiLlamaClient().getChart([WETH], { start: START, end: START + DAY, period: '1d' })).toThrow(
+      expect.objectContaining({ code: 'INVALID_INPUT' })
+    )
     expect(() => new DefiLlamaClient().getChart([WETH], { period: '1d' })).toThrow(
       expect.objectContaining({ code: 'INVALID_INPUT' })
     )
@@ -163,9 +163,7 @@ describe('DefiLlamaClient.getChart', () => {
     const response = await new DefiLlamaClient().getChart(coins, { start: START, span: 3, period: '1d' })
 
     expect(Object.keys(response.coins)).toEqual(coins)
-    expect(response.coins[WETH].prices[0].price).not.toBe(
-      response.coins['coingecko:ethereum'].prices[0].price
-    )
+    expect(response.coins[WETH].prices[0].price).not.toBe(response.coins['coingecko:ethereum'].prices[0].price)
     expect(calledUrl(fetchMock).pathname).toBe(`/chart/${coins.join(',')}`)
   })
 
@@ -181,9 +179,7 @@ describe('DefiLlamaClient.getChart', () => {
     vi.useFakeTimers()
     const fetchMock = stubFetch({ status: 429, body: { message: 'rate limited' } }, { body: multiDay })
 
-    const response = await drain(
-      new DefiLlamaClient().getChart([WETH], { start: START, span: 5, period: '1d' })
-    )
+    const response = await drain(new DefiLlamaClient().getChart([WETH], { start: START, span: 5, period: '1d' }))
 
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(response.coins[WETH].prices).toHaveLength(5)

@@ -1,5 +1,5 @@
-import { expect, it } from 'vitest'
 import type { PublicClient } from 'viem'
+import { expect, it } from 'vitest'
 import { createReadBudget } from '../../../src/sources/onchain/read-budget'
 
 it('counts raw calls and contract reads against the same budget before dispatch', async () => {

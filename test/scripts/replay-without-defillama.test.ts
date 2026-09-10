@@ -15,9 +15,7 @@ it('runs the CLI without constructing a DeFiLlama route or issuing HTTP requests
       manifest,
       JSON.stringify({
         version: 1,
-        targets: [
-          { chainId: 1, token: '0x0000000000000000000000000000000000000001', eodTimestamp: 1704067199 }
-        ]
+        targets: [{ chainId: 1, token: '0x0000000000000000000000000000000000000001', eodTimestamp: 1704067199 }]
       })
     )
     writeFileSync(

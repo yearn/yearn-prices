@@ -1,17 +1,17 @@
 import { parseAbi } from 'viem'
 import {
   blockEvidence,
+  childTarget,
   contractContext,
   erc20Abi,
   normalizedAddress,
   type OnchainAdapterOptions,
   rawState,
   recursiveInput,
-  childTarget,
   tokenDecimals
 } from '../context'
 import { calculatePoolNavPrice } from '../math'
-import { plannedAdapter, type PlannedPriceAdapter } from '../plan'
+import { type PlannedPriceAdapter, plannedAdapter } from '../plan'
 
 const RESERVE_RTOKENS: Record<number, ReadonlySet<string>> = {
   1: new Set([
@@ -47,39 +47,38 @@ export function reserveRTokenAdapter(options: OnchainAdapterOptions): PlannedPri
     }
 
     const state = await contractContext(target, options)
-    const [mainRaw, tokenDecimalsRaw, totalSupplyRaw, basketsNeededRaw, redemptionAvailableRaw] =
-      await Promise.all([
-        state.client.readContract({
-          address: state.address,
-          abi: reserveRTokenAbi,
-          functionName: 'main',
-          blockNumber: state.blockNumber
-        }),
-        state.client.readContract({
-          address: state.address,
-          abi: erc20Abi,
-          functionName: 'decimals',
-          blockNumber: state.blockNumber
-        }),
-        state.client.readContract({
-          address: state.address,
-          abi: erc20Abi,
-          functionName: 'totalSupply',
-          blockNumber: state.blockNumber
-        }),
-        state.client.readContract({
-          address: state.address,
-          abi: reserveRTokenAbi,
-          functionName: 'basketsNeeded',
-          blockNumber: state.blockNumber
-        }),
-        state.client.readContract({
-          address: state.address,
-          abi: reserveRTokenAbi,
-          functionName: 'redemptionAvailable',
-          blockNumber: state.blockNumber
-        })
-      ])
+    const [mainRaw, tokenDecimalsRaw, totalSupplyRaw, basketsNeededRaw, redemptionAvailableRaw] = await Promise.all([
+      state.client.readContract({
+        address: state.address,
+        abi: reserveRTokenAbi,
+        functionName: 'main',
+        blockNumber: state.blockNumber
+      }),
+      state.client.readContract({
+        address: state.address,
+        abi: erc20Abi,
+        functionName: 'decimals',
+        blockNumber: state.blockNumber
+      }),
+      state.client.readContract({
+        address: state.address,
+        abi: erc20Abi,
+        functionName: 'totalSupply',
+        blockNumber: state.blockNumber
+      }),
+      state.client.readContract({
+        address: state.address,
+        abi: reserveRTokenAbi,
+        functionName: 'basketsNeeded',
+        blockNumber: state.blockNumber
+      }),
+      state.client.readContract({
+        address: state.address,
+        abi: reserveRTokenAbi,
+        functionName: 'redemptionAvailable',
+        blockNumber: state.blockNumber
+      })
+    ])
     const main = normalizedAddress(mainRaw)
     if (!main || totalSupplyRaw === 0n || basketsNeededRaw === 0n) {
       return null

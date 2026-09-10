@@ -1,10 +1,6 @@
 import type { BatchedHistoricalClient, CoinTarget } from './batched-historical-client'
 
-export async function forEachConcurrent<T>(
-  items: readonly T[],
-  concurrency: number,
-  work: (item: T) => Promise<void>
-) {
+export async function forEachConcurrent<T>(items: readonly T[], concurrency: number, work: (item: T) => Promise<void>) {
   if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error('Invalid concurrency')
   let cursor = 0
   const workers = await Promise.allSettled(

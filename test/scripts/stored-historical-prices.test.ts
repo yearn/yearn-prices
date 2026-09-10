@@ -1,5 +1,6 @@
 import { expect, it, vi } from 'vitest'
 import { storedHistoricalPrices } from '../../scripts/lib/stored-historical-prices'
+
 it('shares exact stored prices across block contexts and marks observation provenance unknown', async () => {
   const timestamp = 1704067199
   const token = '0x1111111111111111111111111111111111111111'
@@ -37,8 +38,6 @@ it('does not turn a database failure into a missing-price cache entry', async ()
     }
   } as never)
   await expect(
-    prices.prefetch([
-      { chainId: 1, token: '0x1111111111111111111111111111111111111111', timestamp: 1704067199 }
-    ])
+    prices.prefetch([{ chainId: 1, token: '0x1111111111111111111111111111111111111111', timestamp: 1704067199 }])
   ).rejects.toThrow('unavailable')
 })

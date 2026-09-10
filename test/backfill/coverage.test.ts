@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest'
 import { classifyCoverage, ranges, validateCoverageChart } from '../../src/backfill/coverage'
+
 it('separates mixed gaps and newly covered dates', () => {
   expect(classifyCoverage([1, 3, 5, 6], [2, 4, 5]).classifications).toEqual([
     'leading',

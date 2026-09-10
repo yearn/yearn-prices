@@ -79,3 +79,36 @@ describe('offline historical batching', () => {
     expect(getBatchHistorical).toHaveBeenCalledTimes(1)
   })
 })
+
+it.each([
+  [1, 999],
+  [999, 1]
+])('rejects conflicting prices in either order: %j', async (...prices) => {
+  const getBatchHistorical = vi.fn(async () => ({
+    coins: { [a]: { prices: prices.map((price) => ({ timestamp: day, price })) } }
+  }))
+  const client = new BatchedHistoricalClient({ getBatchHistorical })
+  await client.prefetch([
+    { coin: a, timestamp: day },
+    { coin: b, timestamp: day }
+  ])
+  await expect(client.getHistorical(day, [a])).rejects.toThrow('Conflicting')
+  await expect(client.getHistorical(day, [b])).rejects.toThrow('Conflicting')
+  expect(getBatchHistorical).toHaveBeenCalledTimes(1)
+})
+
+it('accepts identical duplicate observations', async () => {
+  const client = new BatchedHistoricalClient({
+    getBatchHistorical: vi.fn(async () => ({
+      coins: {
+        [a]: {
+          prices: [
+            { timestamp: day, price: 1 },
+            { timestamp: day, price: 1 }
+          ]
+        }
+      }
+    }))
+  })
+  expect((await client.getHistorical(day, [a])).coins[a].price).toBe(1)
+})

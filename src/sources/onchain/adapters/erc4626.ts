@@ -13,7 +13,7 @@ import {
   tokenDecimals
 } from '../context'
 import { calculateWrapperPrice } from '../math'
-import { plannedAdapter, type PlannedPriceAdapter } from '../plan'
+import { type PlannedPriceAdapter, plannedAdapter } from '../plan'
 
 export function erc4626Adapter(options: OnchainAdapterOptions): PlannedPriceAdapter {
   return plannedAdapter('erc4626-convert-to-assets', async (target) => {
@@ -46,12 +46,7 @@ export function erc4626Adapter(options: OnchainAdapterOptions): PlannedPriceAdap
 
     const shareDecimals = Number(shareDecimalsRaw)
     const oneShareRaw = 10n ** BigInt(shareDecimals)
-    const conversionRaw = await readShareConversion(
-      state.client,
-      state.address,
-      state.blockNumber,
-      oneShareRaw
-    )
+    const conversionRaw = await readShareConversion(state.client, state.address, state.blockNumber, oneShareRaw)
     if (!conversionRaw) {
       return null
     }

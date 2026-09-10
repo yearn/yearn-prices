@@ -11,7 +11,7 @@ import {
   tokenDecimals
 } from '../context'
 import { calculateWrapperPrice } from '../math'
-import { plannedAdapter, type PlannedPriceAdapter } from '../plan'
+import { type PlannedPriceAdapter, plannedAdapter } from '../plan'
 
 const underlyingAbis = [
   parseAbi(['function token() view returns (address)']),

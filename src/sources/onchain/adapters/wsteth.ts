@@ -10,7 +10,7 @@ import {
   recursiveInput
 } from '../context'
 import { calculateWrapperPrice } from '../math'
-import { plannedAdapter, type PlannedPriceAdapter } from '../plan'
+import { type PlannedPriceAdapter, plannedAdapter } from '../plan'
 
 const wstEthAbi = parseAbi([
   'function stETH() view returns (address)',
@@ -54,9 +54,7 @@ export function wstEthAdapter(options: OnchainAdapterOptions): PlannedPriceAdapt
       rateDecimals: 18
     }
     return {
-      dependencies: [
-        { target: childTarget(target, underlying, state.numericBlockNumber), label: 'wstETH underlying' }
-      ],
+      dependencies: [{ target: childTarget(target, underlying, state.numericBlockNumber), label: 'wstETH underlying' }],
       metadata: conversion,
       evaluate([input]) {
         return {

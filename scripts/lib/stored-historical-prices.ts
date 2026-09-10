@@ -1,9 +1,9 @@
 import { getBatchHistoricalPrices, type QueryExecutor } from '../../src/db/queries'
 import type { RecursivePriceTarget, ResolvedPricePath } from '../../src/sources/onchain/types'
-import { chainIdToName } from '../../src/utils/chains'
 import { chunk } from '../../src/utils'
-const key = (target: RecursivePriceTarget) =>
-  target.chainId + ':' + target.token.toLowerCase() + ':' + target.timestamp
+import { chainIdToName } from '../../src/utils/chains'
+
+const key = (target: RecursivePriceTarget) => target.chainId + ':' + target.token.toLowerCase() + ':' + target.timestamp
 
 /** Existing rows are accepted database prices. Their EOD storage key is not
  * represented as a newly observed provider timestamp; that limitation is explicit. */
@@ -13,9 +13,7 @@ export function storedHistoricalPrices(pool: QueryExecutor) {
     get: (target: RecursivePriceTarget) => cache.get(key(target)) ?? null,
     async prefetch(targets: RecursivePriceTarget[]) {
       const missing = [
-        ...new Map(
-          targets.filter((target) => !cache.has(key(target))).map((target) => [key(target), target])
-        ).values()
+        ...new Map(targets.filter((target) => !cache.has(key(target))).map((target) => [key(target), target])).values()
       ]
       for (const group of chunk(missing, 1000)) {
         const rows = await getBatchHistoricalPrices(

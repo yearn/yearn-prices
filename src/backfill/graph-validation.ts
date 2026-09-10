@@ -1,8 +1,8 @@
-import { MAXIMUM_ACCEPTED_OFFSET_SECONDS } from './constants'
-import type { NormalizedTarget } from './manifest'
-import type { FinalizationResolution } from './finalize'
 import type { GraphNode } from '../sources/onchain/graph'
 import { SOURCE_PRIORITY } from '../types'
+import { MAXIMUM_ACCEPTED_OFFSET_SECONDS } from './constants'
+import type { FinalizationResolution } from './finalize'
+import type { NormalizedTarget } from './manifest'
 
 /** Validate every selected graph dependency, not just the root's minimum
  * observation timestamp (which can hide a late or stale constituent). */
@@ -56,8 +56,7 @@ export function validateGraphResolution(
       )
         throw new Error('Invalid historical block evidence')
       const route = node.routes.find((route) => route.adapter === path.adapter && !route.error)
-      if (!route || route.dependencies.length !== path.inputs.length)
-        throw new Error('Missing selected route evidence')
+      if (!route || route.dependencies.length !== path.inputs.length) throw new Error('Missing selected route evidence')
       for (const [index, dependency] of route.dependencies.entries()) {
         const child = nodes.get(dependency.key)
         if (dependency.cutoff || !child?.path) throw new Error('Incomplete selected dependency')
