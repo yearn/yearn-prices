@@ -13,5 +13,6 @@ backfill-retry*.json
 
 /backfill-runs/
 
-# Local historical manifests and diagnostic inventory snapshots
+# Local diagnostic inventory snapshots
 /docs/historical-pricing/*.json
+!/docs/historical-pricing/backfill-manifest.json

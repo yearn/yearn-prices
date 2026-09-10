@@ -31,10 +31,10 @@ Use Bun from the repository root, with the normal DATABASE_URL and RPC_URL_*
 configuration in `.env`. Choose a new output path for every run. Keep generated
 files together.
 
-The JSON manifest is a local run artifact and is excluded from Git. A fresh
-checkout will not contain it. Obtain the reviewed manifest from the run's
-artifact bundle, or regenerate it from the requested database gaps, and place
-it at the path below before running these commands.
+The reviewed [backfill manifest](backfill-manifest.json) is included in the
+repository and contains the 1,071 token/day targets for this backfill. The
+commands below use that exact target set. Already stored targets are skipped;
+generated reports and diagnostic inventories remain local artifacts.
 
 ```bash
 mkdir -p backfill-runs

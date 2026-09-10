@@ -3,7 +3,9 @@
 For the design and examples, see [how historical graph backfill and coverage tracking work](architecture.md).
 
 The database is authoritative for stored prices and recorded unresolved targets.
-The JSON files here are local diagnostic snapshots, excluded from Git. They are
+The reviewed input manifest, `backfill-manifest.json`, is committed so the
+backfill target set is reproducible. Other JSON files here are local diagnostic
+snapshots, excluded from Git. They are
 not a second maintained source of truth; reconcile them against the database
 when preparing a run. GitHub issues track follow-up work rather than duplicate
 the database inventory.
