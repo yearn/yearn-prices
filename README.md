@@ -47,7 +47,7 @@ fixed YFI/WBTC 2025-08-16..21 window. Pause the hourly warmup workflow while `pr
 The adapter replay accepts the version-1 gap manifest (`chainId`, `token`,
 `eodTimestamp` targets) and writes local candidate/failure evidence, never database
 rows. By default it prefetches DeFiLlama observations via `/batchHistorical`, using
-the existing five-token/twenty-timestamp grouping and six-hour observation matcher.
+the existing five-token/twenty-timestamp grouping and 12-hour observation matcher.
 A run-wide cache deduplicates root and child lookups, including confirmed misses;
 new dependencies are collected across the workload before fetching each group.
 Provider failures remain
@@ -149,3 +149,5 @@ Pushing to `main` runs `.github/workflows/deploy.yml`: install deps, load secret
 bun run typecheck
 bun run test
 ```
+
+See [the graph backfill runbook](docs/historical-pricing/backfill-runbook.md) and [unresolved inventory guide](docs/historical-pricing/README.md).

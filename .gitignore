@@ -10,3 +10,8 @@ backfill-retry*.json
 
 # Local replay evidence and private review pages
 /artifacts/historical-adapter-replay-20260908/
+
+/backfill-runs/
+
+# Local historical manifests and diagnostic inventory snapshots
+/docs/historical-pricing/*.json
