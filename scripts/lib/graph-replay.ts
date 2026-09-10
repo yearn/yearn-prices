@@ -5,13 +5,17 @@ import { createMarketPriceResolver } from '../../src/registries/market-price'
 import { createOnchainPriceAdapters } from '../../src/sources/onchain/adapters'
 import { graphKey, resolveHistoricalGraph, type GraphNode } from '../../src/sources/onchain/graph'
 import { createReadBudget } from '../../src/sources/onchain/read-budget'
-import type { RecursivePriceTarget } from '../../src/sources/onchain/types'
+import type { RecursivePriceTarget, ResolvedPricePath } from '../../src/sources/onchain/types'
 import type { HistoricalPriceSource } from '../../src/sources/types'
 import { chainIdToName } from '../../src/utils/chains'
 import type { BatchedHistoricalClient } from './batched-historical-client'
 
 export async function replayGraph(options: {
   targets: RecursivePriceTarget[]
+  stored?: {
+    prefetch(targets: RecursivePriceTarget[]): Promise<void>
+    get(target: RecursivePriceTarget): ResolvedPricePath | null
+  }
   sources: HistoricalPriceSource[]
   provider: BatchedHistoricalClient | null
   out: string
@@ -29,15 +33,20 @@ export async function replayGraph(options: {
     concurrency,
     maxNodes,
     prefetch: async (targets) => {
+      await options.stored?.prefetch(targets)
       if (provider)
         await provider.prefetch(
-          targets.map((target) => ({
-            coin: `${chainIdToName(target.chainId)}:${target.token.toLowerCase()}`,
-            timestamp: target.timestamp!
-          }))
+          targets
+            .filter((target) => !options.stored?.get(target))
+            .map((target) => ({
+              coin: `${chainIdToName(target.chainId)}:${target.token.toLowerCase()}`,
+              timestamp: target.timestamp!
+            }))
         )
     },
     market: async (target) => {
+      const stored = options.stored?.get(target)
+      if (stored) return stored
       const attempts: unknown[] = []
       marketAttempts.set(graphKey(target), attempts)
       const traced = sources.map((source) => ({
