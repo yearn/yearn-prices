@@ -71,7 +71,7 @@ describe('offline historical batching', () => {
 
   it('rejects out-of-window observations and non-EOD input without normalizing dates', async () => {
     const getBatchHistorical = vi.fn(async () => ({
-      coins: { [a]: { prices: [{ price: 2, timestamp: day + 21601 }] } }
+      coins: { [a]: { prices: [{ price: 2, timestamp: day + 43201 }] } }
     }))
     const client = new BatchedHistoricalClient({ getBatchHistorical })
     expect(await client.getHistorical(day, [a])).toEqual({ coins: {} })

@@ -180,7 +180,7 @@ writeFileSync(
     resolutionBudgetPerTarget: scheduler === 'recursive' ? 32 : null,
     marketSources: marketSources.map((source) => source.name),
     note: provider
-      ? 'Batched market observations matched with the existing 6h matcher; shared cache and offline retries. Market sources precede the unchanged adapter graph. Candidate success is not EOD certification. No DB writes.'
+      ? 'Batched market observations matched with the existing 12h matcher; shared cache and offline retries. Market sources precede the unchanged adapter graph. Candidate success is not EOD certification. No DB writes.'
       : 'DeFiLlama, its aliases, and its caches disabled. Chainlink and unchanged on-chain adapters only. No DB writes.'
   })}\n`,
   { flag: 'wx' }

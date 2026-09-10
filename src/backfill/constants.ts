@@ -1,15 +1,10 @@
-/**
- * Operational constants for the historical price gap backfill.
- *
- * Every value here is provisional until the read-only replay approves it.
- * Final values land in a follow-up commit, before any production `--write`.
- */
+import { DEFI_LLAMA_SEARCH_WIDTH, DEFI_LLAMA_SEARCH_WIDTH_SECONDS } from '../clients/defillama'
 
 export const MANIFEST_VERSION = 1
 
-export const PROVIDER_SEARCH_WIDTH = '6h'
+export const PROVIDER_SEARCH_WIDTH = DEFI_LLAMA_SEARCH_WIDTH
 
-export const MAXIMUM_ACCEPTED_OFFSET_SECONDS = 21_600
+export const MAXIMUM_ACCEPTED_OFFSET_SECONDS = DEFI_LLAMA_SEARCH_WIDTH_SECONDS
 
 export const MAXIMUM_CHART_SPAN_DAYS = 365
 

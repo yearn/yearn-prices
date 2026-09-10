@@ -63,7 +63,7 @@ describe('DefiLlamaClient.getChart', () => {
       start: String(START),
       span: '1',
       period: '1d',
-      searchWidth: '6h'
+      searchWidth: '12h'
     })
   })
 
@@ -111,9 +111,9 @@ describe('DefiLlamaClient.getChart', () => {
   it('rejects start and end together without calling the provider', async () => {
     const fetchMock = stubFetch()
 
-    expect(() => new DefiLlamaClient().getChart([WETH], { start: START, end: START + DAY, period: '1d' })).toThrow(
-      expect.objectContaining({ code: 'INVALID_INPUT' })
-    )
+    expect(() =>
+      new DefiLlamaClient().getChart([WETH], { start: START, end: START + DAY, period: '1d' })
+    ).toThrow(expect.objectContaining({ code: 'INVALID_INPUT' }))
     expect(() => new DefiLlamaClient().getChart([WETH], { period: '1d' })).toThrow(
       expect.objectContaining({ code: 'INVALID_INPUT' })
     )
@@ -146,7 +146,11 @@ describe('DefiLlamaClient.getChart', () => {
     const requested = 'Ethereum:0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'
     stubFetch({ body: casing })
 
-    const response = await new DefiLlamaClient().getChart([requested], { start: START, span: 2, period: '1d' })
+    const response = await new DefiLlamaClient().getChart([requested], {
+      start: START,
+      span: 2,
+      period: '1d'
+    })
 
     expect(response.coins[requested].prices).toHaveLength(2)
     expect(response.coins[requested.toLowerCase()]).toBeUndefined()
@@ -159,7 +163,9 @@ describe('DefiLlamaClient.getChart', () => {
     const response = await new DefiLlamaClient().getChart(coins, { start: START, span: 3, period: '1d' })
 
     expect(Object.keys(response.coins)).toEqual(coins)
-    expect(response.coins[WETH].prices[0].price).not.toBe(response.coins['coingecko:ethereum'].prices[0].price)
+    expect(response.coins[WETH].prices[0].price).not.toBe(
+      response.coins['coingecko:ethereum'].prices[0].price
+    )
     expect(calledUrl(fetchMock).pathname).toBe(`/chart/${coins.join(',')}`)
   })
 
@@ -175,7 +181,9 @@ describe('DefiLlamaClient.getChart', () => {
     vi.useFakeTimers()
     const fetchMock = stubFetch({ status: 429, body: { message: 'rate limited' } }, { body: multiDay })
 
-    const response = await drain(new DefiLlamaClient().getChart([WETH], { start: START, span: 5, period: '1d' }))
+    const response = await drain(
+      new DefiLlamaClient().getChart([WETH], { start: START, span: 5, period: '1d' })
+    )
 
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(response.coins[WETH].prices).toHaveLength(5)
@@ -192,4 +200,13 @@ describe('DefiLlamaClient.getChart', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
+})
+
+it('batches earliest-price lookups by identifier', async () => {
+  const fetchMock = vi.fn(async () => Response.json({ coins: {} }))
+  vi.stubGlobal('fetch', fetchMock)
+  const client = new DefiLlamaClient()
+  await client.getFirst(['ethereum:0xa', 'ethereum:0xb'])
+  expect(new URL(String(fetchMock.mock.calls[0][0])).pathname).toBe('/prices/first/ethereum:0xa,ethereum:0xb')
+  vi.unstubAllGlobals()
 })

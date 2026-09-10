@@ -22,7 +22,7 @@ export interface DefiLlamaRequestOptions {
 }
 
 /** Widest window DeFiLlama may search for a sample around a requested timestamp. */
-export const DEFI_LLAMA_SEARCH_WIDTH_SECONDS = 6 * 60 * 60
+export const DEFI_LLAMA_SEARCH_WIDTH_SECONDS = 12 * 60 * 60
 export const DEFI_LLAMA_SEARCH_WIDTH = `${DEFI_LLAMA_SEARCH_WIDTH_SECONDS / 3_600}h`
 
 export class DefiLlamaClient {
@@ -52,6 +52,10 @@ export class DefiLlamaClient {
     return this.fetchJson<DefiLlamaBatchResponse>(url.toString())
   }
 
+  getFirst(coins: string[]): Promise<DefiLlamaHistoricalResponse> {
+    return this.fetchJson<DefiLlamaHistoricalResponse>(`${BASE_URL}/prices/first/${coins.join(',')}`)
+  }
+
   getChart(coins: string[], options: DefiLlamaChartOptions): Promise<DefiLlamaChartResponse> {
     if ((options.start === undefined) === (options.end === undefined)) {
       throw new ApiError('INVALID_INPUT', 'DeFiLlama /chart requires either start or end, not both')
@@ -70,7 +74,7 @@ export class DefiLlamaClient {
       url.searchParams.set('span', String(options.span))
     }
     url.searchParams.set('period', options.period)
-    url.searchParams.set('searchWidth', options.searchWidth ?? '6h')
+    url.searchParams.set('searchWidth', options.searchWidth ?? DEFI_LLAMA_SEARCH_WIDTH)
     return this.fetchJson<DefiLlamaChartResponse>(url.toString())
   }
 

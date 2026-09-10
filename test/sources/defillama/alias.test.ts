@@ -55,7 +55,7 @@ describe('createDefiLlamaAliasHistoricalSource', () => {
       symbol: 'DAI',
       confidence: 0.99
     })
-    expect(defiLlama.getHistorical).toHaveBeenCalledWith(TIMESTAMP, ['coingecko:dai'], '6h')
+    expect(defiLlama.getHistorical).toHaveBeenCalledWith(TIMESTAMP, ['coingecko:dai'], '12h')
   })
 
   it('returns null for a token with no alias', async () => {
