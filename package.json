@@ -21,7 +21,10 @@
     "backfill:historical-gaps": "bun run scripts/backfill-historical-gaps.ts",
     "replay:historical-gaps": "bun run scripts/replay-historical-gaps.ts",
     "replay:historical-adapters": "bun run scripts/replay-historical-adapters.ts",
-    "backfill:defillama-day-alignment": "bun run scripts/backfill-defillama-day-alignment.ts"
+    "backfill:defillama-day-alignment": "bun run scripts/backfill-defillama-day-alignment.ts",
+    "backfill:historical-graph": "bun run scripts/backfill-historical-graph.ts",
+    "coverage:historical": "bun run scripts/analyze-historical-coverage.ts",
+    "inventory:historical": "bun run scripts/update-unpriced-inventory.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "0.10.4",
