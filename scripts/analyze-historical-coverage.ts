@@ -6,13 +6,17 @@ import { config } from 'dotenv'
 import { classifyCoverage, dateOf, ranges, validateCoverageChart } from '../src/backfill/coverage'
 import { validateGraphResolution } from '../src/backfill/graph-validation'
 import { needsOwnPricing } from '../src/backfill/investigation'
-import { DEFI_LLAMA_SEARCH_WIDTH, DEFI_LLAMA_SEARCH_WIDTH_SECONDS, DefiLlamaClient } from '../src/clients/defillama'
-import { SlidingWindowRateLimiter } from '../src/clients/http-client'
+import {
+  DEFI_LLAMA_SEARCH_WIDTH,
+  DEFI_LLAMA_SEARCH_WIDTH_SECONDS,
+  type DefiLlamaClient
+} from '../src/clients/defillama'
 import { createPool } from '../src/db'
 import { getDefiLlamaCoinGeckoAlias, isDefiLlamaAliasValidAt } from '../src/sources/defillama/aliases'
 import { type DefiLlamaSample, matchPricesToRequests } from '../src/sources/defillama/match'
 import type { GraphNode } from '../src/sources/onchain/graph'
 import { chainIdToName } from '../src/utils/chains'
+import { createOfflineDefiLlamaClient } from './lib/offline-provider'
 
 interface Asset {
   chainId: number
@@ -97,23 +101,13 @@ try {
   await pool.end()
 }
 
-let cooldown = 0
 let retries = 0
-class Limiter extends SlidingWindowRateLimiter {
-  override async waitTurn() {
-    while (Date.now() < cooldown) await new Promise((done) => setTimeout(done, Math.min(60000, cooldown - Date.now())))
-    await super.waitTurn()
-    if (Date.now() < cooldown) await this.waitTurn()
-  }
-}
-const provider = new DefiLlamaClient(
-  new Limiter(1, 1000),
-  (_attempt, delay, _url, status) => {
+const provider = createOfflineDefiLlamaClient(1, {
+  timeoutMs: 30000,
+  onRetry: () => {
     retries++
-    if (status === 429) cooldown = Math.max(cooldown, Date.now() + Math.max(delay, 60000))
-  },
-  { timeoutMs: 30000, honorRetryAfter: true, retryRateLimits: true, retryAfterCapMs: 43200000 }
-)
+  }
+})
 const identifiers = [
   ...new Set(
     assets.flatMap((asset) => {

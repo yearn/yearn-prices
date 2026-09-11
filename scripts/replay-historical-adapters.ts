@@ -3,8 +3,6 @@ import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { config } from 'dotenv'
 import { parseManifest } from '../src/backfill/manifest'
-import { DefiLlamaClient } from '../src/clients/defillama'
-import { SlidingWindowRateLimiter } from '../src/clients/http-client'
 import { getChainClient } from '../src/clients/rpc'
 import { HistoricalSourceRegistry } from '../src/registries/historical'
 import { createMarketPriceResolver } from '../src/registries/market-price'
@@ -20,9 +18,10 @@ import { DEFAULT_MAX_DEPTH, DEFAULT_READ_BUDGET } from '../src/sources/onchain/o
 import { createReadBudget } from '../src/sources/onchain/read-budget'
 import type { PriceResolutionFailure, RecursivePriceTarget } from '../src/sources/onchain/types'
 import { chainIdToName } from '../src/utils/chains'
-import { BatchedHistoricalClient, type CoinTarget } from './lib/batched-historical-client'
+import type { CoinTarget } from './lib/batched-historical-client'
 import { replayGraph } from './lib/graph-replay'
 import { prefetchHistoricalFrontiers } from './lib/historical-frontiers'
+import { offlineProvider } from './lib/offline-provider'
 
 // Diagnostic only: no database client, persistence API, or production write mode.
 config({ quiet: true })
@@ -62,31 +61,14 @@ const providerRps = Number(values['provider-rps'])
 if (!Number.isInteger(providerRps) || providerRps < 1 || providerRps > 10) {
   throw new Error('provider-rps must be an integer from 1 to 10')
 }
-let providerCooldownUntil = 0
 let providerRetries = 0
-class OfflineRateLimiter extends SlidingWindowRateLimiter {
-  override async waitTurn() {
-    while (providerCooldownUntil > Date.now()) {
-      await new Promise((resolve) => setTimeout(resolve, providerCooldownUntil - Date.now()))
-    }
-    await super.waitTurn()
-    if (providerCooldownUntil > Date.now()) await this.waitTurn()
-  }
-}
 const provider = values['no-defillama']
   ? null
-  : new BatchedHistoricalClient(
-      new DefiLlamaClient(
-        new OfflineRateLimiter(providerRps, 1000),
-        (_attempt, delay, _url, status) => {
-          providerRetries += 1
-          if (status === 429) {
-            providerCooldownUntil = Math.max(providerCooldownUntil, Date.now() + Math.max(delay, 60_000))
-          }
-        },
-        { timeoutMs: 10_000, retryRateLimits: true, honorRetryAfter: true, retryAfterCapMs: 43_200_000 }
-      )
-    )
+  : offlineProvider(providerRps, {
+      onRetry: () => {
+        providerRetries += 1
+      }
+    })
 const marketSources = [
   ...(provider ? [createDefiLlamaHistoricalSource(provider)] : []),
   createChainlinkHistoricalSource(),
