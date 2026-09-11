@@ -9,6 +9,7 @@ import { validateGraphResolution } from '../src/backfill/graph-validation'
 import { parseManifest } from '../src/backfill/manifest'
 import { priceKey, readPricedKeys } from '../src/backfill/priced-keys'
 import { gitRevision } from '../src/backfill/provenance'
+import { targetOutcome } from '../src/backfill/target-outcome'
 import { createPool } from '../src/db'
 import {
   createChainlinkHistoricalSource,
@@ -62,6 +63,9 @@ try {
     (target) => !priced.has(priceKey(target.chain, target.token, target.eodTimestamp))
   )
   emit({ type: 'existing', skipped: manifest.targets.length - pending.length })
+  for (const target of manifest.targets)
+    if (priced.has(priceKey(target.chain, target.token, target.eodTimestamp)))
+      emit(targetOutcome(target, 'skipped_existing'))
   if (pending.length) {
     const pendingFile = out + '.manifest.json'
     const replayFile = out + '.replay.jsonl'
@@ -96,6 +100,7 @@ try {
       if (!root) throw new Error('Missing graph root')
       if (!root.path) {
         emit({ type: 'unresolved', target, reason: root.reason, graphKey: root.key })
+        emit(targetOutcome(target, 'unresolved', null, root.reason))
         continue
       }
       try {
@@ -104,6 +109,7 @@ try {
         emit({ type: 'validated', target, resolution, graphKey: root.key })
       } catch (error) {
         emit({ type: 'rejected', target, reason: (error as Error).message })
+        emit(targetOutcome(target, 'rejected', null, (error as Error).message))
       }
     }
     emit({
@@ -112,10 +118,21 @@ try {
       sha256: createHash('sha256').update(graphBytes).digest('hex'),
       eligible: finalTargets.length
     })
+    const rootsByTarget = new Map(
+      pending.map((target, index) => [
+        priceKey(target.chain, target.token, target.eodTimestamp),
+        byKey.get(graph.roots[index])!
+      ])
+    )
     const result = await finalizeBackfillTargets(pool, finalTargets, {
       dryRun: !values.write,
       onBatchSettled(batch) {
         settled += batch.results.length
+        for (const result of batch.results) {
+          const status = !values.write && result.status === 'inserted' ? 'would-insert' : result.status
+          const root = rootsByTarget.get(priceKey(result.chain, result.token, result.eodTimestamp))!
+          emit(targetOutcome(result, status, result.status === 'inserted' ? root.path : null))
+        }
         emit({
           type: 'finalized-batch',
           mode: values.write ? 'write' : 'dry-run',

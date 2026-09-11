@@ -54,6 +54,9 @@ it('reports all targets skipped without graph discovery, provider calls or write
     unresolved: 0,
     skippedConcurrentExisting: 0
   })
+  expect(records.filter((record) => record.type === 'target-outcome')).toEqual([
+    expect.objectContaining({ status: 'skipped_existing', observedTimestamp: null, signedOffsetSeconds: null })
+  ])
   expect(records.at(-1).type).toBe('complete')
   expect(mocks.replay).not.toHaveBeenCalled()
   expect(mocks.provider).not.toHaveBeenCalled()

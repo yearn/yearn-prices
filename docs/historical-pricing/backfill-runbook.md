@@ -79,3 +79,13 @@ The saved September 10 dry-run and coverage snapshot used a 12-hour window.
 Their candidate counts are historical evidence, not approval for the restored
 6-hour policy. A new dry run is required to establish eligible prices under
 that policy; the committed target manifest is unchanged.
+
+A completed run emits one `target-outcome` record per normalized manifest target.
+Its status is `skipped_existing`, `inserted`, `would-insert`,
+`skipped_concurrent_existing`, `unresolved`, or `rejected`. Accepted new prices
+include `method`, `source`, `observedTimestamp`, and `signedOffsetSeconds`
+(observed minus requested EOD). These summarize the selected path; the graph
+retains each constituent's independently validated observation. Skipped existing
+rows have null price-method and observation fields because the writer does not
+recover their original evidence. Interrupted runs may have only partial outcomes;
+the final `complete` record remains necessary for full reconciliation.
