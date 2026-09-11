@@ -1,30 +1,33 @@
 export {
   CHAIN_ID_TO_NAME,
   CHAIN_NAME_TO_ID,
-  SUPPORTED_CHAIN_NAMES,
   chainIdToName,
   chainNameToId,
   normalizeTokenAddress,
   normalizeTokenKey,
   parseTokenKey,
+  SUPPORTED_CHAIN_NAMES
 } from './chains'
+export { chunk, runInGroups } from './collections'
 export { optionalResponseNumber, toResponseNumber } from './format'
 export {
   currentUtcDayEnd,
+  isClosedDay,
   isTodayNormalized,
-  normalizeToEndOfDay,
   normalizedDaysInRange,
   normalizedRangeDayCount,
+  normalizeToEndOfDay,
   nowUnix,
   parseCliDate,
   pgTimestampToUnix,
+  toFetchTimestamp,
   toUnixSeconds,
-  unixToIsoTimestamp,
+  unixToIsoTimestamp
 } from './time'
 export {
   parseBatchCoins,
   parseOptionalSource,
   parseRangeCoins,
   parseSpotCoins,
-  parseTimestampSegment,
+  parseTimestampSegment
 } from './validation'

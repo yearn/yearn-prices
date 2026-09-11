@@ -8,5 +8,5 @@ export {
   CACHE_CONTROL_TODAY,
   cacheControlForBatch,
   cacheControlForHistorical,
-  cacheControlForRange,
+  cacheControlForRange
 } from './headers'

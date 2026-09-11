@@ -5,11 +5,24 @@ import type {
   HistoricalRequestTuple,
   PriceSource,
   RangeRequest,
-  TokenPriceWrite,
+  TokenPriceWrite
 } from '../types'
 import { SOURCE_PRIORITY } from '../types'
 import { optionalResponseNumber, toResponseNumber } from '../utils/format'
 import { isTodayNormalized, pgTimestampToUnix, unixToIsoTimestamp } from '../utils/time'
+
+/**
+ * Minimal read surface shared by the Neon pool and the backfill's checked-out
+ * client. Keeps the source-agnostic gap read decoupled from the concrete driver
+ * without erasing types through an `as unknown as Pool` cast.
+ */
+export interface QueryExecutor {
+  query<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<{ rows: R[] }>
+}
+
+export interface Queryable {
+  query(text: string, values?: unknown[]): Promise<{ rows: unknown[]; rowCount: number | null }>
+}
 
 function buildSourceCaseExpression(column = 'tp.source'): string {
   return `CASE ${column} ${SOURCE_PRIORITY.map((source, index) => `WHEN '${source}' THEN ${index + 1}`).join(' ')} ELSE 999 END`
@@ -18,16 +31,16 @@ function buildSourceCaseExpression(column = 'tp.source'): string {
 export async function getExactHistoricalPrice(
   pool: Pool,
   request: HistoricalRequestTuple,
-  source?: PriceSource,
+  source?: PriceSource
 ): Promise<ExactPriceRecord | null> {
   const rows = await getBatchHistoricalPrices(pool, [request], source)
   return rows[0] ?? null
 }
 
 export async function getBatchHistoricalPrices(
-  pool: Pool,
+  pool: QueryExecutor,
   requests: HistoricalRequestTuple[],
-  source?: PriceSource,
+  source?: PriceSource
 ): Promise<ExactPriceRecord[]> {
   if (requests.length === 0) {
     return []
@@ -41,19 +54,16 @@ export async function getBatchHistoricalPrices(
     params.push(request.chain, request.token, unixToIsoTimestamp(request.timestamp))
   }
 
-  let sql = `
-    WITH requested(chain, token, timestamp) AS (
-      VALUES ${valuesSql.join(', ')}
-    )
-  `
+  const requestedSql = `(VALUES ${valuesSql.join(', ')}) AS r(chain, token, timestamp)`
+  let sql: string
 
   if (source) {
     params.push(source)
     const sourceIndex = params.length
-    sql += `
+    sql = `
       SELECT tp.chain, tp.token, tp.timestamp, tp.price, tp.symbol, tp.confidence, tp.source
       FROM token_prices tp
-      INNER JOIN requested r
+      INNER JOIN ${requestedSql}
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp = r.timestamp
@@ -61,11 +71,11 @@ export async function getBatchHistoricalPrices(
       ORDER BY tp.chain, tp.token, tp.timestamp
     `
   } else {
-    sql += `
+    sql = `
       SELECT DISTINCT ON (tp.chain, tp.token, tp.timestamp)
         tp.chain, tp.token, tp.timestamp, tp.price, tp.symbol, tp.confidence, tp.source
       FROM token_prices tp
-      INNER JOIN requested r
+      INNER JOIN ${requestedSql}
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp = r.timestamp
@@ -80,7 +90,7 @@ export async function getBatchHistoricalPrices(
 export async function getRangeHistoricalPrices(
   pool: Pool,
   requests: RangeRequest[],
-  source?: PriceSource,
+  source?: PriceSource
 ): Promise<ExactPriceRecord[]> {
   if (requests.length === 0) {
     return []
@@ -95,7 +105,7 @@ export async function getRangeHistoricalPrices(
       request.chain,
       request.token,
       unixToIsoTimestamp(request.startTimestamp),
-      unixToIsoTimestamp(request.endTimestamp),
+      unixToIsoTimestamp(request.endTimestamp)
     )
   }
 
@@ -138,7 +148,7 @@ export async function getRangeHistoricalPrices(
 export async function getExistingExactTimestamps(
   pool: Pool,
   requests: HistoricalRequestTuple[],
-  source: PriceSource,
+  source: PriceSource
 ): Promise<Set<string>> {
   if (requests.length === 0) {
     return new Set()
@@ -148,12 +158,17 @@ export async function getExistingExactTimestamps(
   return new Set(rows.map((row) => `${row.chain}:${row.token}:${row.timestamp}`))
 }
 
-export async function insertTokenPrices(pool: Pool, rows: TokenPriceWrite[]): Promise<void> {
+export async function insertTokenPrices(pool: Queryable, rows: TokenPriceWrite[], forceUpdate = false): Promise<void> {
   if (rows.length === 0) {
     return
   }
 
   const dedupedRows = dedupeTokenPriceWrites(rows)
+  if (forceUpdate) {
+    await insertRows(pool, dedupedRows, true)
+    return
+  }
+
   const immutableRows = dedupedRows.filter((row) => !isTodayNormalized(row.timestamp))
   const mutableRows = dedupedRows.filter((row) => isTodayNormalized(row.timestamp))
 
@@ -169,7 +184,7 @@ function dedupeTokenPriceWrites(rows: TokenPriceWrite[]): TokenPriceWrite[] {
   return [...keyedRows.values()]
 }
 
-async function insertRows(pool: Pool, rows: TokenPriceWrite[], updateOnConflict: boolean): Promise<void> {
+async function insertRows(pool: Queryable, rows: TokenPriceWrite[], updateOnConflict: boolean): Promise<void> {
   if (rows.length === 0) {
     return
   }
@@ -180,7 +195,7 @@ async function insertRows(pool: Pool, rows: TokenPriceWrite[], updateOnConflict:
   for (const row of rows) {
     const offset = params.length
     valuesSql.push(
-      `($${offset + 1}, $${offset + 2}, $${offset + 3}::timestamptz, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7})`,
+      `($${offset + 1}, $${offset + 2}, $${offset + 3}::timestamptz, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7})`
     )
     params.push(
       row.chain,
@@ -189,7 +204,7 @@ async function insertRows(pool: Pool, rows: TokenPriceWrite[], updateOnConflict:
       row.price,
       row.symbol,
       row.confidence,
-      row.source,
+      row.source
     )
   }
 
@@ -198,7 +213,7 @@ async function insertRows(pool: Pool, rows: TokenPriceWrite[], updateOnConflict:
       ON CONFLICT (chain, token, timestamp, source)
       DO UPDATE SET
         price = EXCLUDED.price,
-        symbol = EXCLUDED.symbol,
+        symbol = COALESCE(EXCLUDED.symbol, token_prices.symbol),
         confidence = EXCLUDED.confidence,
         updated_at = NOW()
     `
@@ -212,7 +227,7 @@ async function insertRows(pool: Pool, rows: TokenPriceWrite[], updateOnConflict:
       VALUES ${valuesSql.join(', ')}
       ${conflictSql}
     `,
-    params,
+    params
   )
 }
 
@@ -224,6 +239,6 @@ function mapDbRowToExactRecord(row: DbPriceRow): ExactPriceRecord {
     price: toResponseNumber(row.price),
     symbol: row.symbol,
     confidence: optionalResponseNumber(row.confidence),
-    source: row.source,
+    source: row.source
   }
 }

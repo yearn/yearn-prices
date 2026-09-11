@@ -1,10 +1,5 @@
 import { ensure } from '../../http'
-import type {
-  BatchHistoricalResponseCoin,
-  ExactPriceRecord,
-  HistoricalRequestTuple,
-  RangeRequest,
-} from '../../types'
+import type { BatchHistoricalResponseCoin, ExactPriceRecord, HistoricalRequestTuple, RangeRequest } from '../../types'
 import { normalizedDaysInRange, parseTokenKey } from '../../utils'
 
 export function buildTokenKey(chain: string, token: string): string {
@@ -30,7 +25,7 @@ export function buildOriginalKeyMap(raw: string): Map<string, string> {
 
 export function groupRowsByToken(
   rows: ExactPriceRecord[],
-  originalKeyMap: Map<string, string>,
+  originalKeyMap: Map<string, string>
 ): Map<string, BatchHistoricalResponseCoin> {
   const coins = new Map<string, BatchHistoricalResponseCoin>()
   for (const row of rows) {
@@ -41,7 +36,7 @@ export function groupRowsByToken(
       timestamp: row.timestamp,
       price: row.price,
       confidence: row.confidence,
-      source: row.source,
+      source: row.source
     })
     if (!current.symbol && row.symbol) {
       current.symbol = row.symbol
@@ -56,9 +51,7 @@ export function groupRowsByToken(
   return coins
 }
 
-export function toExactKey(
-  entry: HistoricalRequestTuple | RangeRequest | ExactPriceRecord,
-): string {
+export function toExactKey(entry: HistoricalRequestTuple | RangeRequest | ExactPriceRecord): string {
   if ('timestamp' in entry) {
     return `${entry.chain}:${entry.token}:${entry.timestamp}`
   }

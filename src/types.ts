@@ -1,10 +1,12 @@
 export const SOURCE_PRIORITY = [
   'defillama',
+  'chainlink',
   'on-chain-oracle',
   'bobs-api',
   'curve',
   'derived',
-  'enso',
+  'defillama-alias',
+  'enso'
 ] as const
 
 export type PriceSource = (typeof SOURCE_PRIORITY)[number]
@@ -152,6 +154,22 @@ export interface DefiLlamaBatchCoin {
 
 export interface DefiLlamaBatchResponse {
   coins: Record<string, DefiLlamaBatchCoin>
+}
+
+export interface DefiLlamaChartPoint {
+  timestamp: number
+  price: number
+}
+
+export interface DefiLlamaChartCoin {
+  symbol?: string
+  confidence?: number
+  decimals?: number
+  prices: DefiLlamaChartPoint[]
+}
+
+export interface DefiLlamaChartResponse {
+  coins: Record<string, DefiLlamaChartCoin>
 }
 
 export interface EnsoPriceResponse {

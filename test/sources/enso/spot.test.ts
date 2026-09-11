@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createEnsoSpotSource } from '../../src/sources/enso'
-import { toUnixSeconds } from '../../src/utils'
+import { createEnsoSpotSource } from '../../../src/sources/enso/spot'
+import { toUnixSeconds } from '../../../src/utils'
 
 const ADDRESS = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
 
@@ -17,7 +17,7 @@ function body(overrides: Record<string, unknown> = {}) {
     symbol: 'WBTC',
     timestamp: 1695197412,
     confidence: 0.99,
-    ...overrides,
+    ...overrides
   }
 }
 
@@ -42,7 +42,7 @@ describe('createEnsoSpotSource', () => {
       price: 27052,
       timestamp: 1695197412,
       symbol: 'WBTC',
-      confidence: 0.99,
+      confidence: 0.99
     })
   })
 
@@ -70,7 +70,7 @@ describe('createEnsoSpotSource', () => {
     fetchMock.mockResolvedValue(response(200, body({ price: 0 })))
 
     await expect(createEnsoSpotSource('enso-key').getSpotPrice(1, ADDRESS)).rejects.toMatchObject({
-      code: 'NOT_FOUND',
+      code: 'NOT_FOUND'
     })
   })
 
@@ -78,9 +78,9 @@ describe('createEnsoSpotSource', () => {
     fetchMock.mockResolvedValue(response(503))
     vi.useFakeTimers()
 
-    const assertion = expect(
-      createEnsoSpotSource('enso-key').getSpotPrice(1, ADDRESS),
-    ).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
+    const assertion = expect(createEnsoSpotSource('enso-key').getSpotPrice(1, ADDRESS)).rejects.toMatchObject({
+      code: 'INTERNAL_ERROR'
+    })
     await vi.runAllTimersAsync()
     await assertion
 

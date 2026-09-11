@@ -1,20 +1,21 @@
-import { CHAIN_ID_TO_NAME } from './utils/chains'
 import type { Env } from './types'
+import { CHAIN_ID_TO_NAME } from './utils/chains'
 
-function supportedChains(env: Env): Array<{ id: number, name: string }> {
+function supportedChains(env: Env): Array<{ id: number; name: string }> {
   return Object.keys(env)
-    .filter(key => key.startsWith('RPC_URL_'))
-    .map(key => Number(key.slice('RPC_URL_'.length)))
-    .filter(id => Number.isFinite(id))
+    .filter((key) => key.startsWith('RPC_URL_'))
+    .map((key) => Number(key.slice('RPC_URL_'.length)))
+    .filter((id) => Number.isFinite(id))
     .sort((left, right) => left - right)
-    .map(id => ({ id, name: CHAIN_ID_TO_NAME[id as keyof typeof CHAIN_ID_TO_NAME] ?? String(id) }))
+    .map((id) => ({ id, name: CHAIN_ID_TO_NAME[id as keyof typeof CHAIN_ID_TO_NAME] ?? String(id) }))
 }
 
 export function renderLandingPage(env: Env, baseUrl: string): string {
   const chains = supportedChains(env)
-  const chainList = chains.length > 0
-    ? `<ul class="chains">${chains.map(chain => `<li><span class="chain-name">${chain.name}</span><span class="chain-id">${chain.id}</span></li>`).join('')}</ul>`
-    : '<p class="muted">No chains are configured on this deployment.</p>'
+  const chainList =
+    chains.length > 0
+      ? `<ul class="chains">${chains.map((chain) => `<li><span class="chain-name">${chain.name}</span><span class="chain-id">${chain.id}</span></li>`).join('')}</ul>`
+      : '<p class="muted">No chains are configured on this deployment.</p>'
 
   const curl = `curl \\
   -H "Authorization: Bearer $API_KEY" \\
@@ -155,7 +156,7 @@ export function renderLandingPage(env: Env, baseUrl: string): string {
 <main>
   <header>
     <h1>Yearn Price Service</h1>
-    <p class="lede">Spot and historical token prices for Yearn, aggregated from DefiLlama, on-chain oracles, Curve, Bob's API, and Enso.</p>
+    <p class="lede">Spot token prices for Yearn from Enso, and historical prices from DefiLlama, Curve, and on-chain derived pricing.</p>
   </header>
 
   <section>
@@ -214,7 +215,7 @@ export function renderLandingPage(env: Env, baseUrl: string): string {
       <li>Spot: <code>public, s-maxage=120, stale-while-revalidate=600</code>.</li>
       <li>Historical prices for past days: <code>public, max-age=31536000, immutable</code>.</li>
       <li>Historical requests for today's UTC day: <code>public, s-maxage=300, max-age=3600, stale-while-revalidate=14400</code>.</li>
-      <li>Partially resolved batch or range for past days: <code>public, max-age=3600</code>.</li>
+      <li>Partially resolved batch or range for past days, and historical not-found: <code>public, s-maxage=300, max-age=300</code>.</li>
       <li>Responses are edge-cached at Cloudflare with canonicalized URLs, so requests that differ only in query order, whitespace, or address casing share one entry.</li>
     </ul>
   </section>

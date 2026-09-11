@@ -58,20 +58,34 @@ For example, any timestamp on `2024-01-01` UTC is queried as `2024-01-01T23:59:5
 Price routes accept an optional `source` query parameter. Supported values are:
 
 - `defillama`
+- `chainlink`
 - `on-chain-oracle`
 - `bobs-api`
 - `curve`
 - `derived`
+- `defillama-alias`
 - `enso`
+
+`source` filters the stored price rows only. Rows reach the table from the offline jobs:
+
+- `defillama`: `scripts/warmup-prices.ts`, `scripts/backfill-historical-gaps.ts` (alias hits are stored as `defillama`) and `scripts/backfill-defillama-day-alignment.ts` (re-aligns existing rows).
+- `curve`, `derived`, `chainlink`: `scripts/warmup-prices.ts`.
+- `defillama-alias`: no writer. Only rows stored before the request-path registry was removed can match.
+- `on-chain-oracle`, `bobs-api`: no writer in this repo.
+- `enso`: spot only; the spot route never writes `token_prices`, so no historical row carries this source.
+
+Filtering on a source with no stored rows returns `404` for the single-token route and `200` with an empty `coins` object for `batchHistorical` and `rangeHistorical`.
 
 When `source` is omitted, the API returns the first available row by priority:
 
 1. `defillama`
-2. `on-chain-oracle`
-3. `bobs-api`
-4. `curve`
-5. `derived`
-6. `enso`
+2. `chainlink`
+3. `on-chain-oracle`
+4. `bobs-api`
+5. `curve`
+6. `derived`
+7. `defillama-alias`
+8. `enso`
 
 ## `GET /api/health`
 
@@ -129,11 +143,9 @@ Response:
 }
 ```
 
-If no stored row exists for the normalized timestamp and no `source` filter was given, the route falls back to a live DefiLlama lookup for that day and returns the result with `"source": "defillama"`. The response is not persisted. A `source` filter disables the fallback: the route answers from stored rows only.
+If no stored row exists for the normalized timestamp, the route returns `NOT_FOUND`. It never resolves upstream on the request path. The only scheduled writer is the hourly warmup, which covers Kong `origin=yearn` vault and underlying tokens over the trailing 7 days. A token or day outside that set only gets a row when someone runs a backfill script by hand, so a `404` there does not resolve on its own.
 
-If the fallback upstream is degraded, the request fails with `INTERNAL_ERROR` (`500`, `no-store`) rather than `NOT_FOUND` — a not-found response is cached for an hour, so a transient blip must not be recorded as "no price exists".
-
-If neither the stored rows nor the fallback have a price, the route returns:
+When no stored row exists, the route returns:
 
 ```json
 {
@@ -273,7 +285,9 @@ Response:
 }
 ```
 
-Only found prices are returned. Missing token and timestamp pairs are omitted from the response.
+The route answers from stored rows only. It never resolves upstream on the request path. The hourly warmup covers Kong `origin=yearn` vault and underlying tokens over the trailing 7 days; any other token or older day only gets a row from a manually run backfill, so an omitted pair there stays omitted.
+
+Only found prices are returned. Pairs missing from the table are omitted from the response, and the batch is marked partial.
 
 ## `GET /api/prices/rangeHistorical`
 
@@ -372,11 +386,13 @@ Common error cases:
 Price responses set cache headers based on the requested timestamps and whether every requested value was found.
 
 - Historical non-today exact price: `public, max-age=31536000, immutable`
-- Requests involving today's UTC day: `public, s-maxage=300, max-age=3600, stale-while-revalidate=14400`
+- Requests involving today's UTC day, or a batch pair whose day has not closed yet: `public, s-maxage=300, max-age=3600, stale-while-revalidate=14400`
 - Fully resolved batch or range for past days: `public, max-age=31536000, immutable`
-- Partially resolved batch or range for past days: `public, max-age=3600`
-- Historical not found responses: `public, max-age=3600, stale-while-revalidate=14400`
+- Partially resolved batch or range for past days: `public, s-maxage=300, max-age=300`
+- Historical not found responses: `public, s-maxage=300, max-age=300`
 - Spot: `public, s-maxage=120, stale-while-revalidate=600`
+
+A historical `404`, or a pair omitted from a partial batch or range, means the row is not in `token_prices` yet. It self-heals only for what the hourly warmup covers (Kong `origin=yearn` vault and underlying tokens, trailing 7 days); anything else waits on a manually run backfill. The 300s negative TTL applies to a `404` and to a partial batch or range made entirely of closed days — it is kept below the warmup cadence so a covered consumer sees the row soon after a job lands it. A batch or range that touches today's UTC day takes the today policy instead, so a missing closed day in that response carries the 1h browser `max-age` and 4h `stale-while-revalidate`.
 
 ## Edge caching
 
@@ -384,4 +400,4 @@ Worker-generated responses do not populate Cloudflare's edge cache from a `Cache
 
 Spot has no upstream cache policy (Enso sends only a weak `etag`), so its `s-maxage=120` is a chosen shared-cache TTL — short enough to keep prices fresh, long enough to absorb bursts — mirroring the Enso proxy already shipping in yearn.fi.
 
-The store/TTL decision is delegated to the Cache API: `caches.default.put()` reads the response's `Cache-Control`, refusing `no-store`/`private` and deriving the edge TTL from `s-maxage` (falling back to `max-age`, then `Expires`). Only successful responses are offered to `put()` — errors return straight from the worker's catch block and are never edge-stored (generic errors additionally carry `no-store` for downstream caches; historical not-found is the deliberate exception, returning a browser-cacheable negative result). Today's data sets `s-maxage=300` so the shared edge refreshes every ~5min, tracking the hourly warmup far more closely than the 1h browser `max-age`. The cache key is the request URL canonicalized first (sorted query params, and `coins` re-serialized with sorted keys and lowercased addresses) so requests that differ only in JSON ordering, whitespace, or address casing share one entry. Positional arrays — a range's `[start, end]` and a batch token's timestamp list — are never reordered, so two requests that differ in those never collide.
+The store/TTL decision is delegated to the Cache API: `caches.default.put()` reads the response's `Cache-Control`, refusing `no-store`/`private` and deriving the edge TTL from `s-maxage` (falling back to `max-age`, then `Expires`). Only successful responses are offered to `put()` — errors return straight from the worker's catch block and are never edge-stored (generic errors additionally carry `no-store` for downstream caches; historical not-found is the deliberate exception, returning a short-lived cacheable negative result). Today's data sets `s-maxage=300` so the shared edge refreshes every ~5min, tracking the hourly warmup far more closely than the 1h browser `max-age`. The cache key is the request URL canonicalized first (sorted query params, and `coins` re-serialized with sorted keys and lowercased addresses) so requests that differ only in JSON ordering, whitespace, or address casing share one entry. Positional arrays — a range's `[start, end]` and a batch token's timestamp list — are never reordered, so two requests that differ in those never collide.

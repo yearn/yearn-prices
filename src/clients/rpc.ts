@@ -1,14 +1,99 @@
-import { createPublicClient, defineChain, http, parseAbi, type PublicClient } from 'viem'
+import { createPublicClient, defineChain, http, type PublicClient, parseAbi } from 'viem'
 import { CHAIN_ID_TO_NAME } from '../utils/chains'
 
 const SHARE_PRICE_ABI_V2 = parseAbi(['function pricePerShare() view returns (uint256)'])
 const SHARE_PRICE_ABI_V3 = parseAbi(['function convertToAssets(uint256) view returns (uint256)'])
 
-const blockCache = new Map<string, bigint>()
-const clientCache = new Map<number, PublicClient>()
+const MAX_BLOCK_CACHE = 512
+const MAX_SAMPLES_PER_CHAIN = 64
+const MAX_CLIENT_CACHE = 64
 
-function sleep(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds))
+const blockCache = new Map<string, bigint>()
+const blockSearchInflight = new WeakMap<PublicClient, Map<string, Promise<bigint>>>()
+const blockSamples = new Map<number, Array<{ number: bigint; timestamp: number }>>()
+const clientCache = new Map<string, PublicClient>()
+
+function setCapped<K, V>(map: Map<K, V>, key: K, value: V, max: number): void {
+  if (map.has(key)) {
+    map.delete(key)
+  }
+  map.set(key, value)
+  if (map.size > max) {
+    const oldest = map.keys().next().value
+    if (oldest !== undefined) {
+      map.delete(oldest)
+    }
+  }
+}
+
+function rememberSample(chainId: number, number: bigint, timestamp: number): void {
+  const samples = blockSamples.get(chainId) ?? []
+  samples.push({ number, timestamp })
+  if (samples.length > MAX_SAMPLES_PER_CHAIN) {
+    samples.shift()
+  }
+  blockSamples.set(chainId, samples)
+}
+
+interface SearchBounds {
+  low: bigint
+  high: bigint
+  best: bigint
+  lowTimestamp: number
+  highTimestamp: number
+}
+
+function seedBounds(chainId: number, timestamp: number, latest: bigint, latestTimestamp: number): SearchBounds {
+  let low = 0n
+  let lowTimestamp = 0
+  let high = latest
+  let highTimestamp = latestTimestamp
+  // Genesis, not latest: a timestamp older than the whole chain must not fall
+  // back to the head block.
+  let best = 0n
+  for (const sample of blockSamples.get(chainId) ?? []) {
+    if (sample.timestamp === timestamp) {
+      return {
+        low: sample.number,
+        high: sample.number,
+        best: sample.number,
+        lowTimestamp: timestamp,
+        highTimestamp: timestamp
+      }
+    }
+    if (sample.timestamp < timestamp && sample.number > low) {
+      low = sample.number
+      lowTimestamp = sample.timestamp
+      best = sample.number
+    }
+    if (sample.timestamp > timestamp && sample.number < high) {
+      high = sample.number
+      highTimestamp = sample.timestamp
+    }
+  }
+  return { low, high, best, lowTimestamp, highTimestamp }
+}
+
+// Block times are near-constant per chain, so interpolating between the known
+// bound timestamps lands within a few blocks of the target — typically 2-4
+// probes instead of ~14 midpoint probes, which was pushing the Worker past its
+// time budget (504s). Falls back to midpoints after a few probes so a skewed
+// block-time history still converges in O(log n).
+const MAX_INTERPOLATION_PROBES = 8
+
+function nextProbe(bounds: SearchBounds, timestamp: number, probes: number): bigint {
+  const { low, high, lowTimestamp, highTimestamp } = bounds
+  // lowTimestamp === 0 means the low bound is still the unprobed genesis seed:
+  // interpolating against unix epoch skews every guess toward the head, so
+  // bisect until a real low bound exists.
+  if (probes >= MAX_INTERPOLATION_PROBES || lowTimestamp <= 0 || highTimestamp <= lowTimestamp) {
+    return (low + high) / 2n
+  }
+  const fraction = (timestamp - lowTimestamp) / (highTimestamp - lowTimestamp)
+  const guess = low + BigInt(Math.round(Number(high - low) * fraction))
+  if (guess < low) return low
+  if (guess > high) return high
+  return guess
 }
 
 export function compareApiVersions(left: string | null | undefined, right: string): number {
@@ -42,13 +127,13 @@ function createChainClient(chainId: number, rpcUrl: string): PublicClient {
     nativeCurrency: {
       name: chainName,
       symbol: chainName.slice(0, 4).toUpperCase(),
-      decimals: 18,
+      decimals: 18
     },
     rpcUrls: {
       default: {
-        http: [rpcUrl],
-      },
-    },
+        http: [rpcUrl]
+      }
+    }
   })
 
   return createPublicClient({
@@ -56,77 +141,123 @@ function createChainClient(chainId: number, rpcUrl: string): PublicClient {
     transport: http(rpcUrl, {
       batch: true,
       retryCount: 2,
-      retryDelay: 250,
-    }),
+      retryDelay: 250
+    })
   })
+}
+
+function rpcUrlForChain(chainId: number, env?: Record<string, string | undefined>): string | undefined {
+  if (env) {
+    return env[`RPC_URL_${chainId}`]
+  }
+  // Workers have no `process` unless nodejs_compat is on. Scripts and tests
+  // still read process.env when no Worker env is passed.
+  if (typeof process === 'undefined') {
+    return undefined
+  }
+  return process.env[`RPC_URL_${chainId}`]
 }
 
 /**
  * Returns a memoized client for `chainId`, or null when no `RPC_URL_<chainId>`
  * is configured. Callers decide how to surface the missing-RPC gap.
  */
-export function getChainClient(chainId: number): PublicClient | null {
-  const cached = clientCache.get(chainId)
-  if (cached) {
-    return cached
-  }
-
-  const rpcUrl = process.env[`RPC_URL_${chainId}`]
+export function getChainClient(chainId: number, env?: Record<string, string | undefined>): PublicClient | null {
+  const rpcUrl = rpcUrlForChain(chainId, env)
   if (!rpcUrl) {
     return null
   }
 
+  // Keyed by URL as well as chain: one isolate serves many envs, and keying by
+  // chain alone hands the first caller's RPC to every later one.
+  const cacheKey = `${chainId}:${rpcUrl}`
+  const cached = clientCache.get(cacheKey)
+  if (cached) {
+    return cached
+  }
+
   const client = createChainClient(chainId, rpcUrl)
-  clientCache.set(chainId, client)
+  setCapped(clientCache, cacheKey, client, MAX_CLIENT_CACHE)
   return client
 }
 
 export async function estimateBlockByTimestamp(
   client: PublicClient,
   chainId: number,
-  timestamp: number,
+  timestamp: number
 ): Promise<bigint> {
   const cacheKey = `${chainId}:${timestamp}`
   const cached = blockCache.get(cacheKey)
   if (cached !== undefined) {
+    setCapped(blockCache, cacheKey, cached, MAX_BLOCK_CACHE)
     return cached
   }
 
+  let inflightForClient = blockSearchInflight.get(client)
+  if (!inflightForClient) {
+    inflightForClient = new Map()
+    blockSearchInflight.set(client, inflightForClient)
+  }
+
+  const inflight = inflightForClient.get(cacheKey)
+  if (inflight) {
+    return inflight
+  }
+
+  const search = searchBlockByTimestamp(client, chainId, timestamp, cacheKey)
+  inflightForClient.set(cacheKey, search)
+  try {
+    return await search
+  } finally {
+    if (inflightForClient.get(cacheKey) === search) {
+      inflightForClient.delete(cacheKey)
+    }
+  }
+}
+
+async function searchBlockByTimestamp(
+  client: PublicClient,
+  chainId: number,
+  timestamp: number,
+  cacheKey: string
+): Promise<bigint> {
   const latestBlock = await client.getBlock()
-  if (Number(latestBlock.timestamp) <= timestamp) {
-    blockCache.set(cacheKey, latestBlock.number)
+  const latestTimestamp = Number(latestBlock.timestamp)
+  rememberSample(chainId, latestBlock.number, latestTimestamp)
+  if (latestTimestamp <= timestamp) {
     return latestBlock.number
   }
 
-  let low = 0n
-  let high = latestBlock.number
-  let best = latestBlock.number
+  const bounds = seedBounds(chainId, timestamp, latestBlock.number, latestTimestamp)
+  let probes = 0
 
-  while (low <= high) {
-    const mid = (low + high) / 2n
+  while (bounds.low <= bounds.high) {
+    const mid = nextProbe(bounds, timestamp, probes)
+    probes += 1
     const block = await client.getBlock({ blockNumber: mid })
     const blockTimestamp = Number(block.timestamp)
+    rememberSample(chainId, mid, blockTimestamp)
 
     if (blockTimestamp === timestamp) {
-      blockCache.set(cacheKey, mid)
+      setCapped(blockCache, cacheKey, mid, MAX_BLOCK_CACHE)
       return mid
     }
 
     if (blockTimestamp < timestamp) {
-      best = mid
-      low = mid + 1n
+      bounds.best = mid
+      bounds.low = mid + 1n
+      bounds.lowTimestamp = blockTimestamp
     } else {
       if (mid === 0n) {
         break
       }
-      high = mid - 1n
+      bounds.high = mid - 1n
+      bounds.highTimestamp = blockTimestamp
     }
-
-    await sleep(10)
   }
 
-  blockCache.set(cacheKey, best)
-  return best
+  setCapped(blockCache, cacheKey, bounds.best, MAX_BLOCK_CACHE)
+  return bounds.best
 }
 
 export async function readVaultSharePrice(
@@ -134,7 +265,7 @@ export async function readVaultSharePrice(
   vaultAddress: `0x${string}`,
   decimals: number,
   apiVersion: string | null | undefined,
-  blockNumber: bigint,
+  blockNumber: bigint
 ): Promise<number> {
   const scale = 10n ** BigInt(decimals)
 
@@ -144,7 +275,7 @@ export async function readVaultSharePrice(
       abi: SHARE_PRICE_ABI_V3,
       functionName: 'convertToAssets',
       args: [scale],
-      blockNumber,
+      blockNumber
     })
     return Number(raw) / Number(scale)
   }
@@ -153,7 +284,7 @@ export async function readVaultSharePrice(
     address: vaultAddress,
     abi: SHARE_PRICE_ABI_V2,
     functionName: 'pricePerShare',
-    blockNumber,
+    blockNumber
   })
   return Number(raw) / Number(scale)
 }

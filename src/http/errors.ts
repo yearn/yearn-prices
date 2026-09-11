@@ -6,6 +6,7 @@ export type ErrorCode =
   | 'NOT_FOUND'
   | 'RATE_LIMITED'
   | 'INTERNAL_ERROR'
+  | 'UNAVAILABLE'
 
 const ERROR_STATUS: Record<ErrorCode, number> = {
   INVALID_INPUT: 400,
@@ -13,6 +14,7 @@ const ERROR_STATUS: Record<ErrorCode, number> = {
   NOT_FOUND: 404,
   RATE_LIMITED: 429,
   INTERNAL_ERROR: 500,
+  UNAVAILABLE: 503
 }
 
 export class ApiError extends Error {
@@ -27,17 +29,14 @@ export class ApiError extends Error {
   }
 }
 
-export function errorEnvelope<C extends string>(
-  code: C,
-  message: string,
-): ErrorBody<C> {
+export function errorEnvelope<C extends string>(code: C, message: string): ErrorBody<C> {
   return { error: { code, message } }
 }
 
 export function jsonError(error: ApiError, headers?: HeadersInit): Response {
   return Response.json(errorEnvelope(error.code, error.message), {
     status: error.status,
-    headers,
+    headers
   })
 }
 
