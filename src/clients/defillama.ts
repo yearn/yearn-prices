@@ -22,7 +22,7 @@ export interface DefiLlamaRequestOptions {
 }
 
 /** Widest window DeFiLlama may search for a sample around a requested timestamp. */
-export const DEFI_LLAMA_SEARCH_WIDTH_SECONDS = 12 * 60 * 60
+export const DEFI_LLAMA_SEARCH_WIDTH_SECONDS = 6 * 60 * 60
 export const DEFI_LLAMA_SEARCH_WIDTH = `${DEFI_LLAMA_SEARCH_WIDTH_SECONDS / 3_600}h`
 
 export class DefiLlamaClient {

@@ -56,7 +56,7 @@ export class BatchedHistoricalClient extends DefiLlamaClient {
     coins: string[],
     searchWidth = DEFI_LLAMA_SEARCH_WIDTH
   ): Promise<DefiLlamaHistoricalResponse> {
-    if (searchWidth !== DEFI_LLAMA_SEARCH_WIDTH) throw new Error('Offline batching requires the standard 12h window')
+    if (searchWidth !== DEFI_LLAMA_SEARCH_WIDTH) throw new Error('Offline batching requires the standard 6h window')
     const results = await Promise.all(
       coins.map(async (coin) => ({ coin, value: await this.lookup({ coin, timestamp }) }))
     )

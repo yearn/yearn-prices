@@ -63,7 +63,7 @@ describe('DefiLlamaClient.getChart', () => {
       start: String(START),
       span: '1',
       period: '1d',
-      searchWidth: '12h'
+      searchWidth: '6h'
     })
   })
 

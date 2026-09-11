@@ -6,7 +6,7 @@ import { config } from 'dotenv'
 import { classifyCoverage, dateOf, ranges, validateCoverageChart } from '../src/backfill/coverage'
 import { validateGraphResolution } from '../src/backfill/graph-validation'
 import { needsOwnPricing } from '../src/backfill/investigation'
-import { DEFI_LLAMA_SEARCH_WIDTH, DefiLlamaClient } from '../src/clients/defillama'
+import { DEFI_LLAMA_SEARCH_WIDTH, DEFI_LLAMA_SEARCH_WIDTH_SECONDS, DefiLlamaClient } from '../src/clients/defillama'
 import { SlidingWindowRateLimiter } from '../src/clients/http-client'
 import { createPool } from '../src/db'
 import { getDefiLlamaCoinGeckoAlias, isDefiLlamaAliasValidAt } from '../src/sources/defillama/aliases'
@@ -174,12 +174,12 @@ for (let offset = 0; offset < identifiers.length; offset += 5) {
 // Earliest-price evidence bounds chart history. Missing/failed first responses
 // stay distinct. Group similar start dates to avoid requesting empty years.
 const active = identifiers
-  .filter((coin) => firstByCoin.get(coin) != null && firstByCoin.get(coin)! <= end + 43200)
+  .filter((coin) => firstByCoin.get(coin) != null && firstByCoin.get(coin)! <= end + DEFI_LLAMA_SEARCH_WIDTH_SECONDS)
   .sort((a, b) => firstByCoin.get(a)! - firstByCoin.get(b)!)
 for (let offset = 0; offset < active.length; offset += 5) {
   const coins = active.slice(offset, offset + 5)
   const first = Math.min(...coins.map((coin) => firstByCoin.get(coin)!))
-  const firstDay = Math.floor((first - 43200) / DAY) * DAY + DAY - 1
+  const firstDay = Math.floor((first - DEFI_LLAMA_SEARCH_WIDTH_SECONDS) / DAY) * DAY + DAY - 1
   // Provider rejects coins * span > 500. Keep our existing 365-day cap too.
   const span = Math.min(365, Math.floor(500 / coins.length))
   for (let from = Math.max(start, firstDay); from <= end; from += span * DAY) {

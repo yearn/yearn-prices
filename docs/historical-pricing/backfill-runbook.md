@@ -9,7 +9,7 @@ the manifest contains token addresses and dates, not wallet data.
 ## Scope and acceptance
 
 - Default mode is read-only. Only `--write` changes the database.
-- Use a 12-hour maximum absolute observation offset (43,200 seconds), inclusive
+- Use a 6-hour maximum absolute observation offset (21,600 seconds), inclusive
   on either side of the requested closed UTC day at 23:59:59.
 - Historical contract state must be at or before the requested EOD. Validate
   each selected graph dependency, not merely the root's observation timestamp.
@@ -74,3 +74,8 @@ name skips existing prices and rechecks for concurrent writes.
    rows is a separate operation.
 
 No production backfill was executed while preparing this handoff.
+
+The saved September 10 dry-run and coverage snapshot used a 12-hour window.
+Their candidate counts are historical evidence, not approval for the restored
+6-hour policy. A new dry run is required to establish eligible prices under
+that policy; the committed target manifest is unchanged.

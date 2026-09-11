@@ -27,7 +27,7 @@ describe('matchPricesToRequests', () => {
   })
 
   it('ignores samples further away than the search width', () => {
-    const matched = matchPricesToRequests([D16], [{ timestamp: D16 + 13 * 3600, price: 1 }])
+    const matched = matchPricesToRequests([D16], [{ timestamp: D16 + 7 * 3600, price: 1 }])
 
     expect(matched.size).toBe(0)
   })

@@ -39,7 +39,7 @@ export function validateGraphResolution(
       !Number.isSafeInteger(path.observedTimestamp) ||
       Math.abs(path.observedTimestamp - target.eodTimestamp) > MAXIMUM_ACCEPTED_OFFSET_SECONDS
     )
-      throw new Error('Graph observation outside 12-hour matching window')
+      throw new Error('Graph observation outside 6-hour matching window')
     if (node.market !== 'price') {
       const block = path.metadata.block as
         | { number?: number; timestamp?: number; requestedTimestamp?: number }

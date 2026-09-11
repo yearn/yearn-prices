@@ -85,7 +85,7 @@ already stored. For each calculated root, it validates the selected dependency
 path, including:
 
 - Matching chain, token and requested timestamp, with finite positive prices.
-- Provider observations within an inclusive 12-hour offset on either side of
+- Provider observations within an inclusive 6-hour offset on either side of
   the requested EOD timestamp.
 - Historical block evidence at or before EOD, within the accepted window, and
   consistent with any pinned block.

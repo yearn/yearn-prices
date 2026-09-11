@@ -43,7 +43,7 @@ describe('the alias source inside the recursive price path', () => {
     const price = await derived.getHistoricalPrice(10, VAULT, TIMESTAMP)
 
     expect(price?.price).toBeCloseTo(2)
-    expect(defiLlama.getHistorical).toHaveBeenCalledWith(TIMESTAMP, ['coingecko:dai'], '12h')
+    expect(defiLlama.getHistorical).toHaveBeenCalledWith(TIMESTAMP, ['coingecko:dai'], '6h')
   })
 
   it('does not reach the alias source on a chain it has no aliases for', async () => {

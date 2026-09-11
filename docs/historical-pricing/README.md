@@ -77,7 +77,7 @@ bun run coverage:historical \
 This reads stored history through the closed-day cutoff and daily market history
 using batched `/prices/first` bounds and multi-coin `/chart` requests: at most
 500 total points and 365 days per request (five identifiers means 100 days),
-and a 12-hour matching window. Requests share pacing and Retry-After cooldowns.
+and a 6-hour matching window. Requests share pacing and Retry-After cooldowns.
 Successful responses are cached for restart; failed windows remain retryable.
 
 The report distinguishes stored EOD coverage, any-time stored rows, and direct

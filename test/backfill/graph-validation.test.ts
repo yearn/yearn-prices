@@ -52,7 +52,7 @@ function fixture() {
   }
 }
 describe('graph finalization evidence', () => {
-  it.each([-43200, 43200])('accepts the 12-hour boundary %s', (offset) => {
+  it.each([-21600, 21600])('accepts the 6-hour boundary %s', (offset) => {
     const { root, child, nodes } = fixture()
     child.path!.observedTimestamp += offset
     root.path!.inputs[0].observedTimestamp += offset
@@ -60,9 +60,9 @@ describe('graph finalization evidence', () => {
   })
   it('rejects a late child even when the root timestamp is in range', () => {
     const { root, child, nodes } = fixture()
-    child.path!.observedTimestamp += 43201
-    root.path!.inputs[0].observedTimestamp += 43201
-    expect(() => validateGraphResolution(root, target, nodes)).toThrow('12-hour')
+    child.path!.observedTimestamp += 21601
+    root.path!.inputs[0].observedTimestamp += 21601
+    expect(() => validateGraphResolution(root, target, nodes)).toThrow('6-hour')
   })
   it('rejects a selected dependency missing from evidence', () => {
     const { root, nodes } = fixture()
