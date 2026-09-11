@@ -21,16 +21,22 @@ const CURVE_ADDRESS_PROVIDER = '0x0000000022D53366457F9d5E68Ec105046FC4383' as A
 const CURVE_NATIVE_TOKEN = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
 const MAX_REGISTRY_ID = 12
 const MAX_COINS = 8
-/** Smallest share of pool value the priced anchor may hold and still be a price. */
-const MIN_ANCHOR_SHARE = 0.01
 /**
  * Smallest share of a derived leg's marked value the pool must actually pay out
  * when the whole leg is swapped into the anchor. A one-unit quote says nothing
- * about depth, so a drained or skewed pool marks a reserve far above what it
- * could settle; requiring half the marked value bounds the published NAV at
- * twice the liquidation value and refuses the pool once the gap widens past it.
+ * about depth, so a drained or skewed stableswap marks a reserve far above what
+ * it could settle and its whole-reserve payout falls toward zero. A
+ * constant-product curve (crypto-v2) pays back half the anchor less fees for a
+ * whole reserve, at any skew, so 0.4 accepts every balanced pool of both
+ * families with 20% fee headroom while still refusing a drained stableswap.
+ *
+ * Bound: every derived leg is marked at most 1 / MIN_EXECUTABLE_SHARE times
+ * what the anchor pays for it, and all derived legs together are marked at
+ * most 1 / MIN_EXECUTABLE_SHARE times the anchor's own value, so a pool with
+ * any number of derived legs publishes at most (1 + 1 / MIN_EXECUTABLE_SHARE)
+ * times the anchor's value.
  */
-const MIN_EXECUTABLE_SHARE = 0.5
+const MIN_EXECUTABLE_SHARE = 0.4
 
 const minterAbi = parseAbi(['function minter() view returns (address)'])
 const poolLpTokenAbi = parseAbi([
@@ -196,10 +202,9 @@ async function readGetDy(
 /**
  * Values the coins the market cannot price by quoting one unit of each against
  * the most valuable priced reserve. The anchor carries the only market price behind
- * every derived leg, so a pool whose anchor holds a negligible share of its
- * value gets no price at all rather than one resting on dust, and every derived
- * leg must also be executable against the anchor at close to the rate it is
- * marked at.
+ * every derived leg, so each leg must be executable against the anchor at close
+ * to the rate it is marked at, and the derived legs together may not be marked
+ * far above what the anchor is worth.
  */
 async function deriveMissingLegs(
   state: ContractContext,
@@ -226,6 +231,7 @@ async function deriveMissingLegs(
 
   const prices = [...marketPrices]
   const derivedCoins: Record<string, unknown>[] = []
+  let derivedValue = 0
   for (const index of marketPrices.flatMap((price, i) => (price == null ? [i] : []))) {
     const dxRaw = 10n ** BigInt(coins[index].decimals)
     const getDyRaw = await readGetDy(state.client, poolAddress, index, anchorIndex, dxRaw, state.blockNumber)
@@ -251,6 +257,7 @@ async function deriveMissingLegs(
     }
 
     prices[index] = derivedPrice
+    derivedValue += markedValue
     derivedCoins.push({
       coinIndex: index,
       address: coins[index].address,
@@ -263,9 +270,7 @@ async function deriveMissingLegs(
     })
   }
 
-  const values = coins.map((coin, index) => scaledRaw(coin.balanceRaw, coin.decimals) * (prices[index] as number))
-  const totalValue = values.reduce((sum, value) => sum + value, 0)
-  if (!Number.isFinite(totalValue) || totalValue <= 0 || values[anchorIndex] / totalValue < MIN_ANCHOR_SHARE) {
+  if (anchorValue <= 0 || derivedValue > anchorValue / MIN_EXECUTABLE_SHARE) {
     return null
   }
   return { prices: prices as number[], derivedCoins }

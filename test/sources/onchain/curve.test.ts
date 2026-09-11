@@ -270,7 +270,7 @@ describe('curveAdapter', () => {
         token: LP,
         N_COINS: 3n,
         coins: [TOKEN_A, TOKEN_B, TOKEN_C],
-        balances: [1000n * 10n ** 18n, 10n * 10n ** 18n, 50n * 10n ** 18n],
+        balances: [1000n * 10n ** 18n, 10n * 10n ** 18n, 5n * 10n ** 18n],
         get_dy: linearGetDy(
           [
             [0n, 0n, 0n],
@@ -291,7 +291,7 @@ describe('curveAdapter', () => {
       LP
     )
 
-    expect(result.path?.priceUsd).toBeCloseTo(110.01)
+    expect(result.path?.priceUsd).toBeCloseTo(20.01)
     expect(result.path?.metadata.derivedCoins).toEqual([
       {
         coinIndex: 2,
@@ -300,8 +300,8 @@ describe('curveAdapter', () => {
         anchorAddress: TOKEN_B,
         dxRaw: '1000000000000000000',
         getDyRaw: '2000000000000000000',
-        executableDxRaw: '50000000000000000000',
-        executableDyRaw: '100000000000000000000'
+        executableDxRaw: '5000000000000000000',
+        executableDyRaw: '10000000000000000000'
       }
     ])
   })
@@ -398,7 +398,65 @@ describe('curveAdapter', () => {
     expect(outcomes.slice(firstReject).every((outcome) => outcome.priceUsd == null)).toBe(true)
     for (const outcome of outcomes.slice(0, firstReject)) {
       const anchorValue = Number(outcome.anchor)
-      expect(outcome.priceUsd as number).toBeLessThanOrEqual((3 * anchorValue) / 100)
+      expect(outcome.priceUsd as number).toBeLessThanOrEqual((3.5 * anchorValue) / 100)
+    }
+  })
+
+  /** Two derived legs sharing one anchor; whole-reserve quotes cap at the anchor reserve. */
+  const twoLegPool = (legRaw: bigint, anchorRaw: bigint) => ({
+    [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
+    [CURVE_POOL]: {
+      token: LP,
+      N_COINS: 3n,
+      coins: [TOKEN_A, TOKEN_B, TOKEN_C],
+      balances: [legRaw, anchorRaw, legRaw],
+      get_dy: (_from: bigint, _to: bigint, dx: bigint) => (dx < anchorRaw ? dx : anchorRaw)
+    },
+    [TOKEN_A]: { decimals: 18 },
+    [TOKEN_B]: { decimals: 18 },
+    [TOKEN_C]: { decimals: 18 }
+  })
+
+  it('bounds the pool, not each leg, when derived legs share one anchor', async () => {
+    const anchor = 100n * 10n ** 18n
+    const balanced = await priceWith(curveAdapter(adapterOptions(twoLegPool(anchor, anchor))), { [TOKEN_B]: 1 }, LP)
+    expect(balanced.path?.priceUsd).toBeCloseTo(3)
+    expect(balanced.path?.priceUsd as number).toBeLessThanOrEqual(3.5)
+
+    const skewed = await priceWith(
+      curveAdapter(adapterOptions(twoLegPool(190n * 10n ** 18n, anchor))),
+      { [TOKEN_B]: 1 },
+      LP
+    )
+    expect(skewed.path).toBeNull()
+  })
+
+  /** Constant-product curve with a swap fee, the shape of a Curve crypto-v2 pool. */
+  const constantProductPool = (feeBps: bigint) => {
+    const reserves = [100n * 10n ** 18n, 100n * 10n ** 18n]
+    return {
+      [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
+      [CURVE_POOL]: {
+        token: LP,
+        N_COINS: 2n,
+        coins: [TOKEN_A, TOKEN_B],
+        balances: reserves,
+        get_dy: (from: bigint, to: bigint, dx: bigint) => {
+          const x = reserves[Number(from)]
+          const y = reserves[Number(to)]
+          return (((y * dx) / (x + dx)) * (10_000n - feeBps)) / 10_000n
+        }
+      },
+      [TOKEN_A]: { decimals: 18 },
+      [TOKEN_B]: { decimals: 18 }
+    }
+  }
+
+  it('prices a balanced constant-product pool at any fee level', async () => {
+    for (const feeBps of [0n, 4n, 30n, 100n, 400n]) {
+      const result = await priceWith(curveAdapter(adapterOptions(constantProductPool(feeBps))), { [TOKEN_B]: 1 }, LP)
+      expect(result.path?.priceUsd).toBeCloseTo(2, 1)
+      expect(result.path?.priceUsd as number).toBeLessThanOrEqual(3.5)
     }
   })
 
