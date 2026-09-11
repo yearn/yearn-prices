@@ -1,5 +1,5 @@
 import type { OnchainAdapterOptions } from '../context'
-import type { RecursivePriceAdapter } from '../types'
+import type { PlannedPriceAdapter } from '../plan'
 import { aaveAdapter } from './aave'
 import { balancerAdapter } from './balancer'
 import { beetsBarAdapter } from './beets-bar'
@@ -18,7 +18,7 @@ import { yip88LiquidLockerAdapter } from './yip88-liquid-locker'
  * Adapters in the order the engine tries them: the most specific token
  * allowlists first, generic interface probes last.
  */
-export function createOnchainPriceAdapters(options: OnchainAdapterOptions): RecursivePriceAdapter[] {
+export function createOnchainPriceAdapters(options: OnchainAdapterOptions): PlannedPriceAdapter[] {
   return [
     yip88LiquidLockerAdapter(options),
     nativeShareAdapter(options),

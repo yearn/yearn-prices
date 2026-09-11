@@ -7,3 +7,12 @@ dist
 # backfill artifacts
 backfill-report*.json
 backfill-retry*.json
+
+# Local replay evidence and private review pages
+/artifacts/historical-adapter-replay-20260908/
+
+/backfill-runs/
+
+# Local diagnostic inventory snapshots
+/docs/historical-pricing/*.json
+!/docs/historical-pricing/backfill-manifest.json
