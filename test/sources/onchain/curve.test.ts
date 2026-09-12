@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { curveAdapter } from '../../../src/sources/onchain/adapters/curve'
 import { RecursivePriceEngine } from '../../../src/sources/onchain/engine'
-import { RetryablePricingError } from '../../../src/sources/onchain/errors'
+import { ReadBudgetExceededError, RetryablePricingError } from '../../../src/sources/onchain/errors'
+import type { RecursivePriceAdapter } from '../../../src/sources/onchain/types'
 import { adapterOptions, fakeClient, marketFor, priceWith } from './helpers'
 
 const LP = '0x1111111111111111111111111111111111111111'
@@ -504,5 +505,181 @@ describe('curveAdapter', () => {
 
     expect(result.path).toBeNull()
     expect(result.failure?.reason).toBe('retryable')
+  })
+
+  it('fails retryably instead of deriving when a constituent read hits the budget', async () => {
+    const derivedReads = {
+      [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
+      [CURVE_POOL]: {
+        token: LP,
+        N_COINS: 2n,
+        coins: [TOKEN_A, TOKEN_B],
+        balances: [100n * 10n ** 6n, 200n * 10n ** 18n],
+        get_dy: linearGetDy(
+          [
+            [0n, 500_000_000_000_000_000n],
+            [0n, 0n]
+          ],
+          [6, 18]
+        )
+      },
+      [TOKEN_A]: { decimals: 6 },
+      [TOKEN_B]: { decimals: 18 }
+    }
+    const market = marketFor({ [TOKEN_B]: 2 })
+    const engine = new RecursivePriceEngine(
+      async (target) => {
+        if (target.token.toLowerCase() === TOKEN_A) {
+          throw new ReadBudgetExceededError('resolution budget spent')
+        }
+        return market(target)
+      },
+      [curveAdapter(adapterOptions(derivedReads))]
+    )
+
+    const result = await engine.resolve({ chainId: 1, token: LP, timestamp: null })
+
+    expect(result.path).toBeNull()
+    expect(result.failure?.reason).toBe('budget')
+  })
+
+  it('fails as cycle instead of deriving when a constituent loops through the LP', async () => {
+    const derivedReads = {
+      [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
+      [CURVE_POOL]: {
+        token: LP,
+        N_COINS: 2n,
+        coins: [TOKEN_A, TOKEN_B],
+        balances: [100n * 10n ** 6n, 200n * 10n ** 18n],
+        get_dy: linearGetDy(
+          [
+            [0n, 500_000_000_000_000_000n],
+            [0n, 0n]
+          ],
+          [6, 18]
+        )
+      },
+      [TOKEN_A]: { decimals: 6 },
+      [TOKEN_B]: { decimals: 18 }
+    }
+    const bounce: RecursivePriceAdapter = {
+      name: 'bounce',
+      async resolve(target, context) {
+        if (target.token.toLowerCase() !== TOKEN_A) {
+          return null
+        }
+        const input = await context.require({ ...target, token: LP }, 'lp')
+        return { priceUsd: input.priceUsd, inputs: [{ path: input }], metadata: {} }
+      }
+    }
+    const engine = new RecursivePriceEngine(marketFor({ [TOKEN_B]: 2 }), [
+      curveAdapter(adapterOptions(derivedReads)),
+      bounce
+    ])
+
+    const result = await engine.resolve({ chainId: 1, token: LP, timestamp: null })
+
+    expect(result.path).toBeNull()
+    expect(result.failure?.reason).toBe('cycle')
+  })
+
+  it('does not pin a max-depth miss so a shallower branch can still price the LP', async () => {
+    const ROOT = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    const DEEP = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    const bothPriced = {
+      [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
+      [CURVE_POOL]: {
+        token: LP,
+        N_COINS: 2n,
+        coins: [TOKEN_A, TOKEN_B],
+        balances: [100n * 10n ** 6n, 200n * 10n ** 18n]
+      },
+      [TOKEN_A]: { decimals: 6 },
+      [TOKEN_B]: { decimals: 18 }
+    }
+    const via = (name: string, self: string, child: string): RecursivePriceAdapter => ({
+      name,
+      async resolve(target, context) {
+        if (target.token.toLowerCase() !== self) {
+          return null
+        }
+        const input = await context.require({ ...target, token: child }, name)
+        return { priceUsd: input.priceUsd, inputs: [{ path: input }], metadata: {} }
+      }
+    })
+    const root: RecursivePriceAdapter = {
+      name: 'root',
+      async resolve(target, context) {
+        if (target.token.toLowerCase() !== ROOT) {
+          return null
+        }
+        await context.resolve({ ...target, token: DEEP })
+        const input = await context.require({ ...target, token: LP }, 'shallow-lp')
+        return { priceUsd: input.priceUsd, inputs: [{ path: input }], metadata: {} }
+      }
+    }
+    const engine = new RecursivePriceEngine(
+      marketFor({ [TOKEN_A]: 1, [TOKEN_B]: 2 }),
+      [root, via('deep', DEEP, LP), curveAdapter(adapterOptions(bothPriced))],
+      3
+    )
+
+    const result = await engine.resolve({ chainId: 1, token: ROOT, timestamp: null })
+
+    expect(result.failure).toBeNull()
+    expect(result.path?.priceUsd).toBeCloseTo(5)
+    expect(result.path?.inputs[0]?.adapter).toBe('curve-reserve-nav')
+  })
+
+  it('derives a missing leg when the pool only exposes int128 get_dy', async () => {
+    const derivedReads = {
+      [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
+      [CURVE_POOL]: {
+        token: LP,
+        N_COINS: 2n,
+        coins: [TOKEN_A, TOKEN_B],
+        balances: [100n * 10n ** 6n, 200n * 10n ** 18n],
+        get_dy: linearGetDy(
+          [
+            [0n, 500_000_000_000_000_000n],
+            [0n, 0n]
+          ],
+          [6, 18]
+        )
+      },
+      [TOKEN_A]: { decimals: 6 },
+      [TOKEN_B]: { decimals: 18 }
+    }
+    const client = fakeClient(derivedReads)
+    const intOnly = {
+      ...client,
+      readContract: (args: {
+        address: string
+        functionName: string
+        abi?: readonly { inputs?: readonly { type: string }[] }[]
+      }) => {
+        if (args.functionName === 'get_dy' && args.abi?.[0]?.inputs?.[0]?.type === 'uint256') {
+          throw new Error('execution reverted')
+        }
+        return client.readContract(args as never)
+      }
+    } as unknown as typeof client
+
+    const result = await priceWith(curveAdapter({ clientForChain: () => intOnly }), { [TOKEN_B]: 2 }, LP)
+
+    expect(result.path?.priceUsd).toBeCloseTo(5)
+    expect(result.path?.metadata.valuationRule).toBe('get-dy-derived-constituents')
+    expect(result.path?.metadata.derivedCoins).toEqual([
+      {
+        coinIndex: 0,
+        address: TOKEN_A,
+        anchorCoinIndex: 1,
+        anchorAddress: TOKEN_B,
+        dxRaw: '1000000',
+        getDyRaw: '500000000000000000',
+        executableDxRaw: '100000000',
+        executableDyRaw: '50000000000000000000'
+      }
+    ])
   })
 })
