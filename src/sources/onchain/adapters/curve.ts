@@ -168,35 +168,34 @@ async function readCoinAddress(
   return address ? { address, indexType: 'int128' } : null
 }
 
+type GetDyAbi = typeof getDyUintAbi | typeof getDyIntAbi
+
 async function readGetDy(
   client: PublicClient,
   poolAddress: Address,
   fromIndex: number,
   toIndex: number,
   dxRaw: bigint,
-  blockNumber: bigint
+  blockNumber: bigint,
+  abiSlot: { abi: GetDyAbi | null }
 ): Promise<bigint | null> {
-  const uintQuote = await maybe(() =>
-    client.readContract({
-      address: poolAddress,
-      abi: getDyUintAbi,
-      functionName: 'get_dy',
-      args: [BigInt(fromIndex), BigInt(toIndex), dxRaw],
-      blockNumber
-    })
-  )
-  if (uintQuote != null) {
-    return uintQuote
+  const candidates: GetDyAbi[] = abiSlot.abi ? [abiSlot.abi] : [getDyUintAbi, getDyIntAbi]
+  for (const abi of candidates) {
+    const quote = await maybe(() =>
+      client.readContract({
+        address: poolAddress,
+        abi,
+        functionName: 'get_dy',
+        args: [BigInt(fromIndex), BigInt(toIndex), dxRaw],
+        blockNumber
+      })
+    )
+    if (quote != null) {
+      abiSlot.abi = abi
+      return quote
+    }
   }
-  return maybe(() =>
-    client.readContract({
-      address: poolAddress,
-      abi: getDyIntAbi,
-      functionName: 'get_dy',
-      args: [BigInt(fromIndex), BigInt(toIndex), dxRaw],
-      blockNumber
-    })
-  )
+  return null
 }
 
 /**
@@ -232,9 +231,10 @@ async function deriveMissingLegs(
   const prices = [...marketPrices]
   const derivedCoins: Record<string, unknown>[] = []
   let derivedValue = 0
+  const abiSlot: { abi: GetDyAbi | null } = { abi: null }
   for (const index of marketPrices.flatMap((price, i) => (price == null ? [i] : []))) {
     const dxRaw = 10n ** BigInt(coins[index].decimals)
-    const getDyRaw = await readGetDy(state.client, poolAddress, index, anchorIndex, dxRaw, state.blockNumber)
+    const getDyRaw = await readGetDy(state.client, poolAddress, index, anchorIndex, dxRaw, state.blockNumber, abiSlot)
     if (getDyRaw == null || getDyRaw === 0n) {
       return null
     }
@@ -246,7 +246,15 @@ async function deriveMissingLegs(
     const markedValue = scaledRaw(balanceRaw, coins[index].decimals) * derivedPrice
     let executableDyRaw: bigint | null = null
     if (markedValue > 0) {
-      executableDyRaw = await readGetDy(state.client, poolAddress, index, anchorIndex, balanceRaw, state.blockNumber)
+      executableDyRaw = await readGetDy(
+        state.client,
+        poolAddress,
+        index,
+        anchorIndex,
+        balanceRaw,
+        state.blockNumber,
+        abiSlot
+      )
       if (executableDyRaw == null) {
         return null
       }
