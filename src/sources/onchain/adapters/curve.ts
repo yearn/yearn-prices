@@ -26,15 +26,16 @@ const MAX_COINS = 8
  * when the whole leg is swapped into the anchor. A one-unit quote says nothing
  * about depth, so a drained or skewed stableswap marks a reserve far above what
  * it could settle and its whole-reserve payout falls toward zero. A
- * constant-product curve (crypto-v2) pays back half the anchor less fees for a
- * whole reserve, at any skew, so 0.4 accepts every balanced pool of both
- * families with 20% fee headroom while still refusing a drained stableswap.
+ * constant-product curve (crypto-v2) pays about half the one-unit mark for a
+ * whole reserve, at any skew; fees scale both quotes so they cancel in the
+ * ratio. 0.4 sits below that ~0.5 floor so every balanced pool of both families
+ * is accepted, while a drained stableswap is still refused.
  *
  * Bound: every derived leg is marked at most 1 / MIN_EXECUTABLE_SHARE times
  * what the anchor pays for it, and all derived legs together are marked at
- * most 1 / MIN_EXECUTABLE_SHARE times the anchor's own value, so a pool with
- * any number of derived legs publishes at most (1 + 1 / MIN_EXECUTABLE_SHARE)
- * times the anchor's value.
+ * most 1 / MIN_EXECUTABLE_SHARE times the anchor's own value, so the anchor
+ * plus derived legs are at most (1 + 1 / MIN_EXECUTABLE_SHARE) times the
+ * anchor's value. Other market-priced coins are extra.
  */
 const MIN_EXECUTABLE_SHARE = 0.4
 

@@ -453,8 +453,8 @@ describe('curveAdapter', () => {
     }
   }
 
-  it('prices a balanced constant-product pool at any fee level', async () => {
-    for (const feeBps of [0n, 4n, 30n, 100n, 400n]) {
+  it('prices a balanced constant-product pool across fee levels', async () => {
+    for (const feeBps of [0n, 4n, 30n, 100n, 400n, 5_000n]) {
       const result = await priceWith(curveAdapter(adapterOptions(constantProductPool(feeBps))), { [TOKEN_B]: 1 }, LP)
       expect(result.path?.priceUsd).toBeCloseTo(2, 1)
       expect(result.path?.priceUsd as number).toBeLessThanOrEqual(3.5)
@@ -469,6 +469,29 @@ describe('curveAdapter', () => {
     )
 
     expect(result.path).toBeNull()
+  })
+
+  it('returns no price when a small unpriced leg cannot settle at its marked rate', async () => {
+    const one = 10n ** 18n
+    const smallLeg = (wholeDy: bigint) => ({
+      [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
+      [CURVE_POOL]: {
+        token: LP,
+        N_COINS: 2n,
+        coins: [TOKEN_A, TOKEN_B],
+        balances: [10n * one, 100n * one],
+        get_dy: (_from: bigint, _to: bigint, dx: bigint) => (dx <= one ? dx : wholeDy)
+      },
+      [TOKEN_A]: { decimals: 18 },
+      [TOKEN_B]: { decimals: 18 }
+    })
+
+    const refused = await priceWith(curveAdapter(adapterOptions(smallLeg(one))), { [TOKEN_B]: 1 }, LP)
+    expect(refused.path).toBeNull()
+
+    const priced = await priceWith(curveAdapter(adapterOptions(smallLeg(10n * one))), { [TOKEN_B]: 1 }, LP)
+    expect(priced.path?.priceUsd).toBeCloseTo(1.1)
+    expect(priced.path?.metadata.valuationRule).toBe('get-dy-derived-constituents')
   })
 
   it('fails retryably instead of deriving when a constituent price read is transient', async () => {
