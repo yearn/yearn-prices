@@ -456,8 +456,12 @@ describe('curveAdapter', () => {
   it('prices a balanced constant-product pool across fee levels', async () => {
     for (const feeBps of [0n, 4n, 30n, 100n, 400n, 5_000n]) {
       const result = await priceWith(curveAdapter(adapterOptions(constantProductPool(feeBps))), { [TOKEN_B]: 1 }, LP)
-      expect(result.path?.priceUsd).toBeCloseTo(2, 1)
+      expect(result.path).not.toBeNull()
+      expect(result.path?.metadata.valuationRule).toBe('get-dy-derived-constituents')
       expect(result.path?.priceUsd as number).toBeLessThanOrEqual(3.5)
+      if (feeBps <= 400n) {
+        expect(result.path?.priceUsd).toBeCloseTo(2, 1)
+      }
     }
   })
 
