@@ -30,9 +30,10 @@ jobs:
         uses: dopplerhq/secrets-fetch-action@451892f16195f9ac360e1a5bcbf0b5fd0e957534 # v2.0.0
         with:
           auth-method: oidc
-          doppler-identity-id: ${{ vars.IDENTITY_ID }}
+          doppler-identity-id: ${{ vars.DOPPLER_PREPARE_IDENTITY_ID }}
           doppler-project: yearn-price
           doppler-config: prd
+          inject-env-vars: true
       - name: Run migrations
         run: bun run migrate
       - name: Warm price cache
