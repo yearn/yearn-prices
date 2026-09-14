@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { curveAdapter } from '../../../src/sources/onchain/adapters/curve'
 import { RecursivePriceEngine } from '../../../src/sources/onchain/engine'
-import { ReadBudgetExceededError, RetryablePricingError } from '../../../src/sources/onchain/errors'
+import {
+  InvalidPricingError,
+  ReadBudgetExceededError,
+  RetryablePricingError
+} from '../../../src/sources/onchain/errors'
 import type { RecursivePriceAdapter } from '../../../src/sources/onchain/types'
 import { adapterOptions, fakeClient, marketFor, priceWith } from './helpers'
 
@@ -532,6 +536,46 @@ describe('curveAdapter', () => {
 
     expect(result.path).toBeNull()
     expect(result.failure?.reason).toBe('retryable')
+  })
+
+  it.each([
+    ['an untyped market error', new Error('Network connection lost.'), 'retryable'],
+    ['a market parse error', new SyntaxError('Unexpected end of JSON input'), 'retryable'],
+    ['an invalid constituent', new InvalidPricingError('bad feed'), 'invalid']
+  ])('fails as %s instead of deriving', async (_label, thrown, reason) => {
+    const derivedReads = {
+      [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
+      [CURVE_POOL]: {
+        token: LP,
+        N_COINS: 2n,
+        coins: [TOKEN_A, TOKEN_B],
+        balances: [100n * 10n ** 6n, 200n * 10n ** 18n],
+        get_dy: linearGetDy(
+          [
+            [0n, 500_000_000_000_000_000n],
+            [0n, 0n]
+          ],
+          [6, 18]
+        )
+      },
+      [TOKEN_A]: { decimals: 6 },
+      [TOKEN_B]: { decimals: 18 }
+    }
+    const market = marketFor({ [TOKEN_B]: 2 })
+    const engine = new RecursivePriceEngine(
+      async (target) => {
+        if (target.token.toLowerCase() === TOKEN_A) {
+          throw thrown
+        }
+        return market(target)
+      },
+      [curveAdapter(adapterOptions(derivedReads))]
+    )
+
+    const result = await engine.resolve({ chainId: 1, token: LP, timestamp: null })
+
+    expect(result.path).toBeNull()
+    expect(result.failure?.reason).toBe(reason)
   })
 
   it('fails retryably instead of deriving when a constituent read hits the budget', async () => {
