@@ -224,7 +224,7 @@ async function deriveMissingLegs(
       anchorValue = value
     }
   })
-  if (anchorIndex < 0) {
+  if (anchorIndex < 0 || anchorValue <= 0) {
     return null
   }
   const anchorPrice = marketPrices[anchorIndex] as number
@@ -279,7 +279,7 @@ async function deriveMissingLegs(
     })
   }
 
-  if (anchorValue <= 0 || derivedValue > anchorValue / MIN_EXECUTABLE_SHARE) {
+  if (derivedValue > anchorValue / MIN_EXECUTABLE_SHARE) {
     return null
   }
   return { prices: prices as number[], derivedCoins }

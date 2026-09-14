@@ -236,10 +236,10 @@ export async function requireChildren(
 
 /**
  * Prices every constituent of a basket, reporting the unpriceable ones as null
- * so the caller can value them another way. A transient, budget-capped, or
- * position-dependent (cycle, max-depth) child is rethrown instead: it is not
- * an absent price, and substituting a derived value would publish a different
- * valuation depending on RPC health or where the pool sat in the tree.
+ * so the caller can value them another way. Only an unsupported child is
+ * absent; every other failure (transient, budget, invalid, cycle, max-depth)
+ * is rethrown, since substituting a derived value there would publish a
+ * different valuation depending on RPC health or where the pool sat in the tree.
  */
 export async function optionalChildren(
   context: RecursivePriceContext,
@@ -255,12 +255,7 @@ export async function optionalChildren(
     if (result.path) {
       return result.path
     }
-    if (
-      result.failure.reason === 'retryable' ||
-      result.failure.reason === 'budget' ||
-      result.failure.reason === 'cycle' ||
-      result.failure.reason === 'max-depth'
-    ) {
+    if (result.failure.reason !== 'unsupported') {
       throw new RecursiveDependencyError(
         `${label} ${result.failure.token} is unavailable (${result.failure.reason})`,
         result.failure
