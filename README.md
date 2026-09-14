@@ -105,7 +105,7 @@ This only updates the deployed Worker; remember to also update Doppler so the ne
 
 ## Deployment
 
-Pushing to `main` runs `.github/workflows/deploy.yml`: a `prepare` job fetches Doppler project `yearn-price` config `prd` via OIDC (`DOPPLER_PREPARE_IDENTITY_ID` repo var), injects those values as env vars, then runs migrations and warms the price cache. The reusable `yearn/yearn-gha` Cloudflare deploy workflow then fetches `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` from Doppler project `webops-shared-prod` config `cloudflare-deploy-configs` via OIDC (`DOPPLER_PRODUCTION_IDENTITY_ID` repo var) and runs `wrangler deploy`. Only pushes to `main` deploy; there is no manual dispatch. `.github/workflows/warmup.yml` runs the warmup script hourly on a cron. `.github/workflows/pr.yml` runs typecheck and tests on every PR.
+Pushing to `main` runs `.github/workflows/deploy.yml`: a `prepare` job fetches Doppler project `yearn-price` config `prd` via OIDC (`DOPPLER_PREPARE_IDENTITY_ID` repo var), injects those values as env vars, then runs migrations and warms the price cache. The reusable `yearn/yearn-gha` Cloudflare deploy workflow then fetches `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` from Doppler project `webops-shared-prod` config `cloudflare-deploy-configs` via OIDC (`DOPPLER_PRODUCTION_IDENTITY_ID` repo var) and runs `wrangler deploy`. Only pushes to `main` deploy; there is no manual dispatch. `.github/workflows/warmup.yml` runs the warmup script hourly on a cron, reading the same Doppler `yearn-price`/`prd` config via the same identity; Doppler is the only secret source for CI. `.github/workflows/pr.yml` runs typecheck and tests on every PR.
 
 ## Testing
 
