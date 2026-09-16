@@ -182,6 +182,17 @@ finds an observation. That research label is deliberately absent from the main
 post-backfill report because it does not establish success in the completed
 backfill.
 
+## Curve quote fallback and graph plans
+
+Curve's recursive resolver can value an unsupported constituent through a
+historical `get_dy` quote against a priced reserve, subject to executable
+liquidity checks. Transient or invalid child failures do not qualify for that
+fallback. The graph plan requires prices for every constituent and evaluates
+without additional RPC calls. It does not capture the conditional `get_dy`
+fallback, so a recursive Curve result may be available while its graph result
+remains unresolved. Both paths share pool discovery, reserve accounting and NAV
+calculation.
+
 ## Evidence and storage boundaries
 
 The database is authoritative for persisted prices. A graph artifact describes

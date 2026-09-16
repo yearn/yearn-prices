@@ -272,13 +272,12 @@ export class RecursivePriceEngine {
           return { path, failure: null }
         }
       } catch (error) {
-        const reason = classifyError(error)
+        const classified = classifyError(error)
+        const reason = classified === 'unsupported' ? 'retryable' : classified
         attempts.push({ adapter: 'market-price', reason, error: errorMessage(error), cause: error })
-        if (reason !== 'unsupported') {
-          const failure = { reason, token: target.token, attempts }
-          this.failed.set(key, failure)
-          return { path: null, failure }
-        }
+        const failure = { reason, token: target.token, attempts }
+        this.failed.set(key, failure)
+        return { path: null, failure }
       }
     }
 

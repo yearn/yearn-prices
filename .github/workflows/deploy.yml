@@ -38,6 +38,7 @@ jobs:
           RPC_URL_42161: op://webops-prod/yearn-price/RPC_URL_42161
           RPC_URL_80094: op://webops-prod/yearn-price/RPC_URL_80094
           RPC_URL_747474: op://webops-prod/yearn-price/RPC_URL_747474
+          RPC_URL_4663: op://webops-prod/yearn-price/RPC_URL_4663
       - name: Upload secrets to Cloudflare
         run: |
           jq -n '{
@@ -58,7 +59,8 @@ jobs:
             RPC_URL_8453: env.RPC_URL_8453,
             RPC_URL_42161: env.RPC_URL_42161,
             RPC_URL_80094: env.RPC_URL_80094,
-            RPC_URL_747474: env.RPC_URL_747474
+            RPC_URL_747474: env.RPC_URL_747474,
+            RPC_URL_4663: env.RPC_URL_4663
           }' | bunx wrangler secret bulk
       - name: Run migrations
         run: bun run migrate
