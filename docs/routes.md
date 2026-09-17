@@ -41,11 +41,11 @@ Supported chain names:
 - `berachain`
 - `katana`
 
-Token addresses must be EVM `0x` addresses with 40 hex characters. Chain names and token addresses are normalized to lowercase.
+Token addresses must be EVM `0x` addresses with 40 hex characters. Chain names and token addresses are normalized to lowercase for lookup; batch and range responses echo each submitted token key, including casing.
 
 ## Timestamps
 
-Historical price timestamps are Unix timestamps in seconds. The API normalizes every timestamp to the end of its UTC day:
+Historical price timestamps are Unix timestamps in seconds from `0` through `2100-01-01` (`4102444800`). Millisecond timestamps and non-integers are rejected as `INVALID_INPUT`. The API normalizes every accepted timestamp to the end of its UTC day:
 
 ```text
 floor(timestamp / 86400) * 86400 + 86399
@@ -385,12 +385,12 @@ Common error cases:
 
 Price responses set cache headers based on the requested timestamps and whether every requested value was found.
 
-- Historical non-today exact price: `public, max-age=31536000, immutable`
+- Historical non-today exact price: `public, s-maxage=31536000, max-age=3600, stale-while-revalidate=86400`
 - Requests involving today's UTC day, or a batch pair whose day has not closed yet: `public, s-maxage=300, max-age=3600, stale-while-revalidate=14400`
-- Fully resolved batch or range for past days: `public, max-age=31536000, immutable`
+- Fully resolved batch or range for past days: `public, s-maxage=31536000, max-age=3600, stale-while-revalidate=86400`
 - Partially resolved batch or range for past days: `public, s-maxage=300, max-age=300`
 - Historical not found responses: `public, s-maxage=300, max-age=300`
-- Spot: `public, s-maxage=120, stale-while-revalidate=600`
+- Spot: `public, s-maxage=120, stale-while-revalidate=600`. A batch that includes a transient upstream failure (`UNAVAILABLE`) is `no-store` so the outage is not cached.
 
 A historical `404`, or a pair omitted from a partial batch or range, means the row is not in `token_prices` yet. It self-heals only for what the hourly warmup covers (Kong `origin=yearn` vault and underlying tokens, trailing 7 days); anything else waits on a manually run backfill. The 300s negative TTL applies to a `404` and to a partial batch or range made entirely of closed days — it is kept below the warmup cadence so a covered consumer sees the row soon after a job lands it. A batch or range that touches today's UTC day takes the today policy instead, so a missing closed day in that response carries the 1h browser `max-age` and 4h `stale-while-revalidate`.
 
@@ -400,4 +400,4 @@ Worker-generated responses do not populate Cloudflare's edge cache from a `Cache
 
 Spot has no upstream cache policy (Enso sends only a weak `etag`), so its `s-maxage=120` is a chosen shared-cache TTL — short enough to keep prices fresh, long enough to absorb bursts — mirroring the Enso proxy already shipping in yearn.fi.
 
-The store/TTL decision is delegated to the Cache API: `caches.default.put()` reads the response's `Cache-Control`, refusing `no-store`/`private` and deriving the edge TTL from `s-maxage` (falling back to `max-age`, then `Expires`). Only successful responses are offered to `put()` — errors return straight from the worker's catch block and are never edge-stored (generic errors additionally carry `no-store` for downstream caches; historical not-found is the deliberate exception, returning a short-lived cacheable negative result). Today's data sets `s-maxage=300` so the shared edge refreshes every ~5min, tracking the hourly warmup far more closely than the 1h browser `max-age`. The cache key is the request URL canonicalized first (sorted query params, and `coins` re-serialized with sorted keys and lowercased addresses) so requests that differ only in JSON ordering, whitespace, or address casing share one entry. Positional arrays — a range's `[start, end]` and a batch token's timestamp list — are never reordered, so two requests that differ in those never collide.
+The store/TTL decision is delegated to the Cache API: `caches.default.put()` reads the response's `Cache-Control`, refusing `no-store`/`private` and deriving the edge TTL from `s-maxage` (falling back to `max-age`, then `Expires`). Only successful responses are offered to `put()` — errors return straight from the worker's catch block and are never edge-stored (generic errors additionally carry `no-store` for downstream caches; historical not-found is the deliberate exception, returning a short-lived cacheable negative result). Spot 200s that carry `no-store` (a transient per-token failure) are offered to `put()` and refused there. Today's data sets `s-maxage=300` so the shared edge refreshes every ~5min, tracking the hourly warmup far more closely than the 1h browser `max-age`. The cache key is the request URL canonicalized first (sorted query params, and `coins` re-serialized with sorted keys) so requests that differ only in JSON ordering or whitespace share one entry. Token-key casing is not folded: responses echo the caller's keys, so two casings are distinct cache entries. Positional arrays — a range's `[start, end]` and a batch token's timestamp list — are never reordered, so two requests that differ in those never collide.

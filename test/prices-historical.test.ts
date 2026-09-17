@@ -1,6 +1,6 @@
 import type { Pool } from '@neondatabase/serverless'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CACHE_CONTROL_IMMUTABLE, CACHE_CONTROL_TODAY } from '../src/cache'
+import { CACHE_CONTROL_CLOSED_DAY, CACHE_CONTROL_TODAY } from '../src/cache'
 import worker from '../src/index'
 import { handleHistorical } from '../src/routes/historical/exact'
 import type { Env } from '../src/types'
@@ -38,7 +38,7 @@ describe('handleHistorical', () => {
     vi.restoreAllMocks()
   })
 
-  it('marks a closed-day hit immutable and a today hit short-lived', async () => {
+  it('marks a closed-day hit long-lived at the edge and a today hit short-lived', async () => {
     const today = normalizeToEndOfDay(Math.floor(Date.now() / 1000))
     const hit = (timestamp: number) =>
       handleHistorical(
@@ -59,7 +59,7 @@ describe('handleHistorical', () => {
         TOKEN_KEY
       )
 
-    expect((await hit(TIMESTAMP)).headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+    expect((await hit(TIMESTAMP)).headers.get('cache-control')).toBe(CACHE_CONTROL_CLOSED_DAY)
     expect((await hit(today)).headers.get('cache-control')).toBe(CACHE_CONTROL_TODAY)
   })
 
@@ -129,5 +129,23 @@ describe('handleHistorical', () => {
     expect(response.status).toBe(404)
     expect(response.headers.get('cache-control')).toBe('public, s-maxage=300, max-age=300')
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['a malformed address', `https://svc/api/prices/historical/${TIMESTAMP}/ethereum:0xnope`],
+    ['an unsupported chain', `https://svc/api/prices/historical/${TIMESTAMP}/mars:${RAW_ADDR}`],
+    ['an out-of-bounds timestamp', `https://svc/api/prices/historical/99999999999999/${TOKEN_KEY}`]
+  ])('rejects %s with 400, not 500', async (_label, url) => {
+    vi.stubGlobal('caches', { default: { match: async () => undefined, put: async () => {} } })
+    const response = await worker.fetch(
+      new Request(url, { headers: { authorization: 'Bearer k' } }),
+      { ...ENV, API_KEY_TEST: 'k' } as unknown as Env,
+      { waitUntil: vi.fn() } as unknown as ExecutionContext
+    )
+
+    expect(response.status).toBe(400)
+    expect((await response.json()) as { error: { code: string } }).toMatchObject({
+      error: { code: 'INVALID_INPUT' }
+    })
   })
 })

@@ -1,3 +1,10 @@
+import {
+  CACHE_CONTROL_CLOSED_DAY,
+  CACHE_CONTROL_NO_STORE,
+  CACHE_CONTROL_PARTIAL,
+  CACHE_CONTROL_SPOT,
+  CACHE_CONTROL_TODAY
+} from './cache'
 import type { Env } from './types'
 import { CHAIN_ID_TO_NAME } from './utils/chains'
 
@@ -212,11 +219,11 @@ export function renderLandingPage(env: Env, baseUrl: string): string {
   <section>
     <h2>Caching</h2>
     <ul class="bullets">
-      <li>Spot: <code>public, s-maxage=120, stale-while-revalidate=600</code>.</li>
-      <li>Historical prices for past days: <code>public, max-age=31536000, immutable</code>.</li>
-      <li>Historical requests for today's UTC day: <code>public, s-maxage=300, max-age=3600, stale-while-revalidate=14400</code>.</li>
-      <li>Partially resolved batch or range for past days, and historical not-found: <code>public, s-maxage=300, max-age=300</code>.</li>
-      <li>Responses are edge-cached at Cloudflare with canonicalized URLs, so requests that differ only in query order, whitespace, or address casing share one entry.</li>
+      <li>Spot: <code>${CACHE_CONTROL_SPOT}</code>. A transient upstream failure on any token is <code>${CACHE_CONTROL_NO_STORE}</code>.</li>
+      <li>Historical prices for past days: <code>${CACHE_CONTROL_CLOSED_DAY}</code>.</li>
+      <li>Historical requests for today's UTC day: <code>${CACHE_CONTROL_TODAY}</code>.</li>
+      <li>Partially resolved batch or range for past days, and historical not-found: <code>${CACHE_CONTROL_PARTIAL}</code>.</li>
+      <li>Responses are edge-cached at Cloudflare with canonicalized URLs, so requests that differ only in query order or JSON whitespace share one entry. Token-key casing is kept because responses echo the caller's keys.</li>
     </ul>
   </section>
 

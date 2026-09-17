@@ -1,6 +1,6 @@
 export { canonicalCacheKey, readEdgeCache, writeEdgeCache } from './edge'
 export {
-  CACHE_CONTROL_IMMUTABLE,
+  CACHE_CONTROL_CLOSED_DAY,
   CACHE_CONTROL_NO_STORE,
   CACHE_CONTROL_NOT_FOUND,
   CACHE_CONTROL_PARTIAL,

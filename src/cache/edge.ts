@@ -11,8 +11,13 @@ function edgeCache(): Cache {
 }
 
 // caches.default keys on the request URL, so two logically identical requests that
-// differ only in JSON ordering, whitespace, or token-address casing would fragment
-// into separate cache entries. Canonicalize the URL before match/put so they collide.
+// differ only in JSON ordering or whitespace would fragment into separate cache entries.
+// Canonicalize the URL before match/put so they collide.
+//
+// Casing is deliberately NOT folded: responses key their coins map by the caller's
+// original token key, so a case-folded cache key would hand one caller another
+// caller's casing, and would collapse two casing variants of the same token that
+// carry different timestamp lists onto a single entry.
 export function canonicalCacheKey(rawUrl: string): string {
   const url = new URL(rawUrl)
   const coins = url.searchParams.get('coins')
@@ -53,7 +58,7 @@ function canonicalizeBatchValue(value: unknown): unknown {
   for (const key of Object.keys(value as Record<string, unknown>).sort()) {
     const timestamps = (value as Record<string, unknown>)[key]
     if (!Array.isArray(timestamps)) {
-      out[key.toLowerCase()] = canonicalizeValue(timestamps)
+      out[key] = canonicalizeValue(timestamps)
       continue
     }
     const normalized: number[] = []
@@ -70,9 +75,7 @@ function canonicalizeBatchValue(value: unknown): unknown {
       }
       normalized.push(Math.floor(numeric / 86_400) * 86_400 + 86_399)
     }
-    out[key.toLowerCase()] = valid
-      ? [...new Set(normalized)].sort((left, right) => left - right)
-      : canonicalizeValue(timestamps)
+    out[key] = valid ? [...new Set(normalized)].sort((left, right) => left - right) : canonicalizeValue(timestamps)
   }
   return out
 }
@@ -84,12 +87,9 @@ function canonicalizeValue(value: unknown): unknown {
   if (value && typeof value === 'object') {
     const out: Record<string, unknown> = {}
     for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-      out[key.toLowerCase()] = canonicalizeValue((value as Record<string, unknown>)[key])
+      out[key] = canonicalizeValue((value as Record<string, unknown>)[key])
     }
     return out
-  }
-  if (typeof value === 'string') {
-    return value.toLowerCase()
   }
   return value
 }

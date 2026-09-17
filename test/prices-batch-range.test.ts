@@ -1,6 +1,6 @@
 import type { Pool } from '@neondatabase/serverless'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CACHE_CONTROL_IMMUTABLE, CACHE_CONTROL_PARTIAL, CACHE_CONTROL_TODAY } from '../src/cache'
+import { CACHE_CONTROL_CLOSED_DAY, CACHE_CONTROL_PARTIAL, CACHE_CONTROL_TODAY } from '../src/cache'
 import { handleBatchHistorical } from '../src/routes/historical/batch'
 import { handleRangeHistorical } from '../src/routes/historical/range'
 import type { Env } from '../src/types'
@@ -68,14 +68,14 @@ describe('handleBatchHistorical', () => {
     })
   })
 
-  it('marks a fully resolved past batch immutable', async () => {
+  it('marks a fully resolved past batch with the closed-day policy', async () => {
     const response = await handleBatchHistorical(
       url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE] }),
       ENV,
       pool([row(DAY_ONE, '1')])
     )
 
-    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_CLOSED_DAY)
   })
 
   it('marks an incomplete past batch partial', async () => {
@@ -103,17 +103,62 @@ describe('handleBatchHistorical', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('counts duplicate-cased keys for the same token once and keeps the immutable header', async () => {
+  it('echoes every submitted spelling of the same token', async () => {
+    const lower = `ethereum:${RAW_ADDR}`
     const response = await handleBatchHistorical(
-      url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE], [CHECKSUM_KEY]: [DAY_ONE] }),
+      url('batchHistorical', { [lower]: [DAY_ONE], [CHECKSUM_KEY]: [DAY_ONE] }),
       ENV,
       pool([row(DAY_ONE, '1')])
     )
 
-    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+    const expected = {
+      symbol: 'WETH',
+      prices: [{ timestamp: DAY_ONE, price: 1, confidence: 0.9, source: 'defillama' }]
+    }
+    await expect(response.json()).resolves.toEqual({
+      coins: {
+        [lower]: expected,
+        [CHECKSUM_KEY]: expected
+      }
+    })
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_CLOSED_DAY)
   })
 
-  it('never marks a batch touching a future day immutable', async () => {
+  it('does not merge timestamp lists across spellings of the same token', async () => {
+    const lower = `ethereum:${RAW_ADDR}`
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [lower]: [DAY_ONE], [CHECKSUM_KEY]: [DAY_TWO] }),
+      ENV,
+      pool([row(DAY_ONE, '1'), row(DAY_TWO, '2')])
+    )
+
+    await expect(response.json()).resolves.toEqual({
+      coins: {
+        [lower]: {
+          symbol: 'WETH',
+          prices: [{ timestamp: DAY_ONE, price: 1, confidence: 0.9, source: 'defillama' }]
+        },
+        [CHECKSUM_KEY]: {
+          symbol: 'WETH',
+          prices: [{ timestamp: DAY_TWO, price: 2, confidence: 0.9, source: 'defillama' }]
+        }
+      }
+    })
+  })
+
+  it('rejects a millisecond timestamp with INVALID_INPUT', async () => {
+    await expect(
+      handleBatchHistorical(url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [1_695_254_399_000] }), ENV, pool([]))
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+  })
+
+  it('rejects a non-integer timestamp with INVALID_INPUT', async () => {
+    await expect(
+      handleBatchHistorical(url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [1.5] }), ENV, pool([]))
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+  })
+
+  it('never marks a batch touching a future day with the closed-day policy', async () => {
     const future = TODAY + 86400
     const response = await handleBatchHistorical(
       url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE, future] }),
@@ -187,7 +232,7 @@ describe('handleRangeHistorical', () => {
         }
       }
     })
-    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_CLOSED_DAY)
   })
 
   it('marks a range with a missing day partial', async () => {
@@ -214,5 +259,37 @@ describe('handleRangeHistorical', () => {
     await expect(
       handleRangeHistorical(url('rangeHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_TWO, DAY_ONE] }), ENV, pool([]))
     ).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+  })
+
+  it('rejects a millisecond range bound with INVALID_INPUT', async () => {
+    await expect(
+      handleRangeHistorical(
+        url('rangeHistorical', { [`ethereum:${RAW_ADDR}`]: [1_695_254_399_000, 1_695_254_399_000] }),
+        ENV,
+        pool([])
+      )
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+  })
+
+  it('does not merge range days across spellings of the same token', async () => {
+    const lower = `ethereum:${RAW_ADDR}`
+    const response = await handleRangeHistorical(
+      url('rangeHistorical', { [lower]: [DAY_ONE, DAY_ONE], [CHECKSUM_KEY]: [DAY_TWO, DAY_TWO] }),
+      ENV,
+      pool([row(DAY_ONE, '1'), row(DAY_TWO, '2')])
+    )
+
+    await expect(response.json()).resolves.toEqual({
+      coins: {
+        [lower]: {
+          symbol: 'WETH',
+          prices: [{ timestamp: DAY_ONE, price: 1, confidence: 0.9, source: 'defillama' }]
+        },
+        [CHECKSUM_KEY]: {
+          symbol: 'WETH',
+          prices: [{ timestamp: DAY_TWO, price: 2, confidence: 0.9, source: 'defillama' }]
+        }
+      }
+    })
   })
 })

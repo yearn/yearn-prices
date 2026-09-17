@@ -9,10 +9,25 @@ const MAX_BATCH_TIMESTAMPS_PER_TOKEN = 90
 const MAX_RANGE_TOKENS = 50
 const MAX_RANGE_DAYS = 366
 const MAX_SPOT_TOKENS = 50
+// Timestamps are unix seconds. Bound them so an absurd value can't reach date math or a
+// query plan: 0 (epoch) through 2100-01-01. Millisecond timestamps land above the cap.
+const MIN_TIMESTAMP = 0
+const MAX_TIMESTAMP = 4_102_444_800
+
+function parseTimestampValue(value: unknown, message: string): number {
+  ensure(typeof value === 'number' || /^\d+$/.test(String(value)), 'INVALID_INPUT', message)
+  const numeric = Number(value)
+  ensure(
+    Number.isSafeInteger(numeric) && numeric >= MIN_TIMESTAMP && numeric <= MAX_TIMESTAMP,
+    'INVALID_INPUT',
+    message
+  )
+  return normalizeToEndOfDay(numeric)
+}
 
 export function parseTimestampSegment(segment: string): number {
   ensure(/^\d+$/.test(segment), 'INVALID_INPUT', 'Timestamp must be a unix timestamp')
-  return normalizeToEndOfDay(Number(segment))
+  return parseTimestampValue(segment, 'Timestamp must be a unix timestamp')
 }
 
 export function parseOptionalSource(value: string | null): PriceSource | undefined {
@@ -93,12 +108,7 @@ export function parseBatchCoins(raw: string | null): HistoricalRequestTuple[] {
     const parsedTokenKey = parseTokenKey(tokenKey)
     const dedupedTimestamps = new Set<number>()
     for (const timestamp of timestamps) {
-      ensure(
-        typeof timestamp === 'number' || /^\d+$/.test(String(timestamp)),
-        'INVALID_INPUT',
-        `Invalid timestamp for ${tokenKey}`
-      )
-      dedupedTimestamps.add(normalizeToEndOfDay(Number(timestamp)))
+      dedupedTimestamps.add(parseTimestampValue(timestamp, `Invalid timestamp for ${tokenKey}`))
     }
 
     for (const normalizedTimestamp of dedupedTimestamps) {
@@ -134,19 +144,8 @@ export function parseRangeCoins(raw: string | null): RangeRequest[] {
   return entries.map(([tokenKey, range]) => {
     ensure(Array.isArray(range) && range.length === 2, 'INVALID_INPUT', `Range for ${tokenKey} must be [start, end]`)
     const [startRaw, endRaw] = range
-    ensure(
-      typeof startRaw === 'number' || /^\d+$/.test(String(startRaw)),
-      'INVALID_INPUT',
-      `Invalid start timestamp for ${tokenKey}`
-    )
-    ensure(
-      typeof endRaw === 'number' || /^\d+$/.test(String(endRaw)),
-      'INVALID_INPUT',
-      `Invalid end timestamp for ${tokenKey}`
-    )
-
-    const startTimestamp = normalizeToEndOfDay(Number(startRaw))
-    const endTimestamp = normalizeToEndOfDay(Number(endRaw))
+    const startTimestamp = parseTimestampValue(startRaw, `Invalid start timestamp for ${tokenKey}`)
+    const endTimestamp = parseTimestampValue(endRaw, `Invalid end timestamp for ${tokenKey}`)
     ensure(startTimestamp <= endTimestamp, 'INVALID_INPUT', `Range start must be <= end for ${tokenKey}`)
     ensure(
       normalizedRangeDayCount(startTimestamp, endTimestamp) <= MAX_RANGE_DAYS,
