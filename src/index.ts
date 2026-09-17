@@ -2,6 +2,7 @@ import { CACHE_CONTROL_NO_STORE, readEdgeCache, writeEdgeCache } from './cache'
 import { createPool } from './db'
 import { ApiError, authenticateRequest, jsonError, notFoundErrorHeaders, optionsResponse, withCors } from './http'
 import { renderLandingPage } from './lander'
+import { captureError } from './observability'
 import { handleHealth } from './routes/health'
 import { handleBatchHistorical } from './routes/historical/batch'
 import { handleHistorical } from './routes/historical/exact'
@@ -96,7 +97,7 @@ export default {
 
       const response = await routePriceRequest(request, env, pathname)
       if (request.method === 'GET') {
-        writeEdgeCache(ctx, request, response)
+        writeEdgeCache(ctx, env, request, response)
       }
       return response
     } catch (error) {
@@ -116,6 +117,7 @@ export default {
           error.code === 'NOT_FOUND' && notFoundCacheable
             ? withCors(notFoundErrorHeaders())
             : withCors({ 'cache-control': CACHE_CONTROL_NO_STORE })
+        if (error.status >= 500) captureError(ctx, env, error)
         return jsonError(error, headers)
       }
 
@@ -127,6 +129,7 @@ export default {
           error: error instanceof Error ? error.message : String(error)
         })
       )
+      captureError(ctx, env, error)
       return jsonError(
         new ApiError('INTERNAL_ERROR', 'Unexpected internal error'),
         withCors({ 'cache-control': CACHE_CONTROL_NO_STORE })

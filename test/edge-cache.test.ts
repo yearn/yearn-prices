@@ -16,6 +16,8 @@ import { normalizeToEndOfDay } from '../src/utils'
 
 const BASE = 'https://svc/api/prices/spot'
 
+const ENV = { DATABASE_URL: 'postgres://x' } satisfies Env
+
 function spotUrl(coins: unknown): string {
   return `${BASE}?coins=${encodeURIComponent(JSON.stringify(coins))}`
 }
@@ -158,7 +160,7 @@ describe('readEdgeCache / writeEdgeCache', () => {
     const ctx = { waitUntil } as unknown as ExecutionContext
     const written = new Request(spotUrl(['Ethereum:0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2']))
 
-    writeEdgeCache(ctx, written, new Response('{"coins":{}}'))
+    writeEdgeCache(ctx, ENV, written, new Response('{"coins":{}}'))
     await waitUntil.mock.calls[0][0]
 
     expect([...store.keys()]).toEqual([canonicalCacheKey(written.url)])
@@ -180,7 +182,7 @@ describe('readEdgeCache / writeEdgeCache', () => {
     const request = new Request(spotUrl([TOKEN]))
     const response = new Response('{"coins":{}}')
 
-    writeEdgeCache(ctx, request, response)
+    writeEdgeCache(ctx, ENV, request, response)
     await waitUntil.mock.calls[0][0]
 
     await expect(response.text()).resolves.toBe('{"coins":{}}')
