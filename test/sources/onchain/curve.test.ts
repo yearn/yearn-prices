@@ -1,3 +1,4 @@
+import { encodeAbiParameters, type PublicClient } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { curveAdapter } from '../../../src/sources/onchain/adapters/curve'
 import { RecursivePriceEngine } from '../../../src/sources/onchain/engine'
@@ -6,6 +7,7 @@ import {
   ReadBudgetExceededError,
   RetryablePricingError
 } from '../../../src/sources/onchain/errors'
+import { resolveHistoricalGraph } from '../../../src/sources/onchain/graph'
 import type { RecursivePriceAdapter } from '../../../src/sources/onchain/types'
 import { adapterOptions, fakeClient, marketFor, priceWith } from './helpers'
 
@@ -30,11 +32,85 @@ const reads = {
 }
 
 describe('curveAdapter', () => {
+  it('preserves recursive quote fallback while keeping graph dependencies explicit', async () => {
+    const quoteReads = {
+      [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
+      [CURVE_POOL]: {
+        token: LP,
+        N_COINS: 2n,
+        coins: [TOKEN_A, TOKEN_B],
+        balances: [100n * 10n ** 6n, 100n * 10n ** 18n],
+        get_dy: linearGetDy(
+          [
+            [0n, 10n ** 18n],
+            [10n ** 6n, 0n]
+          ],
+          [6, 18]
+        )
+      },
+      [TOKEN_A]: { decimals: 6 },
+      [TOKEN_B]: { decimals: 18 }
+    }
+    const adapter = curveAdapter(adapterOptions(quoteReads))
+    const recursive = await priceWith(adapter, { [TOKEN_A]: 1 }, LP)
+    expect(recursive.path?.priceUsd).toBeCloseTo(2)
+    expect(recursive.path?.metadata.valuationRule).toBe('get-dy-derived-constituents')
+    const graph = await resolveHistoricalGraph({
+      roots: [{ chainId: 1, token: LP, timestamp: null }],
+      market: marketFor({ [TOKEN_A]: 1 }),
+      prefetch: async () => {},
+      adapters: () => [adapter]
+    })
+    const root = graph.nodes.find((node) => node.key === graph.roots[0])!
+    expect(root.path).toBeNull()
+    expect(root.routes[0].dependencies.map((dep) => dep.target.token.toLowerCase())).toEqual([TOKEN_A, TOKEN_B])
+    const complete = await resolveHistoricalGraph({
+      roots: [{ chainId: 1, token: LP, timestamp: null }],
+      market: marketFor({ [TOKEN_A]: 1, [TOKEN_B]: 1 }),
+      prefetch: async () => {},
+      adapters: () => [adapter]
+    })
+    expect(complete.nodes.find((node) => node.key === complete.roots[0])?.path?.priceUsd).toBeCloseTo(2)
+  })
+
   it('prices an LP token from the pool balances', async () => {
     const result = await priceWith(curveAdapter(adapterOptions(reads)), { [TOKEN_A]: 1 }, LP)
 
     expect(result.path?.priceUsd).toBeCloseTo(2)
     expect(result.path?.metadata.coinCountSource).toBe('pool-N_COINS')
+  })
+
+  it('discovers all constituents without prices and evaluates captured state without more RPC', async () => {
+    const client = fakeClient(reads)
+    let calls = 0
+    const counting = {
+      ...client,
+      readContract: (args: never) => {
+        calls += 1
+        return client.readContract(args)
+      }
+    } as typeof client
+    const adapter = curveAdapter({ clientForChain: () => counting })
+    const plan = await adapter.discover({ chainId: 1, token: LP, timestamp: null })
+    expect(plan?.dependencies).toHaveLength(2)
+    expect(plan?.metadata.totalSupplyRaw).toBe((100n * 10n ** 18n).toString())
+    const before = calls
+    const inputs = plan!.dependencies.map(({ target }) => ({
+      chainId: target.chainId,
+      token: target.token,
+      requestedTimestamp: target.timestamp,
+      observedTimestamp: 100,
+      priceUsd: 1,
+      symbol: null,
+      confidence: null,
+      source: 'defillama' as const,
+      adapter: 'defillama',
+      inputs: [],
+      metadata: {}
+    }))
+    expect(plan!.evaluate(inputs).priceUsd).toBeCloseTo(2)
+    expect(plan!.evaluate(inputs).priceUsd).toBeCloseTo(2)
+    expect(calls).toBe(before)
   })
 
   it('prices native pool legs as wrapped native', async () => {
@@ -752,5 +828,52 @@ describe('curveAdapter', () => {
         executableDyRaw: '50000000000000000000'
       }
     ])
+  })
+})
+
+describe('Curve complete-array discovery', () => {
+  const zero = '0x0000000000000000000000000000000000000000'
+  function adapter(data: string, failed = false) {
+    const base = fakeClient(reads)
+    const client = {
+      ...base,
+      readContract: (args: never) => {
+        const { functionName } = args as { functionName: string }
+        if (functionName === 'N_COINS') throw new Error('execution reverted')
+        if (functionName === 'get_address') return Promise.resolve(CURVE_POOL)
+        return base.readContract(args)
+      },
+      call: async () => {
+        if (failed) throw new Error('fetch failed')
+        return { data }
+      }
+    } as PublicClient
+    return curveAdapter({ clientForChain: () => client })
+  }
+  it('reads the entire padded list instead of truncating to two coins', async () => {
+    const data = encodeAbiParameters([{ type: 'address[4]' }], [[TOKEN_A, TOKEN_A, TOKEN_A, zero]])
+    const result = await priceWith(adapter(data), { [TOKEN_A]: 1 }, LP)
+    expect(result.path?.metadata.coinCount).toBe(3)
+    expect(result.path?.metadata.coinCountSource).toBe('curve-registry-coins')
+    expect(result.path?.priceUsd).toBeCloseTo(3)
+  })
+  it('rejects registry coins that disagree with the pool', async () => {
+    const data = encodeAbiParameters([{ type: 'address[2]' }], [[TOKEN_A, LP]])
+    const result = await priceWith(adapter(data), { [TOKEN_A]: 1 }, LP)
+    expect(result.failure?.reason).toBe('invalid')
+  })
+  it.each([
+    encodeAbiParameters([{ type: 'address[]' }], [[TOKEN_A, TOKEN_A]]),
+    encodeAbiParameters([{ type: 'address[4]' }], [[TOKEN_A, zero, TOKEN_A, zero]]),
+    encodeAbiParameters([{ type: 'address[2]' }], [[zero, zero]]),
+    '0x1234'
+  ])('rejects ambiguous or malformed lists: %s', async (data) => {
+    const result = await priceWith(adapter(data), { [TOKEN_A]: 1 }, LP)
+    expect(result.path).toBeNull()
+    expect(result.failure?.reason).toBe('unsupported')
+  })
+  it('keeps failed whole-array reads retryable', async () => {
+    const result = await priceWith(adapter('0x', true), { [TOKEN_A]: 1 }, LP)
+    expect(result.failure?.reason).toBe('retryable')
   })
 })

@@ -2,7 +2,7 @@ import type { PublicClient } from 'viem'
 import { ReadBudgetExceededError } from './errors'
 
 /** Client methods that cost one Worker subrequest each. */
-const METERED_METHODS = new Set(['readContract', 'getBlock', 'getBlockNumber'])
+const METERED_METHODS = new Set(['readContract', 'call', 'getBlock', 'getBlockNumber'])
 
 export interface ReadBudget {
   readonly spent: number
