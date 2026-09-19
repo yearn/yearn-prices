@@ -124,7 +124,15 @@ All `/api/prices/*` routes require an API key, sent as either:
 
 The worker has no token database — it checks the presented key against every worker environment variable/secret named `API_KEY_*` (see [`src/http/auth.ts`](src/http/auth.ts)). The matched variable's suffix, lowercased, becomes the `client_id` used in request logs (e.g. `API_KEY_FRONTEND` → `frontend`).
 
-Production secrets, including every `API_KEY_*`, live in the 1Password vault `webops-prod`, item `yearn-price`. `.github/workflows/deploy.yml` pulls them via `1Password/load-secrets-action` and uploads them to the Cloudflare Worker with `wrangler secret bulk` on every push to `main`.
+Production secrets, including every `API_KEY_*`, live in the Doppler project `yearn-price`. CI does **not** upload worker runtime secrets. Sync them out of band whenever they change:
+
+```bash
+doppler secrets --json | jq -c 'with_entries(.value = .value.computed)' | wrangler secret bulk
+```
+
+A deploy without that sync leaves the live Worker on whatever secrets it already has — there is no CI error.
+
+Migrate and warmup jobs fetch `yearn-price` / `warmup` via Doppler OIDC (`DOPPLER_APP_IDENTITY_ID`) with `inject-env-vars: true`. Deploy credentials (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`) come from `webops-shared-prod` / `cloudflare-deploy-configs` via `DOPPLER_PRODUCTION_IDENTITY_ID` inside the reusable `yearn/yearn-gha` workflow.
 
 ### Generating a new API token
 
@@ -133,25 +141,22 @@ Production secrets, including every `API_KEY_*`, live in the 1Password vault `we
    openssl rand -base64 32
    ```
 2. **Pick a client id** for the consumer, e.g. `KONG`, `FRONTEND`. The env var name will be `API_KEY_<CLIENT_ID>` (uppercase).
-3. **Add it to 1Password.** In the `webops-prod` vault, `yearn-price` item, add a new password field named `API_KEY_<CLIENT_ID>` with the generated value.
-4. **Wire it into CI.** `.github/workflows/deploy.yml` lists each secret explicitly in two places — add the new key to both:
-   - the `env:` block of the "Load secrets from 1Password" step (`API_KEY_<CLIENT_ID>: op://webops-prod/yearn-price/API_KEY_<CLIENT_ID>`)
-   - the `jq` object in the "Upload secrets to Cloudflare" step
-5. **Deploy.** Merge to `main` (or run the `Deploy Worker` workflow manually) — CI loads the secret from 1Password and uploads it to the Worker via `wrangler secret bulk`.
-6. **Local dev:** add the same `API_KEY_<CLIENT_ID>=<value>` line to `.dev.vars` so `wrangler dev` can validate it.
-7. **Hand off the token** to the consuming team out-of-band (e.g. a 1Password share link) — never paste it into Slack, git, or a PR.
+3. **Add it to Doppler** in the `yearn-price` project as `API_KEY_<CLIENT_ID>`.
+4. **Sync to the Worker** with the `wrangler secret bulk` command above, or a single `wrangler secret put API_KEY_<CLIENT_ID>`. Merging to `main` does not publish the new key.
+5. **Local dev:** add the same `API_KEY_<CLIENT_ID>=<value>` line to `.dev.vars` so `wrangler dev` can validate it.
+6. **Hand off the token** to the consuming team out-of-band — never paste it into Slack, git, or a PR.
 
-To rotate or add a key outside of a deploy (e.g. an emergency rotation), you can push directly to the live Worker without going through CI:
+To rotate a key on the live Worker without waiting for a bulk sync:
 
 ```bash
 wrangler secret put API_KEY_<CLIENT_ID>
 ```
 
-This only updates the deployed Worker; remember to also update 1Password and `deploy.yml` so the next CI deploy doesn't overwrite or drop it.
+Also update Doppler so the next bulk sync does not revert it. There is no Actions UI redeploy: the reusable Cloudflare workflow only accepts a push to `main`.
 
 ## Deployment
 
-Pushing to `main` runs `.github/workflows/deploy.yml`: install deps, load secrets from 1Password, upload them to the Worker, run migrations, warm the price cache, then `wrangler deploy`. `.github/workflows/warmup.yml` runs the warmup script hourly on a cron. `.github/workflows/pr.yml` runs typecheck and tests on every PR.
+Pushing to `main` runs `.github/workflows/deploy.yml`: migrate, then the SHA-pinned `yearn/yearn-gha` Cloudflare deploy (needs migrate). Warmup starts after migrate and does not block deploy. `.github/workflows/migrate-warmup.yml` is `workflow_dispatch` only (migrate + warmup, no deploy). `.github/workflows/warmup.yml` runs the warmup script hourly. `.github/workflows/pr.yml` runs typecheck and tests on every PR.
 
 ## Testing
 

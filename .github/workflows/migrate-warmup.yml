@@ -1,8 +1,6 @@
-name: Warmup Prices
+name: Migrate and Warmup
 
 on:
-  schedule:
-    - cron: '0 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -10,8 +8,11 @@ permissions:
   id-token: write
 
 jobs:
-  warmup:
+  migrate-warmup:
     runs-on: ubuntu-latest
+    concurrency:
+      group: yearn-prices-migrate
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -26,4 +27,7 @@ jobs:
           doppler-project: yearn-price
           doppler-config: warmup
           inject-env-vars: true
-      - run: bun run warmup
+      - name: Run migrations
+        run: bun run migrate
+      - name: Warm price cache
+        run: bun run warmup
