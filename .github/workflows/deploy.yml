@@ -10,7 +10,50 @@ permissions:
   id-token: write
 
 jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: yearn-prices-migrate
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - run: bun install --frozen-lockfile
+      - name: Load app secrets from Doppler
+        uses: dopplerhq/secrets-fetch-action@451892f16195f9ac360e1a5bcbf0b5fd0e957534 # v2.0.0
+        with:
+          auth-method: oidc
+          doppler-identity-id: ${{ vars.DOPPLER_APP_IDENTITY_ID }}
+          doppler-project: yearn-price
+          doppler-config: warmup
+          inject-env-vars: true
+      - name: Run migrations
+        run: bun run migrate
+
   deploy:
+    needs: migrate
     uses: yearn/yearn-gha/.github/workflows/cloudflare-deploy.yml@ba1d1e2800e9a0dfd9d47257dc458fbbd4ea6208
     with:
       identity-id: ${{ vars.DOPPLER_PRODUCTION_IDENTITY_ID }}
+
+  warmup:
+    needs: migrate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - run: bun install --frozen-lockfile
+      - name: Load app secrets from Doppler
+        uses: dopplerhq/secrets-fetch-action@451892f16195f9ac360e1a5bcbf0b5fd0e957534 # v2.0.0
+        with:
+          auth-method: oidc
+          doppler-identity-id: ${{ vars.DOPPLER_APP_IDENTITY_ID }}
+          doppler-project: yearn-price
+          doppler-config: warmup
+          inject-env-vars: true
+      - name: Warm price cache
+        run: bun run warmup

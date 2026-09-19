@@ -1,9 +1,6 @@
 name: Migrate and Warmup
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -13,8 +10,13 @@ permissions:
 jobs:
   migrate-warmup:
     runs-on: ubuntu-latest
+    concurrency:
+      group: yearn-prices-migrate
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
       - run: bun install --frozen-lockfile
       - name: Load app secrets from Doppler
@@ -24,6 +26,7 @@ jobs:
           doppler-identity-id: ${{ vars.DOPPLER_APP_IDENTITY_ID }}
           doppler-project: yearn-price
           doppler-config: warmup
+          inject-env-vars: true
       - name: Run migrations
         run: bun run migrate
       - name: Warm price cache
