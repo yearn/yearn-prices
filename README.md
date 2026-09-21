@@ -156,7 +156,7 @@ Also update Doppler so the next bulk sync does not revert it. There is no Action
 
 ## Deployment
 
-Pushing to `main` runs `.github/workflows/deploy.yml`: migrate, then the SHA-pinned `yearn/yearn-gha` Cloudflare deploy (needs migrate). Warmup starts after migrate and does not block deploy. `.github/workflows/migrate-warmup.yml` is `workflow_dispatch` only (migrate + warmup, no deploy). `.github/workflows/warmup.yml` runs the warmup script hourly. `.github/workflows/pr.yml` runs typecheck and tests on every PR.
+Pushing to `main` runs `.github/workflows/deploy.yml`: migrate, then the SHA-pinned `yearn/yearn-gha` Cloudflare deploy (needs migrate). Warmup starts after migrate and does not block deploy. The same workflow is `workflow_dispatch` for a manual run. `.github/workflows/warmup.yml` runs the warmup script hourly and on dispatch. `.github/workflows/pr.yml` runs typecheck and tests on every PR.
 
 ## Testing
 
