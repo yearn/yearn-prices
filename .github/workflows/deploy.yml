@@ -36,8 +36,9 @@ jobs:
 
   deploy:
     needs: migrate
-    uses: yearn/yearn-gha/.github/workflows/cloudflare-deploy.yml@ba1d1e2800e9a0dfd9d47257dc458fbbd4ea6208
+    uses: yearn/yearn-gha/.github/workflows/cloudflare-deploy.yml@57d9c62869e4785a28f6ff36e13e689676737bdd
     with:
+      project: yearn-price
       identity-id: ${{ vars.DOPPLER_PRODUCTION_IDENTITY_ID }}
 
   warmup:

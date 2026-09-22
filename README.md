@@ -124,13 +124,7 @@ All `/api/prices/*` routes require an API key, sent as either:
 
 The worker has no token database — it checks the presented key against every worker environment variable/secret named `API_KEY_*` (see [`src/http/auth.ts`](src/http/auth.ts)). The matched variable's suffix, lowercased, becomes the `client_id` used in request logs (e.g. `API_KEY_FRONTEND` → `frontend`).
 
-Production secrets, including every `API_KEY_*`, live in the Doppler project `yearn-price`. CI does **not** upload worker runtime secrets. Sync them out of band whenever they change:
-
-```bash
-doppler secrets --json | jq -c 'with_entries(.value = .value.computed)' | wrangler secret bulk
-```
-
-A deploy without that sync leaves the live Worker on whatever secrets it already has — there is no CI error.
+Production secrets, including every `API_KEY_*`, live in the Doppler project `yearn-price`. Each deploy pushes `yearn-price` / `prd` to the Worker with `wrangler secret bulk` before `wrangler deploy`. The sync is additive: a key deleted from Doppler stays on the Worker until removed with `wrangler secret delete`.
 
 Migrate and warmup jobs fetch `yearn-price` / `warmup` via Doppler OIDC (`DOPPLER_APP_IDENTITY_ID`) with `inject-env-vars: true`. Deploy credentials (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`) come from `webops-shared-prod` / `cloudflare-deploy-configs` via `DOPPLER_PRODUCTION_IDENTITY_ID` inside the reusable `yearn/yearn-gha` workflow.
 
@@ -141,18 +135,18 @@ Migrate and warmup jobs fetch `yearn-price` / `warmup` via Doppler OIDC (`DOPPLE
    openssl rand -base64 32
    ```
 2. **Pick a client id** for the consumer, e.g. `KONG`, `FRONTEND`. The env var name will be `API_KEY_<CLIENT_ID>` (uppercase).
-3. **Add it to Doppler** in the `yearn-price` project as `API_KEY_<CLIENT_ID>`.
-4. **Sync to the Worker** with the `wrangler secret bulk` command above, or a single `wrangler secret put API_KEY_<CLIENT_ID>`. Merging to `main` does not publish the new key.
+3. **Add it to Doppler** in `yearn-price` / `prd` as `API_KEY_<CLIENT_ID>`.
+4. **Publish it** with the next push to `main`, or right away with `wrangler secret put API_KEY_<CLIENT_ID>`.
 5. **Local dev:** add the same `API_KEY_<CLIENT_ID>=<value>` line to `.dev.vars` so `wrangler dev` can validate it.
 6. **Hand off the token** to the consuming team out-of-band — never paste it into Slack, git, or a PR.
 
-To rotate a key on the live Worker without waiting for a bulk sync:
+To rotate a key on the live Worker without waiting for a deploy:
 
 ```bash
 wrangler secret put API_KEY_<CLIENT_ID>
 ```
 
-Also update Doppler so the next bulk sync does not revert it. There is no Actions UI redeploy: the reusable Cloudflare workflow only accepts a push to `main`.
+Also update Doppler so the next deploy does not revert it. There is no Actions UI redeploy: the reusable Cloudflare workflow only accepts a push to `main`.
 
 ## Deployment
 
