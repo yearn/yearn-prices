@@ -126,7 +126,7 @@ The worker has no token database — it checks the presented key against every w
 
 Production secrets, including every `API_KEY_*`, live in the Doppler project `yearn-price`. Each deploy pushes `yearn-price` / `prd` to the Worker with `wrangler secret bulk` before `wrangler deploy`. The sync is additive: a key deleted from Doppler stays on the Worker until removed with `wrangler secret delete`.
 
-Migrate and warmup jobs fetch `yearn-price` / `warmup` via Doppler OIDC (`DOPPLER_APP_IDENTITY_ID`) with `inject-env-vars: true`. Deploy credentials (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`) come from `webops-shared-prod` / `cloudflare-deploy-configs` via `DOPPLER_PRODUCTION_IDENTITY_ID` inside the reusable `yearn/yearn-gha` workflow.
+The migrate job fetches `yearn-price` / `migrate` and warmup jobs fetch `yearn-price` / `warmup` via Doppler OIDC (`DOPPLER_APP_IDENTITY_ID`) with `inject-env-vars: true`. Deploy credentials (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`) come from `webops-shared-prod` / `cloudflare-deploy-configs` via `DOPPLER_PRODUCTION_IDENTITY_ID` inside the reusable `yearn/yearn-gha` workflow.
 
 ### Generating a new API token
 
@@ -150,7 +150,7 @@ Also update Doppler so the next deploy does not revert it. There is no Actions U
 
 ## Deployment
 
-Pushing to `main` runs `.github/workflows/deploy.yml`: migrate, then the SHA-pinned `yearn/yearn-gha` Cloudflare deploy (needs migrate). Warmup starts after migrate and does not block deploy. The same workflow is `workflow_dispatch` for a manual run. `.github/workflows/warmup.yml` runs the warmup script hourly and on dispatch. `.github/workflows/pr.yml` runs typecheck and tests on every PR.
+Pushing to `main` runs `.github/workflows/deploy.yml`: migrate, then the SHA-pinned `yearn/yearn-gha` Cloudflare deploy (needs migrate). Warmup starts after migrate and does not block deploy. It has no manual trigger: the reusable deploy rejects anything but a push to `main`. `.github/workflows/warmup.yml` runs the warmup script hourly and on dispatch. `.github/workflows/pr.yml` runs typecheck and tests on every PR.
 
 ## Testing
 
