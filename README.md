@@ -45,11 +45,58 @@ bun run dev
 | `bun run warmup` | Pre-populate today's prices for known vaults/tokens |
 | `bun run backfill:token-address-checksums` | One-off backfill of checksummed token addresses |
 | `bun run backfill:defillama-day-alignment` | One-off repair of DeFiLlama prices stored against the wrong day |
+| `bun run replay:historical-adapters --manifest <file> --out <new.jsonl>` | Read-only historical adapter coverage experiment |
 
 `backfill:defillama-day-alignment` takes a phase (`prices`, `derived`, `verify`, `cleanup`, default `all`) and
 `--out <file>` (report path, default `backfill-report.json`), `--retry[=db|<file>]` (retry only tokens that failed,
 from the progress table or a prior report), `--concurrency <n>` (tokens in flight, default 4). `verify` samples a
 fixed YFI/WBTC 2025-08-16..21 window. Pause the hourly warmup workflow while `prices`/`derived` run.
+
+The adapter replay accepts the version-1 gap manifest (`chainId`, `token`,
+`eodTimestamp` targets) and writes local candidate/failure evidence, never database
+rows. By default it prefetches DeFiLlama observations via `/batchHistorical`, using
+the existing five-token/twenty-timestamp grouping and 6-hour observation matcher.
+A run-wide cache deduplicates root and child lookups, including confirmed misses;
+new dependencies are collected across the workload before fetching each group.
+Provider failures remain
+retryable errors in the run cache and do not trigger individual-request retries.
+
+The default `--scheduler graph` discovers a workload-wide dependency graph.
+Each of the 13 on-chain adapters exposes `discover(target)`: historical reads
+produce a complete child list, conversion evidence, and a pure evaluation
+function. Discovery does not require child prices. The runner batches each
+new market frontier, deduplicates nodes by chain/token/timestamp/block context,
+and discovers every applicable alternative route. Captured plans are evaluated
+bottom-up with no further RPC, sharing derived results across their parents.
+The existing recursive request path uses these same plans and pricing formulas.
+
+The graph has a depth limit of 8 and `--max-nodes <n>` (default 32000), with a
+400-read budget per discovered node. Cutoffs, cycles, invalid state and retryable
+provider/RPC errors remain explicit; they are not evidence of unsupported tokens.
+The output `<out>.graph.json` retains nodes, all route edges, parent links,
+conversion state, raw market attempts, selected price paths and failure reasons.
+JSONL `graph-frontier` records provide progress; `target` records summarize roots.
+Only successful provider responses establish absent observations. A graph can
+explain a missing leaf but cannot invent its historical price.
+
+`--scheduler recursive` retains the earlier replay for comparison. Its optional
+`--discovery-rounds <0..8>` controls repeated adapter probes (default 8).
+The graph scheduler does not use provisional probes or repeated discovery rounds.
+Neither scheduler writes production database rows.
+
+Use `--prefetch-evidence <previous.jsonl>` to prefetch child targets discovered in
+a previous replay, or `--prefetch-manifest <children.json>` for an explicit
+version-1 child request set (requests only; no prices imported). Use
+`--concurrency <1..8>` (default 2) for root processing, and
+`--provider-rps <1..10>` (default 1) for batch pacing. `--not-before <ISO timestamp>`
+delays all provider work; 429 responses share the full `Retry-After` cooldown
+(minimum 60 seconds, maximum 12 hours). Output files must not already exist.
+
+Use `--no-defillama` for an independent run using only Chainlink and the existing
+on-chain adapters. This disables direct DeFiLlama requests, aliases, and its cache;
+it does not add feed mappings, peg assumptions, or spot fallbacks. Returned prices
+are candidates, not certified EOD prices. Raw observation times and dependency
+paths remain available for review.
 
 ## API
 
@@ -77,7 +124,9 @@ All `/api/prices/*` routes require an API key, sent as either:
 
 The worker has no token database — it checks the presented key against every worker environment variable/secret named `API_KEY_*` (see [`src/http/auth.ts`](src/http/auth.ts)). The matched variable's suffix, lowercased, becomes the `client_id` used in request logs (e.g. `API_KEY_FRONTEND` → `frontend`).
 
-Production secrets, including every `API_KEY_*`, live in the 1Password vault `webops-prod`, item `yearn-price`. `.github/workflows/deploy.yml` pulls them via `1Password/load-secrets-action` and uploads them to the Cloudflare Worker with `wrangler secret bulk` on every push to `main`.
+Production secrets, including every `API_KEY_*`, live in the Doppler project `yearn-price`. Each deploy pushes `yearn-price` / `prd` to the Worker with `wrangler secret bulk` before `wrangler deploy`. The sync is additive: a key deleted from Doppler stays on the Worker until removed with `wrangler secret delete`.
+
+The migrate job fetches `yearn-price` / `migrate` and warmup jobs fetch `yearn-price` / `warmup` via Doppler OIDC (`DOPPLER_APP_IDENTITY_ID`) with `inject-env-vars: true`. Deploy credentials (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`) come from `webops-shared-prod` / `cloudflare-deploy-configs` via `DOPPLER_PRODUCTION_IDENTITY_ID` inside the reusable `yearn/yearn-gha` workflow.
 
 ### Generating a new API token
 
@@ -86,25 +135,22 @@ Production secrets, including every `API_KEY_*`, live in the 1Password vault `we
    openssl rand -base64 32
    ```
 2. **Pick a client id** for the consumer, e.g. `KONG`, `FRONTEND`. The env var name will be `API_KEY_<CLIENT_ID>` (uppercase).
-3. **Add it to 1Password.** In the `webops-prod` vault, `yearn-price` item, add a new password field named `API_KEY_<CLIENT_ID>` with the generated value.
-4. **Wire it into CI.** `.github/workflows/deploy.yml` lists each secret explicitly in two places — add the new key to both:
-   - the `env:` block of the "Load secrets from 1Password" step (`API_KEY_<CLIENT_ID>: op://webops-prod/yearn-price/API_KEY_<CLIENT_ID>`)
-   - the `jq` object in the "Upload secrets to Cloudflare" step
-5. **Deploy.** Merge to `main` (or run the `Deploy Worker` workflow manually) — CI loads the secret from 1Password and uploads it to the Worker via `wrangler secret bulk`.
-6. **Local dev:** add the same `API_KEY_<CLIENT_ID>=<value>` line to `.dev.vars` so `wrangler dev` can validate it.
-7. **Hand off the token** to the consuming team out-of-band (e.g. a 1Password share link) — never paste it into Slack, git, or a PR.
+3. **Add it to Doppler** in `yearn-price` / `prd` as `API_KEY_<CLIENT_ID>`.
+4. **Publish it** with the next push to `main`, or right away with `wrangler secret put API_KEY_<CLIENT_ID>`.
+5. **Local dev:** add the same `API_KEY_<CLIENT_ID>=<value>` line to `.dev.vars` so `wrangler dev` can validate it.
+6. **Hand off the token** to the consuming team out-of-band — never paste it into Slack, git, or a PR.
 
-To rotate or add a key outside of a deploy (e.g. an emergency rotation), you can push directly to the live Worker without going through CI:
+To rotate a key on the live Worker without waiting for a deploy:
 
 ```bash
 wrangler secret put API_KEY_<CLIENT_ID>
 ```
 
-This only updates the deployed Worker; remember to also update 1Password and `deploy.yml` so the next CI deploy doesn't overwrite or drop it.
+Also update Doppler so the next deploy does not revert it. There is no Actions UI redeploy: the reusable Cloudflare workflow only accepts a push to `main`.
 
 ## Deployment
 
-Pushing to `main` runs `.github/workflows/deploy.yml`: install deps, load secrets from 1Password, upload them to the Worker, run migrations, warm the price cache, then `wrangler deploy`. `.github/workflows/warmup.yml` runs the warmup script hourly on a cron. `.github/workflows/pr.yml` runs typecheck and tests on every PR.
+Pushing to `main` runs `.github/workflows/deploy.yml`: migrate, then the SHA-pinned `yearn/yearn-gha` Cloudflare deploy (needs migrate). Warmup starts after migrate and does not block deploy. It has no manual trigger: the reusable deploy rejects anything but a push to `main`. `.github/workflows/warmup.yml` runs the warmup script hourly and on dispatch. `.github/workflows/pr.yml` runs typecheck and tests on every PR.
 
 ## Testing
 
@@ -112,3 +158,5 @@ Pushing to `main` runs `.github/workflows/deploy.yml`: install deps, load secret
 bun run typecheck
 bun run test
 ```
+
+See [the graph backfill runbook](docs/historical-pricing/backfill-runbook.md) and [unresolved inventory guide](docs/historical-pricing/README.md).

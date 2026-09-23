@@ -146,7 +146,11 @@ describe('DefiLlamaClient.getChart', () => {
     const requested = 'Ethereum:0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'
     stubFetch({ body: casing })
 
-    const response = await new DefiLlamaClient().getChart([requested], { start: START, span: 2, period: '1d' })
+    const response = await new DefiLlamaClient().getChart([requested], {
+      start: START,
+      span: 2,
+      period: '1d'
+    })
 
     expect(response.coins[requested].prices).toHaveLength(2)
     expect(response.coins[requested.toLowerCase()]).toBeUndefined()
@@ -192,4 +196,13 @@ describe('DefiLlamaClient.getChart', () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
+})
+
+it('batches earliest-price lookups by identifier', async () => {
+  const fetchMock = vi.fn(async () => Response.json({ coins: {} }))
+  vi.stubGlobal('fetch', fetchMock)
+  const client = new DefiLlamaClient()
+  await client.getFirst(['ethereum:0xa', 'ethereum:0xb'])
+  expect(new URL(String(fetchMock.mock.calls[0][0])).pathname).toBe('/prices/first/ethereum:0xa,ethereum:0xb')
+  vi.unstubAllGlobals()
 })

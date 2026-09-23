@@ -1,6 +1,7 @@
 import { type Address, parseAbi } from 'viem'
 import {
   blockEvidence,
+  childTarget,
   contractContext,
   erc20Abi,
   maybe,
@@ -8,11 +9,10 @@ import {
   type OnchainAdapterOptions,
   rawState,
   recursiveInput,
-  requireChildren,
   tokenDecimals
 } from '../context'
 import { calculatePoolNavPrice } from '../math'
-import type { RecursivePriceAdapter } from '../types'
+import { type PlannedPriceAdapter, plannedAdapter } from '../plan'
 
 const CANONICAL_VAULT = '0xba12222222228d8ba445958a75a0704d566bf2c8'
 const VAULTS: Record<number, string> = {
@@ -30,119 +30,120 @@ const vaultAbi = parseAbi([
   'function getPoolTokens(bytes32 poolId) view returns (address[] tokens, uint256[] balances, uint256 lastChangeBlock)'
 ])
 
-export function balancerAdapter(options: OnchainAdapterOptions): RecursivePriceAdapter {
-  return {
-    name: 'balancer-v2-vault-nav',
-    async resolve(target, context) {
-      const state = await contractContext(target, options)
-      const vaultAddress = VAULTS[state.chainId]
-      if (!vaultAddress) {
-        return null
-      }
-      const poolId = await maybe(() =>
-        state.client.readContract({
-          address: state.address,
-          abi: poolAbi,
-          functionName: 'getPoolId',
-          blockNumber: state.blockNumber
-        })
-      )
-      if (!poolId) {
-        return null
-      }
-      // The pool ID is self-reported by the queried token. The vault is the
-      // authority on which contract owns that ID; a mismatch means a token
-      // borrowing a real pool's ID to get its NAV.
-      const registeredPool = await maybe(() =>
-        state.client.readContract({
-          address: vaultAddress as Address,
-          abi: vaultAbi,
-          functionName: 'getPool',
-          args: [poolId],
-          blockNumber: state.blockNumber
-        })
-      )
-      if (!registeredPool || registeredPool[0].toLowerCase() !== target.token.toLowerCase()) {
-        return null
-      }
+export function balancerAdapter(options: OnchainAdapterOptions): PlannedPriceAdapter {
+  return plannedAdapter('balancer-v2-vault-nav', async (target) => {
+    const state = await contractContext(target, options)
+    const vaultAddress = VAULTS[state.chainId]
+    if (!vaultAddress) {
+      return null
+    }
+    const poolId = await maybe(() =>
+      state.client.readContract({
+        address: state.address,
+        abi: poolAbi,
+        functionName: 'getPoolId',
+        blockNumber: state.blockNumber
+      })
+    )
+    if (!poolId) {
+      return null
+    }
+    // The pool ID is self-reported by the queried token. The vault is the
+    // authority on which contract owns that ID; a mismatch means a token
+    // borrowing a real pool's ID to get its NAV.
+    const registeredPool = await maybe(() =>
+      state.client.readContract({
+        address: vaultAddress as Address,
+        abi: vaultAbi,
+        functionName: 'getPool',
+        args: [poolId],
+        blockNumber: state.blockNumber
+      })
+    )
+    if (!registeredPool || registeredPool[0].toLowerCase() !== target.token.toLowerCase()) {
+      return null
+    }
 
-      const [poolTokens, poolDecimals, totalSupplyRaw] = await Promise.all([
-        state.client.readContract({
-          address: vaultAddress as Address,
-          abi: vaultAbi,
-          functionName: 'getPoolTokens',
-          args: [poolId],
-          blockNumber: state.blockNumber
-        }),
-        tokenDecimals(state.client, target.token, state.blockNumber),
-        state.client.readContract({
-          address: state.address,
-          abi: erc20Abi,
-          functionName: 'totalSupply',
-          blockNumber: state.blockNumber
-        })
-      ])
+    const [poolTokens, poolDecimals, totalSupplyRaw] = await Promise.all([
+      state.client.readContract({
+        address: vaultAddress as Address,
+        abi: vaultAbi,
+        functionName: 'getPoolTokens',
+        args: [poolId],
+        blockNumber: state.blockNumber
+      }),
+      tokenDecimals(state.client, target.token, state.blockNumber),
+      state.client.readContract({
+        address: state.address,
+        abi: erc20Abi,
+        functionName: 'totalSupply',
+        blockNumber: state.blockNumber
+      })
+    ])
 
-      const targetAddress = target.token.toLowerCase()
-      const assets = poolTokens[0].map((address, index) => ({
-        address: normalizedAddress(address) ?? address,
-        balanceRaw: poolTokens[1][index]
+    const targetAddress = target.token.toLowerCase()
+    const assets = poolTokens[0].map((address, index) => ({
+      address: normalizedAddress(address) ?? address,
+      balanceRaw: poolTokens[1][index]
+    }))
+    // Composable pools hold their own BPT; that balance is pre-minted supply,
+    // not a constituent, so it is excluded from both NAV and supply.
+    const selfAsset = assets.find((asset) => asset.address.toLowerCase() === targetAddress)
+    const constituents = assets.filter((asset) => asset.address.toLowerCase() !== targetAddress)
+    if (constituents.length === 0) {
+      return null
+    }
+
+    const [decimals] = await Promise.all([
+      Promise.all(constituents.map((asset) => tokenDecimals(state.client, asset.address, state.blockNumber)))
+    ])
+    const selfBalanceRaw = selfAsset?.balanceRaw ?? 0n
+    const metadata = {
+      ...blockEvidence(state, target),
+      vaultAddress,
+      poolId,
+      valuationRule: 'all-constituents-required',
+      totalSupplyRaw: rawState(totalSupplyRaw),
+      excludedPremintedPoolTokensRaw: rawState(selfBalanceRaw),
+      poolDecimals,
+      lastChangeBlock: poolTokens[2].toString(),
+      tokens: constituents.map((asset, index) => ({
+        address: asset.address,
+        decimals: decimals[index],
+        balanceRaw: rawState(asset.balanceRaw)
       }))
-      // Composable pools hold their own BPT; that balance is pre-minted supply,
-      // not a constituent, so it is excluded from both NAV and supply.
-      const selfAsset = assets.find((asset) => asset.address.toLowerCase() === targetAddress)
-      const constituents = assets.filter((asset) => asset.address.toLowerCase() !== targetAddress)
-      if (constituents.length === 0) {
-        return null
-      }
-
-      const [decimals, inputs] = await Promise.all([
-        Promise.all(constituents.map((asset) => tokenDecimals(state.client, asset.address, state.blockNumber))),
-        requireChildren(
-          context,
-          target,
-          constituents.map((asset) => asset.address),
-          state.numericBlockNumber,
-          'Balancer constituent'
-        )
-      ])
-      const selfBalanceRaw = selfAsset?.balanceRaw ?? 0n
-      const metadata = {
-        ...blockEvidence(state, target),
-        vaultAddress,
-        poolId,
-        valuationRule: 'all-constituents-required',
-        totalSupplyRaw: rawState(totalSupplyRaw),
-        excludedPremintedPoolTokensRaw: rawState(selfBalanceRaw),
-        poolDecimals,
-        lastChangeBlock: poolTokens[2].toString(),
-        tokens: constituents.map((asset, index) => ({
-          address: asset.address,
-          decimals: decimals[index],
-          balanceRaw: rawState(asset.balanceRaw)
-        }))
-      }
-      return {
-        priceUsd: calculatePoolNavPrice(
-          constituents.map((asset, index) => ({
-            ...asset,
-            decimals: decimals[index],
-            priceUsd: inputs[index].priceUsd
-          })),
-          totalSupplyRaw,
-          poolDecimals,
-          selfBalanceRaw
-        ),
-        blockNumber: state.numericBlockNumber,
-        inputs: inputs.map((path, index) =>
-          recursiveInput(path, {
-            method: 'balancer-vault-nav',
-            balanceRaw: rawState(constituents[index].balanceRaw),
-            decimals: decimals[index]
-          })
-        ),
-        metadata
+    }
+    return {
+      dependencies: constituents
+        .map((asset) => asset.address)
+        .map((address) => ({
+          target: childTarget(target, address, state.numericBlockNumber),
+          label: 'Balancer constituent'
+        })),
+      metadata,
+      evaluate(inputs) {
+        return {
+          priceUsd: calculatePoolNavPrice(
+            constituents.map((asset, index) => ({
+              ...asset,
+              decimals: decimals[index],
+              priceUsd: inputs[index].priceUsd
+            })),
+            totalSupplyRaw,
+            poolDecimals,
+            selfBalanceRaw
+          ),
+          blockNumber: state.numericBlockNumber,
+          inputs: inputs.map((path, index) =>
+            recursiveInput(path, {
+              method: 'balancer-vault-nav',
+              balanceRaw: rawState(constituents[index].balanceRaw),
+              decimals: decimals[index]
+            })
+          ),
+          metadata
+        }
       }
     }
-  }
+  })
 }

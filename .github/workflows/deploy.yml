@@ -4,76 +4,62 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
 
 jobs:
-  deploy:
+  migrate:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: yearn-prices-migrate
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
       - run: bun install --frozen-lockfile
-      - uses: 1Password/install-cli-action@v1
-      - name: Load secrets from 1Password
-        uses: 1Password/load-secrets-action@v2
-        env:
-          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          DATABASE_URL: op://webops-prod/yearn-price/DATABASE_URL
-          API_KEY_KONG: op://webops-prod/yearn-price/API_KEY_KONG
-          API_KEY_FRONTEND: op://webops-prod/yearn-price/API_KEY_FRONTEND
-          API_KEY_YEARN_DATA: op://webops-prod/yearn-price/API_KEY_YEARN_DATA
-          API_KEY_DEV_MURDERTEETH: op://webops-prod/yearn-price/API_KEY_DEV_MURDERTEETH
-          API_KEY_YEARN_FEES_SERVICE: op://webops-prod/yearn-price/API_KEY_YEARN_FEES_SERVICE
-          API_KEY_DEV_RAAAWS: op://webops-prod/yearn-price/API_KEY_DEV_RAAAWS
-          ENSO_API_KEY: op://webops-prod/yearn-price/ENSO_API_KEY
-          CLOUDFLARE_API_TOKEN: op://webops-prod/yearn-price/CLOUDFLARE_API_TOKEN
-          CLOUDFLARE_ACCOUNT_ID: op://webops-prod/yearn-price/CLOUDFLARE_ACCOUNT_ID
-          RPC_URL_1: op://webops-prod/yearn-price/RPC_URL_1
-          RPC_URL_10: op://webops-prod/yearn-price/RPC_URL_10
-          RPC_URL_100: op://webops-prod/yearn-price/RPC_URL_100
-          RPC_URL_137: op://webops-prod/yearn-price/RPC_URL_137
-          RPC_URL_146: op://webops-prod/yearn-price/RPC_URL_146
-          RPC_URL_250: op://webops-prod/yearn-price/RPC_URL_250
-          RPC_URL_8453: op://webops-prod/yearn-price/RPC_URL_8453
-          RPC_URL_42161: op://webops-prod/yearn-price/RPC_URL_42161
-          RPC_URL_80094: op://webops-prod/yearn-price/RPC_URL_80094
-          RPC_URL_747474: op://webops-prod/yearn-price/RPC_URL_747474
-          RPC_URL_4663: op://webops-prod/yearn-price/RPC_URL_4663
-          OTEL_EXPORTER_OTLP_ENDPOINT: op://webops-prod/yearn-price/OTEL_EXPORTER_OTLP_ENDPOINT
-          OTEL_EXPORTER_OTLP_HEADERS: op://webops-prod/yearn-price/OTEL_EXPORTER_OTLP_HEADERS
-          OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: op://webops-prod/yearn-price/OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
-          OTEL_EXPORTER_OTLP_LOGS_HEADERS: op://webops-prod/yearn-price/OTEL_EXPORTER_OTLP_LOGS_HEADERS
-          OTEL_SERVICE_NAME: op://webops-prod/yearn-price/OTEL_SERVICE_NAME
-      - name: Upload secrets to Cloudflare
-        run: |
-          jq -n '{
-            DATABASE_URL: env.DATABASE_URL,
-            API_KEY_KONG: env.API_KEY_KONG,
-            API_KEY_FRONTEND: env.API_KEY_FRONTEND,
-            API_KEY_YEARN_DATA: env.API_KEY_YEARN_DATA,
-            API_KEY_DEV_MURDERTEETH: env.API_KEY_DEV_MURDERTEETH,
-            API_KEY_YEARN_FEES_SERVICE: env.API_KEY_YEARN_FEES_SERVICE,
-            API_KEY_DEV_RAAAWS: env.API_KEY_DEV_RAAAWS,
-            ENSO_API_KEY: env.ENSO_API_KEY,
-            RPC_URL_1: env.RPC_URL_1,
-            RPC_URL_10: env.RPC_URL_10,
-            RPC_URL_100: env.RPC_URL_100,
-            RPC_URL_137: env.RPC_URL_137,
-            RPC_URL_146: env.RPC_URL_146,
-            RPC_URL_250: env.RPC_URL_250,
-            RPC_URL_8453: env.RPC_URL_8453,
-            RPC_URL_42161: env.RPC_URL_42161,
-            RPC_URL_80094: env.RPC_URL_80094,
-            RPC_URL_747474: env.RPC_URL_747474,
-            RPC_URL_4663: env.RPC_URL_4663,
-            OTEL_EXPORTER_OTLP_ENDPOINT: env.OTEL_EXPORTER_OTLP_ENDPOINT,
-            OTEL_EXPORTER_OTLP_HEADERS: env.OTEL_EXPORTER_OTLP_HEADERS,
-            OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT,
-            OTEL_EXPORTER_OTLP_LOGS_HEADERS: env.OTEL_EXPORTER_OTLP_LOGS_HEADERS,
-            OTEL_SERVICE_NAME: env.OTEL_SERVICE_NAME
-          }' | bunx wrangler secret bulk
+      - name: Load app secrets from Doppler
+        uses: dopplerhq/secrets-fetch-action@451892f16195f9ac360e1a5bcbf0b5fd0e957534 # v2.0.0
+        with:
+          auth-method: oidc
+          doppler-identity-id: ${{ vars.DOPPLER_APP_IDENTITY_ID }}
+          doppler-project: yearn-price
+          doppler-config: migrate
+          inject-env-vars: true
       - name: Run migrations
         run: bun run migrate
+
+  deploy:
+    needs: migrate
+    uses: yearn/yearn-gha/.github/workflows/cloudflare-deploy.yml@57d9c62869e4785a28f6ff36e13e689676737bdd
+    with:
+      project: yearn-price
+      identity-id: ${{ vars.DOPPLER_PRODUCTION_IDENTITY_ID }}
+
+  warmup:
+    needs: migrate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: yearn-prices-warmup
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - run: bun install --frozen-lockfile
+      - name: Load app secrets from Doppler
+        uses: dopplerhq/secrets-fetch-action@451892f16195f9ac360e1a5bcbf0b5fd0e957534 # v2.0.0
+        with:
+          auth-method: oidc
+          doppler-identity-id: ${{ vars.DOPPLER_APP_IDENTITY_ID }}
+          doppler-project: yearn-price
+          doppler-config: warmup
+          inject-env-vars: true
       - name: Warm price cache
         run: bun run warmup
-      - run: bun run deploy
