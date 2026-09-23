@@ -105,12 +105,7 @@ export async function readEdgeCache(request: Request): Promise<Response | undefi
   return edgeCache().match(cacheKey(request))
 }
 
-export function writeEdgeCache(
-  ctx: ExecutionContext,
-  env: Env,
-  request: Request,
-  response: Response,
-): void {
+export function writeEdgeCache(ctx: ExecutionContext, env: Env, request: Request, response: Response): void {
   // Trust the Cache API for the store/TTL decision: put() honors the response's
   // Cache-Control — it refuses no-store/private and derives the edge TTL from
   // s-maxage → max-age → Expires. Only success responses reach this function (the
@@ -123,6 +118,6 @@ export function writeEdgeCache(
       .put(cacheKey(request), response.clone())
       .catch((error: unknown) => {
         captureError(ctx, env, error)
-      }),
+      })
   )
 }

@@ -27,9 +27,7 @@ function parseHeaders(raw?: string): Record<string, string> {
   for (const pair of raw.split(',')) {
     const idx = pair.indexOf('=')
     if (idx > 0) {
-      headers[decodeHeaderPart(pair.slice(0, idx).trim())] = decodeHeaderPart(
-        pair.slice(idx + 1).trim(),
-      )
+      headers[decodeHeaderPart(pair.slice(0, idx).trim())] = decodeHeaderPart(pair.slice(idx + 1).trim())
     }
   }
   return headers
@@ -52,13 +50,13 @@ function buildPayload(serviceName: string, err: Error): unknown {
                 severityNumber: SEVERITY_ERROR,
                 severityText: 'ERROR',
                 body: { stringValue: err.message },
-                attributes,
-              },
-            ],
-          },
-        ],
-      },
-    ],
+                attributes
+              }
+            ]
+          }
+        ]
+      }
+    ]
   }
 }
 
@@ -77,19 +75,25 @@ export function captureError(ctx: ExecutionContext, env: Env, error: unknown): v
     fetch(url, {
       method: 'POST',
       headers: parseHeaders(env.OTEL_EXPORTER_OTLP_LOGS_HEADERS || env.OTEL_EXPORTER_OTLP_HEADERS),
-      body,
-    }).then((response) => {
-      if (!response.ok) {
-        console.error(JSON.stringify({
-          message: 'otel-export-error',
-          status: response.status,
-        }))
-      }
-    }).catch((exportError) => {
-      console.error(JSON.stringify({
-        message: 'otel-export-error',
-        error: exportError instanceof Error ? exportError.message : String(exportError),
-      }))
-    }),
+      body
+    })
+      .then((response) => {
+        if (!response.ok) {
+          console.error(
+            JSON.stringify({
+              message: 'otel-export-error',
+              status: response.status
+            })
+          )
+        }
+      })
+      .catch((exportError) => {
+        console.error(
+          JSON.stringify({
+            message: 'otel-export-error',
+            error: exportError instanceof Error ? exportError.message : String(exportError)
+          })
+        )
+      })
   )
 }

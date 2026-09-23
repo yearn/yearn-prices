@@ -23,15 +23,18 @@ describe('captureError', () => {
     const env = {
       DATABASE_URL: 'postgres://x',
       OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: 'https://o0.ingest.sentry.io/api/0/integration/otlp/v1/logs',
-      OTEL_EXPORTER_OTLP_LOGS_HEADERS: 'x-sentry-auth=sentry sentry_key=public-key',
+      OTEL_EXPORTER_OTLP_LOGS_HEADERS: 'x-sentry-auth=sentry sentry_key=public-key'
     } satisfies Env
 
     captureError(ctx, env, new Error('boom'))
     await pending(ctx)
 
-    expect(fetchMock).toHaveBeenCalledWith(env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT, expect.objectContaining({
-      headers: expect.objectContaining({ 'x-sentry-auth': 'sentry sentry_key=public-key' }),
-    }))
+    expect(fetchMock).toHaveBeenCalledWith(
+      env.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT,
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'x-sentry-auth': 'sentry sentry_key=public-key' })
+      })
+    )
   })
 
   it('appends the logs path to the generic OTLP base endpoint', async () => {
@@ -39,10 +42,14 @@ describe('captureError', () => {
     vi.stubGlobal('fetch', fetchMock)
     const ctx = context()
 
-    captureError(ctx, {
-      DATABASE_URL: 'postgres://x',
-      OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example.test/',
-    }, new Error('boom'))
+    captureError(
+      ctx,
+      {
+        DATABASE_URL: 'postgres://x',
+        OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example.test/'
+      },
+      new Error('boom')
+    )
     await pending(ctx)
 
     expect(fetchMock.mock.calls[0][0]).toBe('https://collector.example.test/v1/logs')
@@ -50,8 +57,8 @@ describe('captureError', () => {
     expect(payload.resourceLogs[0].scopeLogs[0].logRecords[0].attributes).toEqual(
       expect.arrayContaining([
         { key: 'exception.type', value: { stringValue: 'Error' } },
-        { key: 'exception.message', value: { stringValue: 'boom' } },
-      ]),
+        { key: 'exception.message', value: { stringValue: 'boom' } }
+      ])
     )
   })
 
@@ -60,10 +67,14 @@ describe('captureError', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     const ctx = context()
 
-    captureError(ctx, {
-      DATABASE_URL: 'postgres://x',
-      OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example.test',
-    }, new Error('boom'))
+    captureError(
+      ctx,
+      {
+        DATABASE_URL: 'postgres://x',
+        OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example.test'
+      },
+      new Error('boom')
+    )
     await pending(ctx)
 
     expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('otel-export-error'))
@@ -75,10 +86,14 @@ describe('captureError', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     const ctx = context()
 
-    captureError(ctx, {
-      DATABASE_URL: 'postgres://x',
-      OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example.test',
-    }, new Error('boom'))
+    captureError(
+      ctx,
+      {
+        DATABASE_URL: 'postgres://x',
+        OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example.test'
+      },
+      new Error('boom')
+    )
     await pending(ctx)
 
     expect(consoleError).toHaveBeenCalledWith(expect.stringContaining('otel-export-error'))
@@ -102,17 +117,21 @@ describe('captureError', () => {
     vi.spyOn(Date, 'now').mockReturnValue(1_700_000_000_123)
     const ctx = context()
 
-    captureError(ctx, {
-      DATABASE_URL: 'postgres://x',
-      OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example.test',
-      OTEL_EXPORTER_OTLP_HEADERS: 'x-custom=foo%2Cbar',
-    }, new Error('boom'))
+    captureError(
+      ctx,
+      {
+        DATABASE_URL: 'postgres://x',
+        OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example.test',
+        OTEL_EXPORTER_OTLP_HEADERS: 'x-custom=foo%2Cbar'
+      },
+      new Error('boom')
+    )
     await pending(ctx)
 
     expect(fetchMock.mock.calls[0][1].headers['x-custom']).toBe('foo,bar')
     const payload = JSON.parse(fetchMock.mock.calls[0][1].body as string)
     expect(payload.resourceLogs[0].scopeLogs[0].logRecords[0].timeUnixNano).toBe(
-      String(1_700_000_000_123n * 1_000_000n),
+      String(1_700_000_000_123n * 1_000_000n)
     )
   })
 
@@ -122,15 +141,19 @@ describe('captureError', () => {
     const ctx = context()
 
     expect(() => {
-      captureError(ctx, {
-        DATABASE_URL: 'postgres://x',
-        OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example.test',
-        OTEL_EXPORTER_OTLP_HEADERS: 'authorization=Api-Key 50%off',
-      }, new Error('boom'))
+      captureError(
+        ctx,
+        {
+          DATABASE_URL: 'postgres://x',
+          OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example.test',
+          OTEL_EXPORTER_OTLP_HEADERS: 'authorization=Api-Key 50%off'
+        },
+        new Error('boom')
+      )
     }).not.toThrow()
 
     await pending(ctx)
 
-    expect(fetchMock.mock.calls[0][1].headers['authorization']).toBe('Api-Key 50%off')
+    expect(fetchMock.mock.calls[0][1].headers.authorization).toBe('Api-Key 50%off')
   })
 })
