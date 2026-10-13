@@ -40,6 +40,7 @@ Supported chain names:
 - `arbitrum`
 - `berachain`
 - `katana`
+- `hyperliquid`
 
 Token addresses must be EVM `0x` addresses with 40 hex characters. Chain names and token addresses are normalized to lowercase.
 

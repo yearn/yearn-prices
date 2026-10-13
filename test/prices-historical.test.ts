@@ -130,4 +130,64 @@ describe('handleHistorical', () => {
     expect(response.headers.get('cache-control')).toBe('public, s-maxage=300, max-age=300')
     expect(fetchMock).not.toHaveBeenCalled()
   })
+
+  describe('hyperliquid', () => {
+    const HYPE_USDC = '0xb88339cb7199b77e23db6e890353e22632ba630f'
+    const HYPE_KEY = `hyperliquid:${HYPE_USDC}`
+    const workerFetch = (key: string) => {
+      vi.stubGlobal('caches', { default: { match: async () => undefined, put: async () => {} } })
+      return worker.fetch(
+        new Request(`https://svc/api/prices/historical/${TIMESTAMP}/${key}`, {
+          headers: { authorization: 'Bearer k' }
+        }),
+        { ...ENV, API_KEY_TEST: 'k' } as unknown as Env,
+        { waitUntil: vi.fn() } as unknown as ExecutionContext
+      )
+    }
+
+    it('returns the stored quote with its provenance', async () => {
+      const response = await handleHistorical(
+        request(),
+        ENV,
+        pool([
+          {
+            chain: 'hyperliquid',
+            token: HYPE_USDC,
+            timestamp: new Date(TIMESTAMP * 1000),
+            price: '0.9998',
+            symbol: 'USDC',
+            confidence: '0.99',
+            source: 'defillama'
+          }
+        ]),
+        String(TIMESTAMP),
+        HYPE_KEY
+      )
+
+      await expect(response.json()).resolves.toEqual({
+        coins: {
+          [HYPE_KEY]: { price: 0.9998, symbol: 'USDC', timestamp: TIMESTAMP, confidence: 0.99, source: 'defillama' }
+        }
+      })
+    })
+
+    it('returns NOT_FOUND instead of an invented price when nothing is stored', async () => {
+      await expect(handleHistorical(request(), ENV, pool([]), String(TIMESTAMP), HYPE_KEY)).rejects.toMatchObject({
+        code: 'NOT_FOUND'
+      })
+    })
+
+    it.each(['hyperevm', 'fakechain'])('maps unsupported namespace %s to a 400', async (chain) => {
+      const response = await workerFetch(`${chain}:${HYPE_USDC}`)
+
+      expect(response.status).toBe(400)
+      await expect(response.json()).resolves.toEqual({
+        error: { code: 'INVALID_INPUT', message: `Unsupported chain: ${chain}` }
+      })
+    })
+
+    it('maps a malformed token address to a 400', async () => {
+      expect((await workerFetch('ethereum:0xnothex')).status).toBe(400)
+    })
+  })
 })

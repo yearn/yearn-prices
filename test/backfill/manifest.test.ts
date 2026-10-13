@@ -49,7 +49,7 @@ describe('the backfill manifest parser', () => {
   })
 
   it('rejects an unsupported chain id', () => {
-    expect(issues(manifest([{ chainId: 999, token: USDC, eodTimestamp: EOD }]))[0]).toContain('unsupported chainId')
+    expect(issues(manifest([{ chainId: 998, token: USDC, eodTimestamp: EOD }]))[0]).toContain('unsupported chainId')
     expect(issues(manifest([{ chainId: -1, token: USDC, eodTimestamp: EOD }]))[0]).toContain('positive safe integer')
     expect(issues(manifest([{ chainId: '1', token: USDC, eodTimestamp: EOD }]))[0]).toContain('positive safe integer')
   })
@@ -78,7 +78,7 @@ describe('the backfill manifest parser', () => {
     expect(
       issues(
         manifest([
-          { chainId: 999, token: USDC, eodTimestamp: EOD },
+          { chainId: 998, token: USDC, eodTimestamp: EOD },
           { chainId: 1, token: '0x1234', eodTimestamp: EOD }
         ])
       )
