@@ -4,9 +4,11 @@ import { config as loadEnv } from 'dotenv'
 
 loadEnv({ quiet: true })
 
+import { EXACT_READ_CHUNK_SIZE } from '../src/backfill/constants'
 import { getChainClient } from '../src/clients'
 import { createPool, getExistingExactTimestamps } from '../src/db'
-import { normalizedDaysInRange, normalizeToEndOfDay, nowUnix } from '../src/utils'
+import { chunk, normalizedDaysInRange, normalizeToEndOfDay, nowUnix } from '../src/utils'
+import type { PriceSource } from '../src/types'
 import { fetchYearnVaults, type NormalizedVault } from './lib/kong-vaults'
 import { AUDIT_SOURCES, auditCoverage, expectedTuples } from './lib/price-audit'
 
@@ -23,11 +25,14 @@ const timestamps = normalizedDaysInRange(start, end)
 
 async function audit(vaults: NormalizedVault[]) {
   const expected = expectedTuples(vaults, timestamps)
-  const existing = Object.fromEntries(
-    await Promise.all(
-      AUDIT_SOURCES.map(async (source) => [source, await getExistingExactTimestamps(pool, expected, source)] as const)
-    )
-  )
+  const existing: Partial<Record<PriceSource, Set<string>>> = {}
+  for (const source of AUDIT_SOURCES) {
+    const keys = new Set<string>()
+    for (const batch of chunk(expected, EXACT_READ_CHUNK_SIZE)) {
+      for (const key of await getExistingExactTimestamps(pool, batch, source)) keys.add(key)
+    }
+    existing[source] = keys
+  }
   return auditCoverage(expected, existing)
 }
 
@@ -38,11 +43,18 @@ try {
   let report = await audit(vaults)
   if (values.backfill && report.missing.length > 0) {
     console.error(`audit: ${report.missing.length} gaps, running warmup`)
-    spawnSync('bun', ['run', 'scripts/warmup-prices.ts'], { stdio: ['inherit', 2, 'inherit'] })
+    const warmup = spawnSync('bun', ['run', 'scripts/warmup-prices.ts', '--start', String(start), '--end', String(end)], {
+      stdio: ['inherit', 2, 'inherit']
+    })
+    if (warmup.error || warmup.status !== 0) {
+      console.error(`audit: warmup failed (status=${warmup.status}, signal=${warmup.signal})`, warmup.error)
+      process.exitCode = 1
+    }
     report = await audit(vaults)
   }
 
-  console.info(JSON.stringify({ window: { start, end }, missingRpc, ...report }))
+  const { missing, ...counts } = report
+  console.info(JSON.stringify({ window: { start, end }, missingRpc, ...counts, missingSample: missing.slice(0, 50) }))
   if (report.missing.length > 0 || missingRpc.length > 0) {
     process.exitCode = 1
   }

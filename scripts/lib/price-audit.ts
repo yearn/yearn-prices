@@ -4,7 +4,7 @@ import type { NormalizedVault } from './kong-vaults'
 export type AuditKind = 'underlying' | 'vault'
 
 export const ACCEPTED_SOURCES: Record<AuditKind, PriceSource[]> = {
-  underlying: ['defillama', 'chainlink', 'curve'],
+  underlying: ['defillama', 'chainlink', 'curve', 'derived'],
   vault: ['derived', 'defillama']
 }
 

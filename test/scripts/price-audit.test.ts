@@ -29,3 +29,9 @@ it('passes when a vault of a vault is only derived', () => {
   })
   expect(report.missing).toEqual([])
 })
+
+it('accepts a derived row for an underlying', () => {
+  const expected = expectedTuples([vault('0xv', '0xu')], [10])
+  const report = auditCoverage(expected, { derived: new Set(['ethereum:0xu:10', 'ethereum:0xv:10']) })
+  expect(report.missingByKind).toEqual({ underlying: 0, vault: 0 })
+})
