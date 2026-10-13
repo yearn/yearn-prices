@@ -18,7 +18,7 @@ const stableReads = {
 function guard(reads: Record<string, Record<string, unknown>>, prices: Record<string, number | null> = {}) {
   return createCurveLpGuard({
     clientForChain: () => fakeClient(reads),
-    coinPrice: async (_chainId, coin) => prices[coin.toLowerCase()] ?? null,
+    coinPrices: async (_chainId, coins) => coins.map((coin) => prices[coin.toLowerCase()] ?? null),
     blockForTimestamp: async () => 18_830_533n
   })
 }
@@ -71,7 +71,22 @@ describe('createCurveLpGuard', () => {
   })
 
   it('passes when the chain has no RPC', async () => {
-    const isPlausible = createCurveLpGuard({ clientForChain: () => null, coinPrice: async () => 1 })
+    const isPlausible = createCurveLpGuard({
+      clientForChain: () => null,
+      coinPrices: async (_chainId, coins) => coins.map(() => 1)
+    })
     expect(await isPlausible(1, LP, TIMESTAMP, 1e18)).toBe(true)
+  })
+
+  it('passes when resolving the pool or block throws', async () => {
+    const isPlausible = createCurveLpGuard({
+      clientForChain: () => fakeClient(stableReads),
+      coinPrices: async (_chainId, coins) =>
+        coins.map((coin) => peggedCoins[coin.toLowerCase() as keyof typeof peggedCoins] ?? null),
+      blockForTimestamp: async () => {
+        throw new Error('rpc down')
+      }
+    })
+    expect(await isPlausible(1, LP, TIMESTAMP, 6_656_790_044_458_034)).toBe(true)
   })
 })

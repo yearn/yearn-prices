@@ -19,6 +19,7 @@ import { httpAttempts, httpDiagnosticCodes } from '../src/backfill/diagnostics'
 import {
   type BackfillClientPool,
   FinalizationLockError,
+  type FinalizationOptions,
   type FinalizationTarget,
   type FinalizationTargetResult,
   finalizeBackfillTargets
@@ -34,9 +35,15 @@ import { HttpRequestError } from '../src/clients/http-client'
 import { createPool } from '../src/db'
 import { listDefiLlamaCoinGeckoAliases } from '../src/sources/defillama/aliases'
 import { chunk } from '../src/utils'
-import { storedCurveLpGuard } from './lib/curve-lp-guard'
+import { storedTargetGuard } from './lib/curve-lp-guard'
 
-export type TargetStatus = 'pending' | 'skipped_existing' | 'inserted' | 'skipped_concurrent_existing' | 'unresolved'
+export type TargetStatus =
+  | 'pending'
+  | 'skipped_existing'
+  | 'inserted'
+  | 'skipped_concurrent_existing'
+  | 'unresolved'
+  | 'rejected_implausible'
 
 export type TargetMethod = 'defillama-direct' | 'defillama-alias'
 
@@ -97,7 +104,7 @@ export type ChartFetch = (identifier: string, rangeStart: number, spanDays: numb
 export interface BackfillDeps {
   pool: BackfillPool
   fetchChart: ChartFetch
-  isPlausible?: (target: FinalizationTarget) => Promise<boolean>
+  isPlausible?: FinalizationOptions['isPlausible']
 }
 
 export interface BackfillOptions {
@@ -517,7 +524,7 @@ export async function runBackfill(options: BackfillOptions, deps: BackfillDeps):
     writeReport(options.reportPath, report)
 
     const unresolved = report.summary.unresolved
-    return { exitCode: unresolved > 0 ? 2 : 0, report }
+    return { exitCode: unresolved + report.summary.rejectedImplausible > 0 ? 2 : 0, report }
   } catch (error) {
     if (error instanceof FinalizationLockError) {
       state.lockFailures += 1
@@ -544,6 +551,14 @@ function applyFinalizationResults(state: RunState, results: FinalizationTargetRe
     if (result.status === 'inserted' && !write) {
       record.projected = true
     }
+    if (result.status === 'rejected_implausible') {
+      record.diagnosticCodes.push('rejected_implausible')
+      if (record.method === 'defillama-alias') {
+        state.resolvedAlias -= 1
+      } else {
+        state.resolvedDirect -= 1
+      }
+    }
   }
 }
 
@@ -563,6 +578,7 @@ interface RunSummary {
   resolvedByReviewedAlias: number
   skippedConcurrentExisting: number
   unresolved: number
+  rejectedImplausible: number
   pending: number
   providerRetryFailures: number
   rateLimitedResponses: number
@@ -610,6 +626,7 @@ function applyReportState(
     resolvedByReviewedAlias: state.resolvedAlias,
     skippedConcurrentExisting: targets.filter((record) => record.status === 'skipped_concurrent_existing').length,
     unresolved: targets.filter((record) => record.status === 'unresolved').length,
+    rejectedImplausible: targets.filter((record) => record.status === 'rejected_implausible').length,
     pending: targets.filter((record) => record.status === 'pending').length,
     providerRetryFailures: state.retryExhaustedFailures,
     rateLimitedResponses: state.rateLimitedResponses,
@@ -717,15 +734,13 @@ async function main(argv: string[]): Promise<number> {
   }
 
   const pool = createPool(databaseUrl)
-  const curveLpGuard = storedCurveLpGuard(pool)
   try {
     const result = await runBackfill(
       { manifestPath: args.manifestPath, reportPath: args.reportPath, write: args.write },
       {
         pool: pool as unknown as BackfillPool,
         fetchChart: createChartFetcher(PROVIDER_SEARCH_WIDTH),
-        isPlausible: (target) =>
-          curveLpGuard(target.chainId, target.token, target.eodTimestamp, target.resolution!.price)
+        isPlausible: storedTargetGuard(pool)
       }
     )
     console.info(

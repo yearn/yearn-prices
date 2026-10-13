@@ -39,6 +39,7 @@ import {
   unixToIsoTimestamp
 } from '../src/utils'
 import { plausibleWrites, storedCurveLpGuard } from './lib/curve-lp-guard'
+import { KONG_URL } from './lib/kong-vaults'
 
 const databaseUrl = process.env.DATABASE_URL
 if (!databaseUrl) {
@@ -78,7 +79,7 @@ interface MissingDay {
   token: string
   timestamp: number
   day: string
-  kind: 'gap' | 'not-found' | 'stale-row'
+  kind: 'gap' | 'not-found' | 'stale-row' | 'implausible'
 }
 
 interface FailedToken {
@@ -111,7 +112,6 @@ const TOKEN_CONCURRENCY =
 console.log(`starting phase=${phase} concurrency=${TOKEN_CONCURRENCY} retry=${RETRY_PATH || 'none'} out=${REPORT_PATH}`)
 
 const defiLlama = new DefiLlamaClient()
-const KONG_URL = 'https://kong.yearn.fi/api/rest/list/vaults?origin=yearn'
 
 interface TokenRow {
   chain: string
@@ -292,12 +292,18 @@ async function repairPrices(): Promise<void> {
         }
 
         const built = buildDefiLlamaWrites(chain, token, fetchTimestamps, coin)
-        const writes = await plausibleWrites(built.writes, curveLpGuard)
+        const { writes, rejected } = await plausibleWrites(built.writes, curveLpGuard)
         const batchMissing: MissingDay[] = []
         for (const fetchTimestamp of built.missing) {
           gaps += 1
           const stale = storedPrices.has(normalizeToEndOfDay(fetchTimestamp))
           const missing = describeMissing(chain, token, fetchTimestamp, stale ? 'stale-row' : 'gap')
+          batchMissing.push(missing)
+          console.warn(`${missing.kind} ${coinKey} ${missing.day}`)
+        }
+        for (const rejectedWrite of rejected) {
+          gaps += 1
+          const missing = describeMissing(chain, token, rejectedWrite.timestamp, 'implausible')
           batchMissing.push(missing)
           console.warn(`${missing.kind} ${coinKey} ${missing.day}`)
         }

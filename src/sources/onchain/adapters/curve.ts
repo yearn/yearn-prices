@@ -444,17 +444,16 @@ export async function resolveCurvePoolCoins(
   if (!coinCount) {
     return null
   }
-  const coins: string[] = []
-  for (let index = 0; index < coinCount.count; index += 1) {
-    const coin = await readCoinAddress(state.client, pool as Address, index, state.blockNumber)
-    const pricingAddress =
-      coin?.address.toLowerCase() === CURVE_NATIVE_TOKEN ? WRAPPED_NATIVE[state.chainId] : coin?.address
-    if (!pricingAddress) {
-      return null
-    }
-    coins.push(pricingAddress)
+  const coins = await Promise.all(
+    Array.from({ length: coinCount.count }, async (_, index) => {
+      const coin = await readCoinAddress(state.client, pool as Address, index, state.blockNumber)
+      return coin?.address.toLowerCase() === CURVE_NATIVE_TOKEN ? WRAPPED_NATIVE[state.chainId] : coin?.address
+    })
+  )
+  if (coins.some((coin) => !coin)) {
+    return null
   }
-  return { pool: pool as Address, coins }
+  return { pool: pool as Address, coins: coins as string[] }
 }
 
 export function curveAdapter(options: OnchainAdapterOptions): PlannedPriceAdapter {

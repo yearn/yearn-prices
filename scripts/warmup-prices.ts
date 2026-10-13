@@ -45,7 +45,8 @@ const stats: WarmupStats = {
   insertedDirect: 0,
   insertedDerived: 0,
   insertedCurve: 0,
-  insertedChainlink: 0
+  insertedChainlink: 0,
+  rejectedImplausible: 0
 }
 const defiLlama = new DefiLlamaClient(undefined, () => {
   stats.retries += 1
@@ -88,6 +89,7 @@ interface WarmupStats {
   insertedDerived: number
   insertedCurve: number
   insertedChainlink: number
+  rejectedImplausible: number
 }
 
 function parseChain(value: string): number {
@@ -216,7 +218,8 @@ async function warmDirectPrices(vaults: NormalizedVault[], timestamps: number[],
         }
       }
 
-      const plausible = await plausibleWrites(writes, curveLpGuard)
+      const { writes: plausible, rejected } = await plausibleWrites(writes, curveLpGuard)
+      stats.rejectedImplausible += rejected.length
       await insertTokenPrices(pool, plausible)
       stats.insertedDirect += plausible.length
     } catch (error) {

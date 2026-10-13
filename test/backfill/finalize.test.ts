@@ -142,13 +142,15 @@ describe('finalizeBackfillTargets client lifecycle', () => {
     expect(clients[0].released).toBe(1)
   })
 
-  it('leaves a defillama resolution unresolved when it is implausible', async () => {
+  it('marks a defillama resolution rejected_implausible when it is implausible', async () => {
     const { pool } = fakePool(0)
 
     const outcome = await finalizeBackfillTargets(pool, [TARGET], { dryRun: true, isPlausible: async () => false })
 
     expect(outcome.inserted).toBe(0)
-    expect(outcome.unresolved).toBe(1)
+    expect(outcome.unresolved).toBe(0)
+    expect(outcome.rejectedImplausible).toBe(1)
+    expect(outcome.results[0].status).toBe('rejected_implausible')
   })
 
   it('does not judge resolutions from other sources', async () => {

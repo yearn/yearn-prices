@@ -4,14 +4,15 @@ import { resolveCurvePoolCoins } from '../onchain/adapters/curve'
 import { type ClientForChain, maybe } from '../onchain/context'
 
 export const CURVE_LP_BOUND_FACTOR = 4
+const MAX_IN_FLIGHT = 8
 
 const virtualPriceAbi = parseAbi(['function get_virtual_price() view returns (uint256)'])
 
-export type CoinPrice = (chainId: number, coin: string, timestamp: number) => Promise<number | null>
+export type CoinPrices = (chainId: number, coins: string[], timestamp: number) => Promise<(number | null)[]>
 
 export interface CurveLpGuardOptions {
   clientForChain: ClientForChain
-  coinPrice: CoinPrice
+  coinPrices: CoinPrices
   blockForTimestamp?: (client: PublicClient, chainId: number, timestamp: number) => Promise<bigint>
 }
 
@@ -20,6 +21,8 @@ export type PlausibleQuote = (chainId: number, token: string, timestamp: number,
 export function createCurveLpGuard(options: CurveLpGuardOptions): PlausibleQuote {
   const blockForTimestamp = options.blockForTimestamp ?? estimateBlockByTimestamp
   const pools = new Map<string, Promise<{ pool: Address; coins: string[] } | null>>()
+  let inFlight = 0
+  const waiting: (() => void)[] = []
 
   const poolFor = (chainId: number, token: string) => {
     const key = `${chainId}:${token.toLowerCase()}`
@@ -32,7 +35,7 @@ export function createCurveLpGuard(options: CurveLpGuardOptions): PlausibleQuote
     return pending
   }
 
-  return async (chainId, token, timestamp, price) => {
+  const verdict = async (chainId: number, token: string, timestamp: number, price: number) => {
     const client = options.clientForChain(chainId)
     if (!client) {
       return true
@@ -48,10 +51,30 @@ export function createCurveLpGuard(options: CurveLpGuardOptions): PlausibleQuote
     if (virtualPrice == null) {
       return true
     }
-    const coinPrices = await Promise.all(lp.coins.map((coin) => options.coinPrice(chainId, coin, timestamp)))
+    const coinPrices = await options.coinPrices(chainId, lp.coins, timestamp)
     if (coinPrices.some((coinPrice) => coinPrice == null || !(coinPrice > 0))) {
       return true
     }
     return price <= CURVE_LP_BOUND_FACTOR * (Number(virtualPrice) / 1e18) * Math.max(...(coinPrices as number[]))
+  }
+
+  return async (chainId, token, timestamp, price) => {
+    if (inFlight >= MAX_IN_FLIGHT) {
+      await new Promise<void>((resolve) => waiting.push(resolve))
+    } else {
+      inFlight += 1
+    }
+    try {
+      return await verdict(chainId, token, timestamp, price)
+    } catch (error) {
+      console.warn(
+        `lp-guard:skipped ${chainId}:${token} ${timestamp} ${error instanceof Error ? error.message : String(error)}`
+      )
+      return true
+    } finally {
+      const next = waiting.shift()
+      if (next) next()
+      else inFlight -= 1
+    }
   }
 }

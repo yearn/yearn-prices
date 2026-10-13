@@ -18,7 +18,7 @@ import {
 } from '../src/sources'
 import type { GraphNode } from '../src/sources/onchain/graph'
 import { preflightTokenCasings } from './backfill-historical-gaps'
-import { storedCurveLpGuard } from './lib/curve-lp-guard'
+import { storedTargetGuard } from './lib/curve-lp-guard'
 import { replayGraph } from './lib/graph-replay'
 import { offlineProvider } from './lib/offline-provider'
 import { storedHistoricalPrices } from './lib/stored-historical-prices'
@@ -56,7 +56,6 @@ writeFileSync(
   { flag: 'wx' }
 )
 const pool = createPool(databaseUrl)
-const curveLpGuard = storedCurveLpGuard(pool)
 let settled = 0
 try {
   await preflightTokenCasings(pool, manifest.targets, EXACT_READ_CHUNK_SIZE)
@@ -128,8 +127,7 @@ try {
     )
     const result = await finalizeBackfillTargets(pool, finalTargets, {
       dryRun: !values.write,
-      isPlausible: (target) =>
-        curveLpGuard(target.chainId, target.token, target.eodTimestamp, target.resolution!.price),
+      isPlausible: storedTargetGuard(pool),
       onBatchSettled(batch) {
         settled += batch.results.length
         for (const result of batch.results) {
@@ -152,7 +150,8 @@ try {
       inserted: values.write ? result.inserted : 0,
       wouldInsert: values.write ? 0 : result.inserted,
       skippedConcurrentExisting: result.skippedConcurrentExisting,
-      unresolved: pending.length - finalTargets.length + result.unresolved
+      unresolved: pending.length - finalTargets.length + result.unresolved,
+      rejectedImplausible: result.rejectedImplausible
     })
   }
   if (!pending.length)
