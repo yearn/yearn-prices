@@ -6,6 +6,7 @@ config({ quiet: true })
 import { getChainClient } from '../src/clients/rpc'
 import { createPool, getBatchHistoricalPrices, insertTokenPrices } from '../src/db'
 import { createOnchainHistoricalSource, ONCHAIN_SOURCE_NAME } from '../src/sources/onchain'
+import type { HistoricalPriceResult } from '../src/sources/types'
 import type { MarketPriceResolver } from '../src/sources/onchain/types'
 import { normalizeTokenAddress, unixToIsoTimestamp } from '../src/utils'
 import { storedCurveLpGuard } from './lib/curve-lp-guard'
@@ -77,18 +78,28 @@ const curveLpGuard = storedCurveLpGuard(pool)
 const emit = (record: unknown) => console.info(JSON.stringify(record))
 
 try {
-  const tally = { deleted: 0, derived: 0, deleteOnly: 0 }
+  const tally = { deleted: 0, derived: 0, deleteOnly: 0, noop: 0 }
   for (const outlier of outliers) {
     const { token, timestamp } = outlier
     const request = { chain: CHAIN, token: normalizeTokenAddress(token), timestamp }
     const [row] = await getBatchHistoricalPrices(pool, [request], 'defillama')
-    const [other] = (await getBatchHistoricalPrices(pool, [request])).filter((entry) => entry.source !== 'defillama')
+    if (!row) {
+      emit({ token, timestamp, skipped: 'no-defillama-row' })
+      continue
+    }
+    const { rows: others } = await pool.query<{ source: string; price: string | number }>(
+      `SELECT source, price FROM token_prices WHERE chain = $1 AND lower(token) = $2 AND timestamp = $3::timestamptz AND source <> 'defillama' ORDER BY source LIMIT 1`,
+      [CHAIN, request.token.toLowerCase(), unixToIsoTimestamp(timestamp)]
+    )
+    const other = others[0]
 
+    let derived: HistoricalPriceResult | null = null
     let derivedPrice: number | null = null
     let derivedNote: string | null = null
     if (outlier.rederive && !other) {
       try {
-        derivedPrice = (await onchain.getHistoricalPrice(CHAIN_ID, token, timestamp))?.price ?? null
+        derived = (await onchain.getHistoricalPrice(CHAIN_ID, token, timestamp)) ?? null
+        derivedPrice = derived?.price ?? null
         if (derivedPrice == null) derivedNote = 'not-derivable'
         else if (!(await curveLpGuard(CHAIN_ID, token, timestamp, derivedPrice))) {
           derivedNote = 'derived-implausible'
@@ -101,29 +112,30 @@ try {
     emit({
       token,
       timestamp,
-      storedDefillama: row?.price ?? null,
-      existingOther: other ? { source: other.source, price: other.price } : null,
+      storedDefillama: row.price,
+      existingOther: other ? { source: other.source, price: Number(other.price) } : null,
       derivedPrice,
       derivedNote
     })
     if (!values.write) continue
+    if (outlier.rederive && !other && derivedPrice == null) continue
 
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
       const { rowCount } = await client.query(
         `DELETE FROM token_prices WHERE chain = $1 AND lower(token) = $2 AND timestamp = $3::timestamptz AND source = 'defillama'`,
-        [CHAIN, token, unixToIsoTimestamp(timestamp)]
+        [CHAIN, request.token.toLowerCase(), unixToIsoTimestamp(timestamp)]
       )
-      if (derivedPrice != null) {
+      if (derived && derivedPrice != null) {
         await insertTokenPrices(client, [
           {
             chain: CHAIN,
             token: request.token,
             timestamp,
             price: derivedPrice,
-            symbol: row?.symbol ?? null,
-            confidence: null,
+            symbol: derived.symbol ?? row.symbol,
+            confidence: derived.confidence,
             source: ONCHAIN_SOURCE_NAME
           }
         ])
@@ -131,7 +143,8 @@ try {
       await client.query('COMMIT')
       tally.deleted += rowCount ?? 0
       if (derivedPrice != null) tally.derived += 1
-      else tally.deleteOnly += 1
+      else if ((rowCount ?? 0) > 0) tally.deleteOnly += 1
+      else tally.noop += 1
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined)
       throw error
