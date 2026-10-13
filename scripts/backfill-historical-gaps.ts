@@ -34,6 +34,7 @@ import { HttpRequestError } from '../src/clients/http-client'
 import { createPool } from '../src/db'
 import { listDefiLlamaCoinGeckoAliases } from '../src/sources/defillama/aliases'
 import { chunk } from '../src/utils'
+import { storedCurveLpGuard } from './lib/curve-lp-guard'
 
 export type TargetStatus = 'pending' | 'skipped_existing' | 'inserted' | 'skipped_concurrent_existing' | 'unresolved'
 
@@ -96,6 +97,7 @@ export type ChartFetch = (identifier: string, rangeStart: number, spanDays: numb
 export interface BackfillDeps {
   pool: BackfillPool
   fetchChart: ChartFetch
+  isPlausible?: (target: FinalizationTarget) => Promise<boolean>
 }
 
 export interface BackfillOptions {
@@ -497,6 +499,7 @@ export async function runBackfill(options: BackfillOptions, deps: BackfillDeps):
       dryRun: !options.write,
       batchSize,
       readChunkSize,
+      isPlausible: deps.isPlausible,
       onBatchStart: (size) => {
         inFlightBatch = size
       },
@@ -714,10 +717,16 @@ async function main(argv: string[]): Promise<number> {
   }
 
   const pool = createPool(databaseUrl)
+  const curveLpGuard = storedCurveLpGuard(pool)
   try {
     const result = await runBackfill(
       { manifestPath: args.manifestPath, reportPath: args.reportPath, write: args.write },
-      { pool: pool as unknown as BackfillPool, fetchChart: createChartFetcher(PROVIDER_SEARCH_WIDTH) }
+      {
+        pool: pool as unknown as BackfillPool,
+        fetchChart: createChartFetcher(PROVIDER_SEARCH_WIDTH),
+        isPlausible: (target) =>
+          curveLpGuard(target.chainId, target.token, target.eodTimestamp, target.resolution!.price)
+      }
     )
     console.info(
       JSON.stringify({

@@ -141,4 +141,22 @@ describe('finalizeBackfillTargets client lifecycle', () => {
     expect(clients[0].statements.some((statement) => statement.startsWith('LOCK TABLE'))).toBe(false)
     expect(clients[0].released).toBe(1)
   })
+
+  it('leaves a defillama resolution unresolved when it is implausible', async () => {
+    const { pool } = fakePool(0)
+
+    const outcome = await finalizeBackfillTargets(pool, [TARGET], { dryRun: true, isPlausible: async () => false })
+
+    expect(outcome.inserted).toBe(0)
+    expect(outcome.unresolved).toBe(1)
+  })
+
+  it('does not judge resolutions from other sources', async () => {
+    const { pool } = fakePool(0)
+    const derived = { ...TARGET, resolution: { ...TARGET.resolution!, source: 'derived' as const } }
+
+    const outcome = await finalizeBackfillTargets(pool, [derived], { dryRun: true, isPlausible: async () => false })
+
+    expect(outcome.inserted).toBe(1)
+  })
 })

@@ -38,6 +38,7 @@ import {
   runInGroups,
   unixToIsoTimestamp
 } from '../src/utils'
+import { plausibleWrites, storedCurveLpGuard } from './lib/curve-lp-guard'
 
 const databaseUrl = process.env.DATABASE_URL
 if (!databaseUrl) {
@@ -45,6 +46,7 @@ if (!databaseUrl) {
 }
 
 const pool = createPool(databaseUrl)
+const curveLpGuard = storedCurveLpGuard(pool)
 
 const cliArgs = process.argv
   .slice(2)
@@ -290,7 +292,7 @@ async function repairPrices(): Promise<void> {
         }
 
         const built = buildDefiLlamaWrites(chain, token, fetchTimestamps, coin)
-        const writes = built.writes
+        const writes = await plausibleWrites(built.writes, curveLpGuard)
         const batchMissing: MissingDay[] = []
         for (const fetchTimestamp of built.missing) {
           gaps += 1

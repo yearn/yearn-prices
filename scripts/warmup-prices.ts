@@ -28,6 +28,7 @@ import {
   runInGroups,
   toFetchTimestamp
 } from '../src/utils'
+import { plausibleWrites, storedCurveLpGuard } from './lib/curve-lp-guard'
 
 const databaseUrl = process.env.DATABASE_URL
 if (!databaseUrl) {
@@ -49,6 +50,7 @@ const defiLlama = new DefiLlamaClient(undefined, () => {
   stats.retries += 1
 })
 const chainlink = createChainlinkHistoricalSource()
+const curveLpGuard = storedCurveLpGuard(pool)
 
 const REQUEST_GROUP_SIZE = 5
 const REQUEST_GROUP_DELAY_MS = 200
@@ -254,8 +256,9 @@ async function warmDirectPrices(vaults: NormalizedVault[], timestamps: number[],
         }
       }
 
-      await insertTokenPrices(pool, writes)
-      stats.insertedDirect += writes.length
+      const plausible = await plausibleWrites(writes, curveLpGuard)
+      await insertTokenPrices(pool, plausible)
+      stats.insertedDirect += plausible.length
     } catch (error) {
       stats.failures += 1
       console.error('DeFiLlama batch failed', payload, error)

@@ -58,6 +58,7 @@ export interface FinalizationOptions {
   lockTimeout?: string
   statementTimeout?: string
   readChunkSize?: number
+  isPlausible?: (target: FinalizationTarget) => Promise<boolean>
   onBatchStart?: (batchSize: number) => void
   onBatchSettled?: (settled: FinalizationBatchSettled) => void | Promise<void>
 }
@@ -232,7 +233,9 @@ async function applyBatch(
 async function finalizeBatch(
   pool: BackfillClientPool,
   batch: FinalizationTarget[],
-  options: Required<Omit<FinalizationOptions, 'dryRun' | 'batchSize' | 'onBatchStart' | 'onBatchSettled'>>
+  options: Required<
+    Omit<FinalizationOptions, 'dryRun' | 'batchSize' | 'isPlausible' | 'onBatchStart' | 'onBatchSettled'>
+  >
 ): Promise<{ results: FinalizationTargetResult[]; lockRetries: number; lockWaitMs: number; lockHoldMs: number }> {
   const lockTimeout = timeoutLiteral(options.lockTimeout)
   const statementTimeout = timeoutLiteral(options.statementTimeout)
@@ -310,7 +313,17 @@ export async function finalizeBackfillTargets(
   let lockWaitMs = 0
   let lockHoldMs = 0
 
-  for (const batch of chunk(targets, batchSize)) {
+  for (const unchecked of chunk(targets, batchSize)) {
+    const { isPlausible } = options
+    const batch = isPlausible
+      ? await Promise.all(
+          unchecked.map(async (target) =>
+            target.resolution?.source === 'defillama' && !(await isPlausible(target))
+              ? { ...target, resolution: null }
+              : target
+          )
+        )
+      : unchecked
     options.onBatchStart?.(batch.length)
     if (options.dryRun) {
       const dryResults = await finalizeDryRun(pool, batch, transactionOptions.readChunkSize)
