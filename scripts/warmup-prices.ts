@@ -15,7 +15,7 @@ import { DEFILLAMA_UNSUPPORTED_CHAINS } from '../src/sources'
 import { CHAINLINK_FEEDS, createChainlinkHistoricalSource, getChainlinkFeed } from '../src/sources/chainlink'
 import { buildDefiLlamaPayloads } from '../src/sources/defillama/batch'
 import { buildDefiLlamaWrites } from '../src/sources/defillama/match'
-import type { HistoricalRequestTuple, KongVaultListItem, TokenPriceWrite } from '../src/types'
+import type { HistoricalRequestTuple, TokenPriceWrite } from '../src/types'
 import {
   chainIdToName,
   chainNameToId,
@@ -29,6 +29,7 @@ import {
   toFetchTimestamp
 } from '../src/utils'
 import { plausibleWrites, storedCurveLpGuard } from './lib/curve-lp-guard'
+import { fetchYearnVaults, type NormalizedVault } from './lib/kong-vaults'
 
 const databaseUrl = process.env.DATABASE_URL
 if (!databaseUrl) {
@@ -76,16 +77,6 @@ function tokenSymbol(chainId: number, token: `0x${string}`): Promise<string | nu
   })()
   tokenSymbols.set(key, pending)
   return pending
-}
-
-interface NormalizedVault {
-  chain: string
-  chainId: number
-  vaultToken: `0x${string}`
-  underlyingToken: `0x${string}`
-  symbol: string | null
-  apiVersion: string | null
-  decimals: number
 }
 
 interface WarmupStats {
@@ -153,37 +144,6 @@ function chainlinkFeedVaults(chainId: number): NormalizedVault[] {
       decimals: 18
     }
   })
-}
-
-async function fetchYearnVaults(): Promise<NormalizedVault[]> {
-  const response = await fetch('https://kong.yearn.fi/api/rest/list/vaults?origin=yearn')
-  if (!response.ok) {
-    throw new Error(`Failed to fetch Kong vault list: ${response.status}`)
-  }
-
-  const json = (await response.json()) as KongVaultListItem[]
-  const vaults: NormalizedVault[] = []
-
-  for (const item of json) {
-    const chain = chainIdToName(item.chainId)
-    if (!chain || !item.asset?.address || !item.decimals) {
-      continue
-    }
-
-    try {
-      vaults.push({
-        chain,
-        chainId: item.chainId,
-        vaultToken: normalizeTokenAddress(item.address),
-        underlyingToken: normalizeTokenAddress(item.asset.address),
-        symbol: item.symbol,
-        apiVersion: item.apiVersion,
-        decimals: item.decimals
-      })
-    } catch {}
-  }
-
-  return vaults
 }
 
 function buildDailyTimestamps(start: number, end: number): number[] {
