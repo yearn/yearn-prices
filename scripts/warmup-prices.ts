@@ -36,6 +36,7 @@ import {
 import { plausibleWrites, storedCurveLpGuard } from './lib/curve-lp-guard'
 import { runGraphBackfill } from './lib/graph-backfill'
 import { fetchYearnVaults, type NormalizedVault } from './lib/kong-vaults'
+import { offlineProvider } from './lib/offline-provider'
 
 const databaseUrl = process.env.DATABASE_URL
 if (!databaseUrl) {
@@ -385,6 +386,7 @@ async function warmGraphFallbackPrices(
   const underlyings = [...collectUnderlyings(vaults).values()]
   const days = timestamps.filter((timestamp) => isClosedDay(timestamp)).sort((a, b) => b - a)
   const directory = mkdtempSync(join(tmpdir(), 'warmup-graph-'))
+  const provider = offlineProvider(1)
   for (const eodTimestamp of days) {
     if (Date.now() > deadline) {
       stats.failures += 1
@@ -404,7 +406,8 @@ async function warmGraphFallbackPrices(
         out,
         write: true,
         concurrency: 8,
-        providerRps: 1
+        providerRps: 1,
+        provider
       })
       stats.insertedGraph += summary.inserted
       stats.rejectedImplausible += summary.rejectedImplausible

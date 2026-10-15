@@ -35,6 +35,7 @@ export async function runGraphBackfill(options: {
   write: boolean
   concurrency: number
   providerRps: number
+  provider?: ReturnType<typeof offlineProvider>
 }): Promise<GraphBackfillSummary> {
   const { pool, manifest, out, write } = options
   const emit = (record: unknown) => appendFileSync(out, JSON.stringify(record) + '\n')
@@ -74,7 +75,7 @@ export async function runGraphBackfill(options: {
       const replayFile = out + '.replay.jsonl'
       writeFileSync(pendingFile, JSON.stringify({ version: 1, targets: pending }), { flag: 'wx' })
       writeFileSync(replayFile, '', { flag: 'wx' })
-      const provider = offlineProvider(options.providerRps)
+      const provider = options.provider ?? offlineProvider(options.providerRps)
       await replayGraph({
         targets: pending.map((target) => ({
           chainId: target.chainId,
