@@ -26,6 +26,7 @@ export async function replayGraph(options: {
   const { targets, sources, provider, out, concurrency, maxNodes, clean } = options
   const marketAttempts = new Map<string, unknown[]>()
   const budgets = new Map<string, ReturnType<typeof createReadBudget>>()
+  let lastProgress = 0
   const json = (value: unknown) =>
     JSON.stringify(value, (_, value) => (typeof value === 'bigint' ? value.toString() : value))
   const graph = await resolveHistoricalGraph({
@@ -81,6 +82,12 @@ export async function replayGraph(options: {
         clientForChain: (chainId) => (chainId === target.chainId ? metered : null),
         blockContextCache: new Map()
       })
+    },
+    onProgress(depth, stage, done, total) {
+      const now = Date.now()
+      if (stage === 'resolved' && done < total && now - lastProgress < 15_000) return
+      lastProgress = now
+      console.log(json({ stage: `graph-${stage}`, depth, done, total, batching: provider?.stats ?? null }))
     },
     onFrontier(depth, nodes) {
       appendFileSync(

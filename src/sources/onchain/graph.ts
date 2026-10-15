@@ -65,8 +65,9 @@ export async function resolveHistoricalGraph(options: {
   maxDepth?: number
   maxNodes?: number
   onFrontier?: (depth: number, nodes: GraphNode[]) => void
+  onProgress?: (depth: number, stage: 'prefetched' | 'resolved', done: number, total: number) => void
 }) {
-  const { roots, market, prefetch, adapters, onFrontier } = options
+  const { roots, market, prefetch, adapters, onFrontier, onProgress } = options
   const concurrency = options.concurrency ?? 2
   const maxDepth = options.maxDepth ?? 8
   const maxNodes = options.maxNodes ?? Math.max(roots.length, 32_000)
@@ -99,8 +100,18 @@ export async function resolveHistoricalGraph(options: {
   }
   let frontier = [...new Set(roots.map((root) => add(root, 0)))]
   while (frontier.length) {
+    const depth = frontier[0].depth
     await prefetch(frontier.map((node) => node.target))
+    onProgress?.(depth, 'prefetched', 0, frontier.length)
+    let done = 0
     await each(frontier, concurrency, async (node) => {
+      try {
+        await resolveNode(node)
+      } finally {
+        onProgress?.(depth, 'resolved', ++done, frontier.length)
+      }
+    })
+    async function resolveNode(node: GraphNode) {
       try {
         const path = await market(node.target)
         node.market = path ? 'price' : 'missing'
@@ -139,7 +150,7 @@ export async function resolveHistoricalGraph(options: {
           node.attempts.push({ adapter: adapter.name, reason: classifyError(error), error: String(error) })
         }
       }
-    })
+    }
     const next: GraphNode[] = []
     for (const node of frontier) {
       for (const route of node.routes)
