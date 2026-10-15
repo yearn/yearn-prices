@@ -5,6 +5,11 @@ on:
     - cron: '0 * * * *'
     - cron: '30 0 * * *'
   workflow_dispatch:
+    inputs:
+      graph:
+        description: Run the onchain graph stage for closed days
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -31,4 +36,4 @@ jobs:
           doppler-project: yearn-price
           doppler-config: warmup
           inject-env-vars: true
-      - run: bun run warmup ${{ github.event.schedule == '30 0 * * *' && '--graph' || '' }}
+      - run: bun run warmup ${{ (github.event.schedule == '30 0 * * *' || inputs.graph) && '--graph' || '' }}

@@ -33,7 +33,8 @@ try {
     concurrency: Number(values.concurrency),
     providerRps: Number(values['provider-rps'])
   })
-} catch {
+} catch (error) {
+  console.error(error)
   process.exitCode = 1
 } finally {
   await pool.end()

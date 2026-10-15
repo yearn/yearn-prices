@@ -23,6 +23,7 @@ import type { HistoricalRequestTuple, TokenPriceWrite } from '../src/types'
 import {
   chainIdToName,
   chainNameToId,
+  isClosedDay,
   isTodayNormalized,
   normalizedDaysInRange,
   normalizeToEndOfDay,
@@ -373,38 +374,53 @@ async function warmCurveFallbackPrices(
   })
 }
 
+const GRAPH_BUDGET_MS = 45 * 60_000
+
 async function warmGraphFallbackPrices(
   vaults: NormalizedVault[],
   timestamps: number[],
   stats: WarmupStats
 ): Promise<void> {
-  const closed = timestamps.filter((timestamp) => !isTodayNormalized(timestamp))
-  const targets = [...collectUnderlyings(vaults).values()].flatMap((underlying) =>
-    closed.map((eodTimestamp) => ({ chainId: underlying.chainId, token: underlying.token, eodTimestamp }))
-  )
-  const out = join(mkdtempSync(join(tmpdir(), 'warmup-graph-')), 'graph.jsonl')
-  try {
-    const summary = await runGraphBackfill({
-      pool,
-      manifest: parseManifest(JSON.stringify({ version: 1, targets })),
-      out,
-      write: true,
-      concurrency: 8,
-      providerRps: 1
-    })
-    stats.insertedGraph += summary.inserted
-    stats.rejectedImplausible += summary.rejectedImplausible
-    for (const line of readFileSync(out, 'utf8').trim().split('\n')) {
-      const record = JSON.parse(line)
-      if (record.type === 'target-outcome' && (record.status === 'unresolved' || record.status === 'rejected')) {
+  const deadline = Date.now() + GRAPH_BUDGET_MS
+  const underlyings = [...collectUnderlyings(vaults).values()]
+  const days = timestamps.filter((timestamp) => isClosedDay(timestamp)).sort((a, b) => b - a)
+  const directory = mkdtempSync(join(tmpdir(), 'warmup-graph-'))
+  for (const eodTimestamp of days) {
+    if (Date.now() > deadline) {
+      stats.failures += 1
+      console.error(`Graph fallback budget exhausted before ${eodTimestamp}`)
+      return
+    }
+    const targets = underlyings.map((underlying) => ({
+      chainId: underlying.chainId,
+      token: underlying.token,
+      eodTimestamp
+    }))
+    const out = join(directory, `${eodTimestamp}.jsonl`)
+    try {
+      const summary = await runGraphBackfill({
+        pool,
+        manifest: parseManifest(JSON.stringify({ version: 1, targets })),
+        out,
+        write: true,
+        concurrency: 8,
+        providerRps: 1
+      })
+      stats.insertedGraph += summary.inserted
+      stats.rejectedImplausible += summary.rejectedImplausible
+      for (const line of readFileSync(out, 'utf8').trim().split('\n')) {
+        const record = JSON.parse(line)
+        if (record.type !== 'target-outcome' || (record.status !== 'unresolved' && record.status !== 'rejected'))
+          continue
+        if (record.reason === 'retryable') stats.failures += 1
         console.warn(
           `gap:graph ${record.target.chain}:${record.target.token} ${record.target.eodTimestamp} ${record.reason}`
         )
       }
+    } catch (error) {
+      stats.failures += 1
+      console.error('Graph fallback failed', { out }, error)
     }
-  } catch (error) {
-    stats.failures += 1
-    console.error('Graph fallback failed', { out }, error)
   }
 }
 

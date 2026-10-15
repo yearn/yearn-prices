@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { pairAdapter } from '../../../src/sources/onchain/adapters/pair'
 import { RecursivePriceEngine } from '../../../src/sources/onchain/engine'
 import { RetryablePricingError } from '../../../src/sources/onchain/errors'
-import { adapterOptions, BLOCK_NUMBER, BLOCK_TIMESTAMP, marketFor, priceWith } from './helpers'
+import { adapterOptions, BLOCK_TIMESTAMP, fakeClient, marketFor, priceWith } from './helpers'
 
 const LP = '0x1111111111111111111111111111111111111111'
 const TOKEN_A = '0x2222222222222222222222222222222222222222'
@@ -64,20 +64,32 @@ describe('pairAdapter', () => {
       [ALETH]: { decimals: 18 },
       [WETH]: { decimals: 18 }
     }
+    const PINNED = 158_211_811
+    const readBlocks: unknown[] = []
+    const client = fakeClient(velodrome)
+    const recording = {
+      ...client,
+      readContract: (args: { blockNumber?: bigint }) => {
+        readBlocks.push(args.blockNumber)
+        return client.readContract(args as never)
+      }
+    } as typeof client
     const dated = (prices: Record<string, number>) =>
-      new RecursivePriceEngine(marketFor(prices), [pairAdapter(adapterOptions(velodrome))]).resolve({
+      new RecursivePriceEngine(marketFor(prices), [pairAdapter({ clientForChain: () => recording })]).resolve({
         chainId: 10,
         token: POOL,
         timestamp: BLOCK_TIMESTAMP + 60,
-        blockNumber: Number(BLOCK_NUMBER)
+        blockNumber: PINNED
       })
 
     it('prices the LP from reserves read at the dated block', async () => {
       const result = await dated({ [ALETH]: 2362.7903748397657, [WETH]: 2413.6269911487775 })
 
       expect(result.path?.priceUsd).toBeCloseTo(4768.264451152301, 6)
-      expect(result.path?.blockNumber).toBe(Number(BLOCK_NUMBER))
-      expect(result.path?.metadata.block).toMatchObject({ number: Number(BLOCK_NUMBER), distanceSeconds: 60 })
+      expect(result.path?.blockNumber).toBe(PINNED)
+      expect(result.path?.metadata.block).toMatchObject({ number: PINNED, distanceSeconds: 60 })
+      expect(readBlocks.length).toBeGreaterThanOrEqual(7)
+      expect(new Set(readBlocks)).toEqual(new Set([BigInt(PINNED)]))
     })
 
     it('leaves the LP unresolved when a constituent has no price', async () => {
