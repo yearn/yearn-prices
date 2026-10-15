@@ -1,8 +1,12 @@
+import { mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { config as loadEnv } from 'dotenv'
 
 loadEnv()
 
 import { parseAbi } from 'viem'
+import { parseManifest } from '../src/backfill/manifest'
 import {
   DefiLlamaClient,
   estimateBlockByTimestamp,
@@ -19,6 +23,7 @@ import type { HistoricalRequestTuple, TokenPriceWrite } from '../src/types'
 import {
   chainIdToName,
   chainNameToId,
+  isClosedDay,
   isTodayNormalized,
   normalizedDaysInRange,
   normalizeToEndOfDay,
@@ -29,7 +34,9 @@ import {
   toFetchTimestamp
 } from '../src/utils'
 import { plausibleWrites, storedCurveLpGuard } from './lib/curve-lp-guard'
+import { runGraphBackfill } from './lib/graph-backfill'
 import { fetchYearnVaults, type NormalizedVault } from './lib/kong-vaults'
+import { offlineProvider } from './lib/offline-provider'
 
 const databaseUrl = process.env.DATABASE_URL
 if (!databaseUrl) {
@@ -46,6 +53,7 @@ const stats: WarmupStats = {
   insertedDerived: 0,
   insertedCurve: 0,
   insertedChainlink: 0,
+  insertedGraph: 0,
   rejectedImplausible: 0
 }
 const defiLlama = new DefiLlamaClient(undefined, () => {
@@ -89,6 +97,7 @@ interface WarmupStats {
   insertedDerived: number
   insertedCurve: number
   insertedChainlink: number
+  insertedGraph: number
   rejectedImplausible: number
 }
 
@@ -104,11 +113,12 @@ function parseChain(value: string): number {
   throw new Error(`Unknown chain: ${value}`)
 }
 
-function parseArgs(argv: string[]): { start: number; end: number; chainId: number | undefined } {
+function parseArgs(argv: string[]): { start: number; end: number; chainId: number | undefined; graph: boolean } {
   const options = new Map<string, string>()
   for (let index = 0; index < argv.length; index += 1) {
     const current = argv[index]
     const next = argv[index + 1]
+    if (current === '--graph') continue
     if (current.startsWith('--') && next) {
       options.set(current, next)
       index += 1
@@ -125,7 +135,7 @@ function parseArgs(argv: string[]): { start: number; end: number; chainId: numbe
     throw new Error('--start must be <= --end')
   }
 
-  return { start, end, chainId }
+  return { start, end, chainId, graph: argv.includes('--graph') }
 }
 
 function chainlinkFeedVaults(chainId: number): NormalizedVault[] {
@@ -365,6 +375,58 @@ async function warmCurveFallbackPrices(
   })
 }
 
+const GRAPH_BUDGET_MS = 45 * 60_000
+
+async function warmGraphFallbackPrices(
+  vaults: NormalizedVault[],
+  timestamps: number[],
+  stats: WarmupStats
+): Promise<void> {
+  const deadline = Date.now() + GRAPH_BUDGET_MS
+  const underlyings = [...collectUnderlyings(vaults).values()]
+  const days = timestamps.filter((timestamp) => isClosedDay(timestamp)).sort((a, b) => b - a)
+  const directory = mkdtempSync(join(tmpdir(), 'warmup-graph-'))
+  const provider = offlineProvider(1)
+  for (const eodTimestamp of days) {
+    if (Date.now() > deadline) {
+      stats.failures += 1
+      console.error(`Graph fallback budget exhausted before ${eodTimestamp}`)
+      return
+    }
+    const targets = underlyings.map((underlying) => ({
+      chainId: underlying.chainId,
+      token: underlying.token,
+      eodTimestamp
+    }))
+    const out = join(directory, `${eodTimestamp}.jsonl`)
+    try {
+      const summary = await runGraphBackfill({
+        pool,
+        manifest: parseManifest(JSON.stringify({ version: 1, targets })),
+        out,
+        write: true,
+        concurrency: 8,
+        providerRps: 1,
+        provider
+      })
+      stats.insertedGraph += summary.inserted
+      stats.rejectedImplausible += summary.rejectedImplausible
+      for (const line of readFileSync(out, 'utf8').trim().split('\n')) {
+        const record = JSON.parse(line)
+        if (record.type !== 'target-outcome' || (record.status !== 'unresolved' && record.status !== 'rejected'))
+          continue
+        if (record.reason === 'retryable') stats.failures += 1
+        console.warn(
+          `gap:graph ${record.target.chain}:${record.target.token} ${record.target.eodTimestamp} ${record.reason}`
+        )
+      }
+    } catch (error) {
+      stats.failures += 1
+      console.error('Graph fallback failed', { out }, error)
+    }
+  }
+}
+
 async function warmDerivedVaultPrices(
   vaults: NormalizedVault[],
   timestamps: number[],
@@ -447,7 +509,7 @@ async function warmDerivedVaultPrices(
 }
 
 try {
-  const { start, end, chainId } = parseArgs(process.argv.slice(2))
+  const { start, end, chainId, graph } = parseArgs(process.argv.slice(2))
   const timestamps = buildDailyTimestamps(start, end)
   const vaults = chainId !== undefined ? chainlinkFeedVaults(chainId) : await fetchYearnVaults()
 
@@ -458,6 +520,7 @@ try {
     await warmDirectPrices(vaults, timestamps, stats)
     await warmChainlinkPrices(vaults, timestamps, stats)
     await warmCurveFallbackPrices(vaults, timestamps, stats)
+    if (graph) await warmGraphFallbackPrices(vaults, timestamps, stats)
     await warmDerivedVaultPrices(vaults, timestamps, stats)
   }
 
