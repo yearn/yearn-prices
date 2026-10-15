@@ -57,7 +57,7 @@ function fakePool(config: FakePoolConfig = {}): {
       throw Object.assign(new Error('could not obtain lock'), { code: '55P03' })
     }
 
-    if (sql.includes('lower(tp.token)')) {
+    if (sql.includes('lower(tp.token) = requested.token_lower')) {
       return { rows: (config.noncanonical ?? []) as unknown as Record<string, unknown>[] }
     }
     if (sql.includes('INNER JOIN (VALUES')) {

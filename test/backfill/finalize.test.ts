@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { REJECTED_OBSERVATIONS } from '../../src/prices/rejections'
 import {
   type BackfillClient,
   type BackfillClientPool,
@@ -7,6 +6,7 @@ import {
   type FinalizationTarget,
   finalizeBackfillTargets
 } from '../../src/backfill/finalize'
+import { REJECTED_OBSERVATIONS } from '../../src/prices/rejections'
 
 const TARGET: FinalizationTarget = {
   chainId: 1,
