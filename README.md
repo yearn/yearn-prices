@@ -111,7 +111,7 @@ Full route reference, request/response shapes, error codes, and caching behavior
 
 Chain 4663 (Robinhood) has no DefiLlama coverage. Warmup writes WETH/USDG/USDC/USDT from Chainlink (`bun run warmup -- --chain 4663`).
 
-Historical rows are written by `scripts/warmup-prices.ts` (hourly: DefiLlama, Chainlink, Curve, derived), `scripts/backfill-historical-gaps.ts` and `scripts/backfill-defillama-day-alignment.ts`. One-off migrations (`scripts/backfill-token-address-checksums.ts`) copy existing rows and add no new prices. `docs/routes.md` lists which job writes each `source` value.
+Historical rows are written by `scripts/warmup-prices.ts` (hourly: DefiLlama, Chainlink, Curve, derived; daily `--graph` run at 00:30 UTC adds onchain adapters for closed days), `scripts/backfill-historical-gaps.ts` and `scripts/backfill-defillama-day-alignment.ts`. One-off migrations (`scripts/backfill-token-address-checksums.ts`) copy existing rows and add no new prices. `docs/routes.md` lists which job writes each `source` value.
 
 ### Adding a new price source
 
