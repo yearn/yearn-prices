@@ -9,6 +9,7 @@ import type {
   TokenPriceWrite
 } from '../types'
 import { SOURCE_PRIORITY } from '../types'
+import { chunk } from '../utils/collections'
 import { optionalResponseNumber, toResponseNumber } from '../utils/format'
 import { isTodayNormalized, pgTimestampToUnix, unixToIsoTimestamp } from '../utils/time'
 
@@ -38,6 +39,8 @@ export async function getExactHistoricalPrice(
   return rows[0] ?? null
 }
 
+const MAX_EXACT_REQUESTS_PER_QUERY = 10_000
+
 export async function getBatchHistoricalPrices(
   pool: QueryExecutor,
   requests: HistoricalRequestTuple[],
@@ -45,6 +48,13 @@ export async function getBatchHistoricalPrices(
 ): Promise<ExactPriceRecord[]> {
   if (requests.length === 0) {
     return []
+  }
+  if (requests.length > MAX_EXACT_REQUESTS_PER_QUERY) {
+    const rows: ExactPriceRecord[] = []
+    for (const part of chunk(requests, MAX_EXACT_REQUESTS_PER_QUERY)) {
+      rows.push(...(await getBatchHistoricalPrices(pool, part, source)))
+    }
+    return rows
   }
 
   const valuesSql: string[] = []
