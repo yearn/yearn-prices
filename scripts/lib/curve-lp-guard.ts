@@ -1,9 +1,9 @@
 import type { FinalizationResolution, FinalizationTarget } from '../../src/backfill/finalize'
 import { getChainClient } from '../../src/clients/rpc'
-import { getBatchHistoricalPrices, type QueryExecutor } from '../../src/db/queries'
+import type { QueryExecutor } from '../../src/db/queries'
 import { createCurveLpGuard, type PlausibleQuote } from '../../src/sources/defillama/lp-guard'
-import type { TokenPriceWrite } from '../../src/types'
-import { chainIdToName, chainNameToId, normalizeTokenAddress } from '../../src/utils'
+import { isDefiLlamaSource, SOURCE_PRIORITY, type TokenPriceWrite } from '../../src/types'
+import { chainIdToName, chainNameToId, normalizeTokenAddress, unixToIsoTimestamp } from '../../src/utils'
 
 export function storedCurveLpGuard(pool: QueryExecutor): PlausibleQuote {
   return createCurveLpGuard({
@@ -12,11 +12,16 @@ export function storedCurveLpGuard(pool: QueryExecutor): PlausibleQuote {
       const chain = chainIdToName(chainId)
       if (!chain) return coins.map(() => null)
       const tokens = coins.map((coin) => normalizeTokenAddress(coin))
-      const rows = await getBatchHistoricalPrices(
-        pool,
-        tokens.map((token) => ({ chain, token, timestamp }))
+      const { rows } = await pool.query<{ token: string; price: string | number }>(
+        `SELECT DISTINCT ON (token) token, price FROM token_prices
+         WHERE chain = $1 AND token = ANY($2::text[]) AND timestamp = $3::timestamptz
+         ORDER BY token, source LIKE 'defillama%', array_position($4::text[], source)`,
+        [chain, tokens, unixToIsoTimestamp(timestamp), [...SOURCE_PRIORITY]]
       )
-      return tokens.map((token) => rows.find((row) => row.token.toLowerCase() === token.toLowerCase())?.price ?? null)
+      return tokens.map((token) => {
+        const row = rows.find((r) => r.token.toLowerCase() === token.toLowerCase())
+        return row ? Number(row.price) : null
+      })
     }
   })
 }
@@ -36,7 +41,7 @@ export async function plausibleWrites(
     writes.map(async (write) => {
       const chainId = chainNameToId(write.chain)
       return (
-        write.source !== 'defillama' ||
+        !isDefiLlamaSource(write.source) ||
         chainId === undefined ||
         isPlausible(chainId, write.token, write.timestamp, Number(write.price))
       )

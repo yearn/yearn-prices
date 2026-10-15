@@ -14,7 +14,7 @@ export interface NormalizedVault {
 }
 
 export async function fetchYearnVaults(): Promise<NormalizedVault[]> {
-  const response = await fetch(KONG_URL)
+  const response = await fetch(KONG_URL, { signal: AbortSignal.timeout(30_000) })
   if (!response.ok) {
     throw new Error(`Failed to fetch Kong vault list: ${response.status}`)
   }
@@ -25,7 +25,7 @@ export async function fetchYearnVaults(): Promise<NormalizedVault[]> {
   const vaults: NormalizedVault[] = []
 
   for (const item of json) {
-    const chain = chainIdToName(item.chainId)
+    const chain = item && typeof item.chainId === 'number' ? chainIdToName(item.chainId) : undefined
     if (!chain || !item.address || !item.asset?.address || typeof item.decimals !== 'number') {
       continue
     }

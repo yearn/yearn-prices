@@ -34,11 +34,12 @@ jobs:
         run: bun run audit:prices:backfill
       - name: Heartbeat
         if: success()
+        continue-on-error: true
         run: |
           if [ -z "$UPTIME_URL" ]; then echo "::warning::UPTIME_URL not set, skipping heartbeat"; exit 0; fi
           curl -fsS -m 10 --retry 3 -X POST "$UPTIME_URL"
       - name: Failure heartbeat
-        if: failure()
+        if: failure() || cancelled()
         run: |
           if [ -z "$UPTIME_URL" ]; then echo "::warning::UPTIME_URL not set, skipping heartbeat"; exit 0; fi
           curl -fsS -m 10 --retry 3 -X POST "$UPTIME_URL/fail"

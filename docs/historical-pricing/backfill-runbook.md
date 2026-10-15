@@ -82,7 +82,9 @@ that policy; the committed target manifest is unchanged.
 
 A completed run emits one `target-outcome` record per normalized manifest target.
 Its status is `skipped_existing`, `inserted`, `would-insert`,
-`skipped_concurrent_existing`, `unresolved`, or `rejected`. Accepted new prices
+`skipped_concurrent_existing`, `unresolved`, `rejected`, or `rejected_implausible`
+(a DefiLlama quote the Curve LP guard rejected as implausible; its reason is
+`implausible-lp-quote`). Accepted new prices
 include `method`, `source`, `observedTimestamp`, and `signedOffsetSeconds`
 (observed minus requested EOD). These summarize the selected path; the graph
 retains each constituent's independently validated observation. Skipped existing

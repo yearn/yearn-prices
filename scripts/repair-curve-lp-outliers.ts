@@ -6,8 +6,9 @@ config({ quiet: true })
 import { getChainClient } from '../src/clients/rpc'
 import { createPool, getBatchHistoricalPrices, insertTokenPrices } from '../src/db'
 import { createOnchainHistoricalSource, ONCHAIN_SOURCE_NAME } from '../src/sources/onchain'
-import type { HistoricalPriceResult } from '../src/sources/types'
 import type { MarketPriceResolver } from '../src/sources/onchain/types'
+import type { HistoricalPriceResult } from '../src/sources/types'
+import { SOURCE_PRIORITY } from '../src/types'
 import { normalizeTokenAddress, unixToIsoTimestamp } from '../src/utils'
 import { storedCurveLpGuard } from './lib/curve-lp-guard'
 import { storedHistoricalPrices } from './lib/stored-historical-prices'
@@ -88,8 +89,8 @@ try {
       continue
     }
     const { rows: others } = await pool.query<{ source: string; price: string | number }>(
-      `SELECT source, price FROM token_prices WHERE chain = $1 AND lower(token) = $2 AND timestamp = $3::timestamptz AND source <> 'defillama' ORDER BY source LIMIT 1`,
-      [CHAIN, request.token.toLowerCase(), unixToIsoTimestamp(timestamp)]
+      `SELECT source, price FROM token_prices WHERE chain = $1 AND lower(token) = $2 AND timestamp = $3::timestamptz AND source NOT IN ('defillama', 'defillama-alias') ORDER BY array_position($4::text[], source) LIMIT 1`,
+      [CHAIN, request.token.toLowerCase(), unixToIsoTimestamp(timestamp), [...SOURCE_PRIORITY]]
     )
     const other = others[0]
 

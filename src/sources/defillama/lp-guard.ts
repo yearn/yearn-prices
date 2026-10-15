@@ -24,15 +24,26 @@ export function createCurveLpGuard(options: CurveLpGuardOptions): PlausibleQuote
   let inFlight = 0
   const waiting: (() => void)[] = []
 
-  const poolFor = (chainId: number, token: string) => {
+  const poolFor = (chainId: number, token: string, timestamp: number) => {
     const key = `${chainId}:${token.toLowerCase()}`
     let pending = pools.get(key)
     if (!pending) {
-      pending = resolveCurvePoolCoins({ chainId, token, timestamp: null }, options)
+      pending = resolveCurvePoolCoins(
+        { chainId, token, timestamp },
+        {
+          ...options,
+          blockForTarget: (client, id, target) => blockForTimestamp(client, id, target.timestamp ?? timestamp)
+        }
+      )
       pending.catch(() => pools.delete(key))
       pools.set(key, pending)
     }
     return pending
+  }
+
+  const skip = (chainId: number, token: string, timestamp: number, reason: string) => {
+    console.warn(`lp-guard:unverified ${chainId}:${token} ${timestamp} ${reason}`)
+    return true
   }
 
   const verdict = async (chainId: number, token: string, timestamp: number, price: number) => {
@@ -40,7 +51,7 @@ export function createCurveLpGuard(options: CurveLpGuardOptions): PlausibleQuote
     if (!client) {
       return true
     }
-    const lp = await poolFor(chainId, token)
+    const lp = await poolFor(chainId, token, timestamp)
     if (!lp) {
       return true
     }
@@ -49,11 +60,14 @@ export function createCurveLpGuard(options: CurveLpGuardOptions): PlausibleQuote
       client.readContract({ address: lp.pool, abi: virtualPriceAbi, functionName: 'get_virtual_price', blockNumber })
     )
     if (virtualPrice == null) {
-      return true
+      return skip(chainId, token, timestamp, 'no-virtual-price')
     }
     const coinPrices = await options.coinPrices(chainId, lp.coins, timestamp)
+    if (coinPrices.length !== lp.coins.length) {
+      return skip(chainId, token, timestamp, 'coin-price-arity')
+    }
     if (coinPrices.some((coinPrice) => coinPrice == null || !(coinPrice > 0))) {
-      return true
+      return skip(chainId, token, timestamp, 'no-coin-price')
     }
     return price <= CURVE_LP_BOUND_FACTOR * (Number(virtualPrice) / 1e18) * Math.max(...(coinPrices as number[]))
   }

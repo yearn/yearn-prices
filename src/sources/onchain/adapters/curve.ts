@@ -447,6 +447,7 @@ export async function resolveCurvePoolCoins(
   const coins = await Promise.all(
     Array.from({ length: coinCount.count }, async (_, index) => {
       const coin = await readCoinAddress(state.client, pool as Address, index, state.blockNumber)
+      if (coin && coinCount.coins && coin.address.toLowerCase() !== coinCount.coins[index]?.toLowerCase()) return null
       return coin?.address.toLowerCase() === CURVE_NATIVE_TOKEN ? WRAPPED_NATIVE[state.chainId] : coin?.address
     })
   )

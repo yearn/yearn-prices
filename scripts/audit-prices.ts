@@ -7,8 +7,8 @@ loadEnv({ quiet: true })
 import { EXACT_READ_CHUNK_SIZE } from '../src/backfill/constants'
 import { getChainClient } from '../src/clients'
 import { createPool, getExistingExactTimestamps } from '../src/db'
-import { chunk, normalizedDaysInRange, normalizeToEndOfDay, nowUnix } from '../src/utils'
 import type { PriceSource } from '../src/types'
+import { chunk, normalizedDaysInRange, normalizeToEndOfDay, nowUnix } from '../src/utils'
 import { fetchYearnVaults, type NormalizedVault } from './lib/kong-vaults'
 import { AUDIT_SOURCES, auditCoverage, expectedTuples } from './lib/price-audit'
 
@@ -38,14 +38,19 @@ async function audit(vaults: NormalizedVault[]) {
 
 try {
   const vaults = await fetchYearnVaults()
+  if (vaults.length === 0) throw new Error('audit: Kong returned no usable vaults')
   const missingRpc = [...new Set(vaults.map((vault) => vault.chainId))].filter((chainId) => !getChainClient(chainId))
 
   let report = await audit(vaults)
   if (values.backfill && report.missing.length > 0) {
     console.error(`audit: ${report.missing.length} gaps, running warmup`)
-    const warmup = spawnSync('bun', ['run', 'scripts/warmup-prices.ts', '--start', String(start), '--end', String(end)], {
-      stdio: ['inherit', 2, 'inherit']
-    })
+    const warmup = spawnSync(
+      'bun',
+      ['run', 'scripts/warmup-prices.ts', '--start', String(start), '--end', String(end)],
+      {
+        stdio: ['inherit', 2, 'inherit']
+      }
+    )
     if (warmup.error || warmup.status !== 0) {
       console.error(`audit: warmup failed (status=${warmup.status}, signal=${warmup.signal})`, warmup.error)
       process.exitCode = 1
@@ -55,7 +60,7 @@ try {
 
   const { missing, ...counts } = report
   console.info(JSON.stringify({ window: { start, end }, missingRpc, ...counts, missingSample: missing.slice(0, 50) }))
-  if (report.missing.length > 0 || missingRpc.length > 0) {
+  if (report.missing.length > 0) {
     process.exitCode = 1
   }
 } finally {

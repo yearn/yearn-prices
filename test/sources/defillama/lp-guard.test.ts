@@ -70,6 +70,15 @@ describe('createCurveLpGuard', () => {
     expect(await guard({ [LP]: withoutVirtualPrice }, peggedCoins)(1, LP, TIMESTAMP, 1e18)).toBe(true)
   })
 
+  it('fails open when coin price arity does not match the pool', async () => {
+    const isPlausible = createCurveLpGuard({
+      clientForChain: () => fakeClient(stableReads),
+      coinPrices: async () => [],
+      blockForTimestamp: async () => 18_830_533n
+    })
+    expect(await isPlausible(1, LP, TIMESTAMP, 6_656_790_044_458_034)).toBe(true)
+  })
+
   it('passes when the chain has no RPC', async () => {
     const isPlausible = createCurveLpGuard({
       clientForChain: () => null,

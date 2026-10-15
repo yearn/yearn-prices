@@ -1,4 +1,4 @@
-import type { PriceSource } from '../types'
+import { isDefiLlamaSource, type PriceSource } from '../types'
 import { chunk } from '../utils/collections'
 import { pgTimestampToUnix, unixToIsoTimestamp } from '../utils/time'
 import { EXACT_READ_CHUNK_SIZE, FINALIZATION_BATCH_SIZE, FINALIZATION_LOCK_RETRY_LIMIT } from './constants'
@@ -321,11 +321,15 @@ export async function finalizeBackfillTargets(
       ? await Promise.all(
           unchecked.map(async (target) => {
             const { resolution } = target
-            if (resolution?.source !== 'defillama') return target
+            if (!resolution || !isDefiLlamaSource(resolution.source)) return target
             let plausible = true
             try {
               plausible = await isPlausible({ ...target, resolution })
-            } catch {}
+            } catch (error) {
+              console.warn(
+                `finalize:plausibility-skipped ${target.chain}:${target.token} ${target.eodTimestamp} ${error instanceof Error ? error.message : String(error)}`
+              )
+            }
             if (plausible) return target
             rejected.add(priceKey(target.chain, target.token, target.eodTimestamp))
             return { ...target, resolution: null }
