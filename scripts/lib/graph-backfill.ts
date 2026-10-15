@@ -39,6 +39,7 @@ export async function runGraphBackfill(options: {
 }): Promise<GraphBackfillSummary> {
   const { pool, manifest, out, write } = options
   const emit = (record: unknown) => appendFileSync(out, JSON.stringify(record) + '\n')
+  const log = (stage: string, detail: Record<string, unknown> = {}) => console.log(JSON.stringify({ stage, ...detail }))
   writeFileSync(
     out,
     JSON.stringify({
@@ -54,12 +55,14 @@ export async function runGraphBackfill(options: {
   )
   let settled = 0
   try {
+    log('preflight', { targets: manifest.targets.length })
     await preflightTokenCasings(pool, manifest.targets, EXACT_READ_CHUNK_SIZE)
     const priced = await readPricedKeys(pool, manifest.targets, EXACT_READ_CHUNK_SIZE)
     const pending = manifest.targets.filter(
       (target) => !priced.has(priceKey(target.chain, target.token, target.eodTimestamp))
     )
     emit({ type: 'existing', skipped: manifest.targets.length - pending.length })
+    log('existing', { skipped: manifest.targets.length - pending.length, pending: pending.length })
     for (const target of manifest.targets)
       if (priced.has(priceKey(target.chain, target.token, target.eodTimestamp)))
         emit(targetOutcome(target, 'skipped_existing'))
@@ -128,11 +131,13 @@ export async function runGraphBackfill(options: {
           byKey.get(graph.roots[index])!
         ])
       )
+      log('finalizing', { eligible: finalTargets.length, unresolvedOrRejected: pending.length - finalTargets.length })
       const result = await finalizeBackfillTargets(pool, finalTargets, {
         dryRun: !write,
         isPlausible: storedTargetGuard(pool),
         onBatchSettled(batch) {
           settled += batch.results.length
+          log('finalized-batch', { settled, of: finalTargets.length })
           for (const result of batch.results) {
             const status = !write && result.status === 'inserted' ? 'would-insert' : result.status
             const root = rootsByTarget.get(priceKey(result.chain, result.token, result.eodTimestamp))!
@@ -164,6 +169,7 @@ export async function runGraphBackfill(options: {
       }
     }
     emit({ type: 'summary', ...summary })
+    log('summary', { ...summary })
     emit({ type: 'complete', finishedAt: new Date().toISOString() })
     return summary
   } catch (error) {
