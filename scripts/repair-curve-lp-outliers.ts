@@ -67,8 +67,8 @@ try {
     type: 'summary',
     mode: values.write ? 'write' : 'dry-run',
     targets: REJECTED_OBSERVATIONS.length,
-    quarantined,
-    ...tally
+    quarantinedRows: quarantined,
+    statuses: tally
   })
 } finally {
   await pool.end()
