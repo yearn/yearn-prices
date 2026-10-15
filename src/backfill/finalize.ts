@@ -1,3 +1,4 @@
+import { isRejectedPrice } from '../prices/rejections'
 import { isDefiLlamaSource, type PriceSource } from '../types'
 import { chunk } from '../utils/collections'
 import { pgTimestampToUnix, unixToIsoTimestamp } from '../utils/time'
@@ -317,25 +318,23 @@ export async function finalizeBackfillTargets(
   for (const unchecked of chunk(targets, batchSize)) {
     const { isPlausible } = options
     const rejected = new Set<string>()
-    const batch = isPlausible
-      ? await Promise.all(
-          unchecked.map(async (target) => {
-            const { resolution } = target
-            if (!resolution || !isDefiLlamaSource(resolution.source)) return target
-            let plausible = true
-            try {
-              plausible = await isPlausible({ ...target, resolution })
-            } catch (error) {
-              console.warn(
-                `finalize:plausibility-skipped ${target.chain}:${target.token} ${target.eodTimestamp} ${error instanceof Error ? error.message : String(error)}`
-              )
-            }
-            if (plausible) return target
-            rejected.add(priceKey(target.chain, target.token, target.eodTimestamp))
-            return { ...target, resolution: null }
-          })
-        )
-      : unchecked
+    const batch = await Promise.all(
+      unchecked.map(async (target) => {
+        const { resolution } = target
+        if (!resolution || !isDefiLlamaSource(resolution.source)) return target
+        let plausible = !isRejectedPrice(target.chain, target.token, target.eodTimestamp, resolution.source)
+        try {
+          if (plausible && isPlausible) plausible = await isPlausible({ ...target, resolution })
+        } catch (error) {
+          console.warn(
+            `finalize:plausibility-skipped ${target.chain}:${target.token} ${target.eodTimestamp} ${error instanceof Error ? error.message : String(error)}`
+          )
+        }
+        if (plausible) return target
+        rejected.add(priceKey(target.chain, target.token, target.eodTimestamp))
+        return { ...target, resolution: null }
+      })
+    )
     const remap = (batchResults: FinalizationTargetResult[]) =>
       batchResults.map((result) =>
         result.status === 'unresolved' && rejected.has(priceKey(result.chain, result.token, result.eodTimestamp))

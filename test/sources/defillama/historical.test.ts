@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { DefiLlamaClient } from '../../../src/clients/defillama'
 import { ApiError } from '../../../src/http/errors'
+import { REJECTED_OBSERVATIONS } from '../../../src/prices/rejections'
 import { createDefiLlamaHistoricalSource } from '../../../src/sources/defillama/historical'
 
 const ADDRESS = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
@@ -12,6 +13,18 @@ function client(response: unknown) {
 }
 
 describe('createDefiLlamaHistoricalSource', () => {
+  it('never offers the eight rejected yBUSD quotes as direct or dependency prices', async () => {
+    const getHistorical = vi.fn()
+    const getBatchHistorical = vi.fn()
+    const source = createDefiLlamaHistoricalSource({ getHistorical, getBatchHistorical } as unknown as DefiLlamaClient)
+    const targets = REJECTED_OBSERVATIONS.filter((target) => target.issue === 61)
+    for (const target of targets) {
+      await expect(source.getHistoricalPrice(target.chainId, target.token, target.timestamp)).resolves.toBeNull()
+    }
+    await expect(source.getBatchHistoricalPrices(targets)).resolves.toEqual([])
+    expect(getHistorical).not.toHaveBeenCalled()
+    expect(getBatchHistorical).not.toHaveBeenCalled()
+  })
   it('maps a valid historical response', async () => {
     const getHistorical = vi.fn(async () => ({
       coins: {

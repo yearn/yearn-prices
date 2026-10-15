@@ -1,4 +1,5 @@
 import type { Pool } from '@neondatabase/serverless'
+import { ACCEPTED_PRICE_SQL, isRejectedPrice } from '../prices/rejections'
 import type {
   DbPriceRow,
   ExactPriceRecord,
@@ -67,7 +68,7 @@ export async function getBatchHistoricalPrices(
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp = r.timestamp
-      WHERE tp.source = $${sourceIndex}
+      WHERE tp.source = $${sourceIndex} AND ${ACCEPTED_PRICE_SQL}
       ORDER BY tp.chain, tp.token, tp.timestamp
     `
   } else {
@@ -79,6 +80,7 @@ export async function getBatchHistoricalPrices(
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp = r.timestamp
+      WHERE ${ACCEPTED_PRICE_SQL}
       ORDER BY tp.chain, tp.token, tp.timestamp, ${buildSourceCaseExpression()}
     `
   }
@@ -125,7 +127,7 @@ export async function getRangeHistoricalPrices(
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp BETWEEN r.start_timestamp AND r.end_timestamp
-      WHERE tp.source = $${sourceIndex}
+      WHERE tp.source = $${sourceIndex} AND ${ACCEPTED_PRICE_SQL}
       ORDER BY tp.chain, tp.token, tp.timestamp
     `
   } else {
@@ -137,6 +139,7 @@ export async function getRangeHistoricalPrices(
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp BETWEEN r.start_timestamp AND r.end_timestamp
+      WHERE ${ACCEPTED_PRICE_SQL}
       ORDER BY tp.chain, tp.token, tp.timestamp, ${buildSourceCaseExpression()}
     `
   }
@@ -179,6 +182,7 @@ export async function insertTokenPrices(pool: Queryable, rows: TokenPriceWrite[]
 function dedupeTokenPriceWrites(rows: TokenPriceWrite[]): TokenPriceWrite[] {
   const keyedRows = new Map<string, TokenPriceWrite>()
   for (const row of rows) {
+    if (isRejectedPrice(row.chain, row.token, row.timestamp, row.source)) continue
     keyedRows.set(`${row.chain}:${row.token}:${row.timestamp}:${row.source}`, row)
   }
   return [...keyedRows.values()]

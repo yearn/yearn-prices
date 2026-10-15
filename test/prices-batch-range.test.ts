@@ -1,6 +1,6 @@
 import type { Pool } from '@neondatabase/serverless'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CACHE_CONTROL_IMMUTABLE, CACHE_CONTROL_PARTIAL, CACHE_CONTROL_TODAY } from '../src/cache'
+import { CACHE_CONTROL_HISTORICAL, CACHE_CONTROL_PARTIAL, CACHE_CONTROL_TODAY } from '../src/cache'
 import { handleBatchHistorical } from '../src/routes/historical/batch'
 import { handleRangeHistorical } from '../src/routes/historical/range'
 import type { Env } from '../src/types'
@@ -68,14 +68,14 @@ describe('handleBatchHistorical', () => {
     })
   })
 
-  it('marks a fully resolved past batch immutable', async () => {
+  it('requires revalidation for a fully resolved past batch', async () => {
     const response = await handleBatchHistorical(
       url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE] }),
       ENV,
       pool([row(DAY_ONE, '1')])
     )
 
-    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_HISTORICAL)
   })
 
   it('marks an incomplete past batch partial', async () => {
@@ -103,17 +103,17 @@ describe('handleBatchHistorical', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('counts duplicate-cased keys for the same token once and keeps the immutable header', async () => {
+  it('counts duplicate-cased keys for the same token once and keeps the historical policy', async () => {
     const response = await handleBatchHistorical(
       url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE], [CHECKSUM_KEY]: [DAY_ONE] }),
       ENV,
       pool([row(DAY_ONE, '1')])
     )
 
-    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_HISTORICAL)
   })
 
-  it('never marks a batch touching a future day immutable', async () => {
+  it('uses the mutable policy for a batch touching a future day', async () => {
     const future = TODAY + 86400
     const response = await handleBatchHistorical(
       url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE, future] }),
@@ -142,7 +142,7 @@ describe('handleBatchHistorical', () => {
       queryPool
     )
 
-    expect(queryPool.query.mock.calls[0][1]).toContain('enso')
+    expect(vi.mocked(queryPool.query).mock.calls[0][1]).toContain('enso')
   })
 
   it('returns an empty batch for a live-only source instead of failing', async () => {
@@ -187,7 +187,7 @@ describe('handleRangeHistorical', () => {
         }
       }
     })
-    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_HISTORICAL)
   })
 
   it('marks a range with a missing day partial', async () => {

@@ -1,4 +1,5 @@
 import { DEFI_LLAMA_SEARCH_WIDTH, DefiLlamaClient } from '../../clients/defillama'
+import { isRejectedPrice } from '../../prices/rejections'
 import { chainIdToName } from '../../utils/chains'
 import { HistoricalPriceSourceBase } from '../base'
 import type { HistoricalPriceResult } from '../types'
@@ -49,7 +50,7 @@ export class DefiLlamaAliasHistoricalSource extends HistoricalPriceSourceBase {
 
   async getHistoricalPrice(chainId: number, token: string, timestamp: number): Promise<HistoricalPriceResult | null> {
     const chain = chainIdToName(chainId)
-    if (!chain) {
+    if (!chain || isRejectedPrice(chain, token, timestamp, this.name)) {
       return null
     }
 

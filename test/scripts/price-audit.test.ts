@@ -1,37 +1,41 @@
 import { expect, it } from 'vitest'
 import type { NormalizedVault } from '../../scripts/lib/kong-vaults'
-import { auditCoverage, expectedTuples } from '../../scripts/lib/price-audit'
+import { auditCoverage, auditFailed, expectedTuples } from '../../scripts/lib/price-audit'
 
 const vault = (vaultToken: string, underlyingToken: string, chain = 'ethereum') =>
   ({ chain, chainId: 1, vaultToken, underlyingToken }) as NormalizedVault
 
-it('flags only tuples with no accepted source', () => {
-  const expected = expectedTuples([vault('0xv', '0xu'), vault('0xw', '0xu')], [10, 20])
-  expect(expected).toHaveLength(6)
-
+it('reports every missing derived day even when DefiLlama coverage is complete', () => {
+  const days = [10, 20, 30, 40, 50, 60, 70]
+  const expected = expectedTuples([vault('0xv', '0xu')], days)
   const report = auditCoverage(expected, {
-    defillama: new Set(['ethereum:0xu:10', 'ethereum:0xu:20']),
-    derived: new Set(['ethereum:0xv:10', 'ethereum:0xw:20']),
-    curve: new Set(['ethereum:0xw:10'])
+    defillama: new Set(days.flatMap((day) => [`ethereum:0xv:${day}`, `ethereum:0xu:${day}`]))
   })
-
-  expect(report.present).toBe(4)
-  expect(report.missing.map((tuple) => `${tuple.token}:${tuple.timestamp}`)).toEqual(['0xv:20', '0xw:10'])
-  expect(report.missingByChain).toEqual({ ethereum: 2 })
-  expect(report.missingByKind).toEqual({ underlying: 0, vault: 2 })
+  expect(report.expected).toBe(21)
+  expect(report.present).toBe(14)
+  expect(report.missing).toHaveLength(7)
+  expect(report.missing.every((tuple) => tuple.source === 'derived' && tuple.token === '0xv')).toBe(true)
+  expect(report.missingBySource).toEqual({ defillama: 0, derived: 7 })
+  expect(auditFailed(report, [])).toBe(true)
 })
 
-it('passes when a vault of a vault is only derived', () => {
-  const expected = expectedTuples([vault('0xv', '0xu'), vault('0xs', '0xv')], [10])
-  const report = auditCoverage(expected, {
-    defillama: new Set(['ethereum:0xu:10']),
-    derived: new Set(['ethereum:0xv:10', 'ethereum:0xs:10'])
+it('does not substitute another source for a required DefiLlama row', () => {
+  const report = auditCoverage(expectedTuples([vault('0xv', '0xu')], [10]), {
+    derived: new Set(['ethereum:0xv:10', 'ethereum:0xu:10']),
+    curve: new Set(['ethereum:0xu:10'])
+  })
+  expect(report.missingBySource).toEqual({ defillama: 2, derived: 0 })
+})
+
+it('deduplicates shared underlyings without dropping a nested vault source requirement', () => {
+  const tuples = expectedTuples([vault('0xv', '0xu'), vault('0xw', '0xu'), vault('0xs', '0xv')], [10])
+  expect(tuples).toHaveLength(7)
+  const report = auditCoverage(tuples, {
+    defillama: new Set(['ethereum:0xu:10', 'ethereum:0xv:10', 'ethereum:0xw:10', 'ethereum:0xs:10']),
+    derived: new Set(['ethereum:0xv:10', 'ethereum:0xw:10', 'ethereum:0xs:10'])
   })
   expect(report.missing).toEqual([])
-})
-
-it('accepts a derived row for an underlying', () => {
-  const expected = expectedTuples([vault('0xv', '0xu')], [10])
-  const report = auditCoverage(expected, { derived: new Set(['ethereum:0xu:10', 'ethereum:0xv:10']) })
-  expect(report.missingByKind).toEqual({ underlying: 0, vault: 0 })
+  expect(auditFailed(report, [])).toBe(false)
+  expect(auditFailed(report, [1])).toBe(true)
+  expect(auditFailed(report, [], true)).toBe(true)
 })

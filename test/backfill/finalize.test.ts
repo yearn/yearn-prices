@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { REJECTED_OBSERVATIONS } from '../../src/prices/rejections'
 import {
   type BackfillClient,
   type BackfillClientPool,
@@ -34,7 +35,7 @@ function fakePool(failOnLock: number): { pool: BackfillClientPool; clients: Fake
       const state: FakeClient = { statements: [], released: 0 }
       clients.push(state)
       const client: BackfillClient = {
-        query: async (sql: string) => {
+        query: (async (sql: string) => {
           state.statements.push(sql.trim().split('\n')[0].trim())
           if (sql.startsWith('LOCK TABLE') && lockFailures < failOnLock) {
             lockFailures += 1
@@ -44,7 +45,7 @@ function fakePool(failOnLock: number): { pool: BackfillClientPool; clients: Fake
             return { rows: [{ chain: 'ethereum', token: TARGET.token, timestamp: new Date(1_704_153_599_000) }] }
           }
           return { rows: [] }
-        },
+        }) as BackfillClient['query'],
         release: () => {
           state.released += 1
         }
@@ -57,6 +58,19 @@ function fakePool(failOnLock: number): { pool: BackfillClientPool; clients: Fake
 }
 
 describe('finalizeBackfillTargets client lifecycle', () => {
+  it('rejects a known invalid observation even without an optional RPC guard', async () => {
+    const { pool } = fakePool(0)
+    const rejected = REJECTED_OBSERVATIONS[0]
+    const target = {
+      ...TARGET,
+      token: rejected.token,
+      tokenLowercase: rejected.token,
+      eodTimestamp: rejected.timestamp
+    }
+    const result = await finalizeBackfillTargets(pool, [target], { dryRun: true })
+    expect(result.rejectedImplausible).toBe(1)
+    expect(result.inserted).toBe(0)
+  })
   it('uses one checked-out client per batch and commits without a trailing rollback', async () => {
     const { pool, clients } = fakePool(0)
 

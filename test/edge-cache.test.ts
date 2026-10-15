@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  CACHE_CONTROL_IMMUTABLE,
+  CACHE_CONTROL_HISTORICAL,
   CACHE_CONTROL_PARTIAL,
   CACHE_CONTROL_TODAY,
   cacheControlForBatch,
@@ -175,6 +175,31 @@ describe('readEdgeCache / writeEdgeCache', () => {
     await expect(readEdgeCache(new Request(spotUrl([TOKEN])))).resolves.toBeUndefined()
   })
 
+  it.each(['', 'defillama', 'derived'])(
+    'ignores pre-quarantine caches across historical routes (%s)',
+    async (source) => {
+      const { store } = stubEdgeCache()
+      const urls = [
+        `https://svc/api/prices/historical/${PAST}/${TOKEN}`,
+        batchUrl('batchHistorical', { [TOKEN]: [PAST] }),
+        batchUrl('rangeHistorical', { [TOKEN]: [PAST, PAST] })
+      ]
+      for (const raw of urls) {
+        const url = new URL(raw)
+        if (source) url.searchParams.set('source', source)
+        const current = new URL(canonicalCacheKey(url.toString()))
+        const legacy = new URL(current)
+        legacy.searchParams.delete('_price_cache_revision')
+        store.set(legacy.toString(), new Response('invalid historical quote'))
+        expect(current.toString()).not.toBe(legacy.toString())
+        await expect(readEdgeCache(new Request(url))).resolves.toBeUndefined()
+        // A client cannot opt back into an old cache revision.
+        url.searchParams.set('_price_cache_revision', 'old')
+        expect(canonicalCacheKey(url.toString())).toBe(current.toString())
+      }
+    }
+  )
+
   it('writes a clone so the original response body stays readable', async () => {
     const { store } = stubEdgeCache()
     const waitUntil = vi.fn()
@@ -217,20 +242,21 @@ describe('validation before the edge-cache read', () => {
 })
 
 describe('cache-control policies', () => {
-  it('marks a settled past day immutable and today short-lived', () => {
-    expect(cacheControlForHistorical(PAST)).toBe(CACHE_CONTROL_IMMUTABLE)
+  it('requires revalidation for settled days and keeps today short-lived', () => {
+    expect(cacheControlForHistorical(PAST)).toBe(CACHE_CONTROL_HISTORICAL)
+    expect(cacheControlForHistorical(PAST)).toBe('public, s-maxage=300, max-age=0, must-revalidate')
     expect(cacheControlForHistorical(TODAY)).toBe(CACHE_CONTROL_TODAY)
   })
 
   it('downgrades an incomplete batch to partial and lets today win', () => {
-    expect(cacheControlForBatch([PAST], true)).toBe(CACHE_CONTROL_IMMUTABLE)
+    expect(cacheControlForBatch([PAST], true)).toBe(CACHE_CONTROL_HISTORICAL)
     expect(cacheControlForBatch([PAST], false)).toBe(CACHE_CONTROL_PARTIAL)
     expect(cacheControlForBatch([PAST, TODAY], true)).toBe(CACHE_CONTROL_TODAY)
     expect(cacheControlForBatch([PAST, TODAY], false)).toBe(CACHE_CONTROL_TODAY)
   })
 
   it('applies the same rules to ranges', () => {
-    expect(cacheControlForRange([PAST], true)).toBe(CACHE_CONTROL_IMMUTABLE)
+    expect(cacheControlForRange([PAST], true)).toBe(CACHE_CONTROL_HISTORICAL)
     expect(cacheControlForRange([PAST], false)).toBe(CACHE_CONTROL_PARTIAL)
     expect(cacheControlForRange([TODAY], true)).toBe(CACHE_CONTROL_TODAY)
   })

@@ -1,6 +1,6 @@
 import type { Pool } from '@neondatabase/serverless'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CACHE_CONTROL_IMMUTABLE, CACHE_CONTROL_TODAY } from '../src/cache'
+import { CACHE_CONTROL_HISTORICAL, CACHE_CONTROL_TODAY } from '../src/cache'
 import worker from '../src/index'
 import { handleHistorical } from '../src/routes/historical/exact'
 import type { Env } from '../src/types'
@@ -38,7 +38,7 @@ describe('handleHistorical', () => {
     vi.restoreAllMocks()
   })
 
-  it('marks a closed-day hit immutable and a today hit short-lived', async () => {
+  it('requires revalidation for closed-day hits and keeps today short-lived', async () => {
     const today = normalizeToEndOfDay(Math.floor(Date.now() / 1000))
     const hit = (timestamp: number) =>
       handleHistorical(
@@ -59,7 +59,7 @@ describe('handleHistorical', () => {
         TOKEN_KEY
       )
 
-    expect((await hit(TIMESTAMP)).headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+    expect((await hit(TIMESTAMP)).headers.get('cache-control')).toBe(CACHE_CONTROL_HISTORICAL)
     expect((await hit(today)).headers.get('cache-control')).toBe(CACHE_CONTROL_TODAY)
   })
 
