@@ -6,6 +6,7 @@ import {
   type FinalizationTarget,
   finalizeBackfillTargets
 } from '../../src/backfill/finalize'
+import { REJECTED_OBSERVATIONS } from '../../src/prices/rejections'
 
 const TARGET: FinalizationTarget = {
   chainId: 1,
@@ -34,7 +35,7 @@ function fakePool(failOnLock: number): { pool: BackfillClientPool; clients: Fake
       const state: FakeClient = { statements: [], released: 0 }
       clients.push(state)
       const client: BackfillClient = {
-        query: async (sql: string) => {
+        query: (async (sql: string) => {
           state.statements.push(sql.trim().split('\n')[0].trim())
           if (sql.startsWith('LOCK TABLE') && lockFailures < failOnLock) {
             lockFailures += 1
@@ -44,7 +45,7 @@ function fakePool(failOnLock: number): { pool: BackfillClientPool; clients: Fake
             return { rows: [{ chain: 'ethereum', token: TARGET.token, timestamp: new Date(1_704_153_599_000) }] }
           }
           return { rows: [] }
-        },
+        }) as BackfillClient['query'],
         release: () => {
           state.released += 1
         }
@@ -57,6 +58,19 @@ function fakePool(failOnLock: number): { pool: BackfillClientPool; clients: Fake
 }
 
 describe('finalizeBackfillTargets client lifecycle', () => {
+  it('rejects a known invalid observation even without an optional RPC guard', async () => {
+    const { pool } = fakePool(0)
+    const rejected = REJECTED_OBSERVATIONS[0]
+    const target = {
+      ...TARGET,
+      token: rejected.token,
+      tokenLowercase: rejected.token,
+      eodTimestamp: rejected.timestamp
+    }
+    const result = await finalizeBackfillTargets(pool, [target], { dryRun: true })
+    expect(result.rejectedImplausible).toBe(1)
+    expect(result.inserted).toBe(0)
+  })
   it('uses one checked-out client per batch and commits without a trailing rollback', async () => {
     const { pool, clients } = fakePool(0)
 
@@ -140,5 +154,25 @@ describe('finalizeBackfillTargets client lifecycle', () => {
     expect(clients[0].statements).not.toContain('BEGIN')
     expect(clients[0].statements.some((statement) => statement.startsWith('LOCK TABLE'))).toBe(false)
     expect(clients[0].released).toBe(1)
+  })
+
+  it('marks a defillama resolution rejected_implausible when it is implausible', async () => {
+    const { pool } = fakePool(0)
+
+    const outcome = await finalizeBackfillTargets(pool, [TARGET], { dryRun: true, isPlausible: async () => false })
+
+    expect(outcome.inserted).toBe(0)
+    expect(outcome.unresolved).toBe(0)
+    expect(outcome.rejectedImplausible).toBe(1)
+    expect(outcome.results[0].status).toBe('rejected_implausible')
+  })
+
+  it('does not judge resolutions from other sources', async () => {
+    const { pool } = fakePool(0)
+    const derived = { ...TARGET, resolution: { ...TARGET.resolution!, source: 'derived' as const } }
+
+    const outcome = await finalizeBackfillTargets(pool, [derived], { dryRun: true, isPlausible: async () => false })
+
+    expect(outcome.inserted).toBe(1)
   })
 })

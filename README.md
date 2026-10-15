@@ -43,6 +43,8 @@ bun run dev
 | `bun run migrate:create` | Scaffold a new SQL migration file |
 | `bun run migrate:down` | Roll back the last migration |
 | `bun run warmup` | Pre-populate today's prices for known vaults/tokens |
+| `bun run audit:prices` | Read-only: report Kong vault/underlying `(chain, token, day, source)` gaps in `token_prices` for the last 7 days; exits 1 on any gap or chain without `RPC_URL_<id>` |
+| `bun run audit:prices:backfill` | Audit, run warmup if gaps exist, re-audit |
 | `bun run backfill:token-address-checksums` | One-off backfill of checksummed token addresses |
 | `bun run backfill:defillama-day-alignment` | One-off repair of DeFiLlama prices stored against the wrong day |
 | `bun run replay:historical-adapters --manifest <file> --out <new.jsonl>` | Read-only historical adapter coverage experiment |
@@ -150,7 +152,7 @@ Also update Doppler so the next deploy does not revert it. There is no Actions U
 
 ## Deployment
 
-Pushing to `main` runs `.github/workflows/deploy.yml`: migrate, then the SHA-pinned `yearn/yearn-gha` Cloudflare deploy (needs migrate). Warmup starts after migrate and does not block deploy. It has no manual trigger: the reusable deploy rejects anything but a push to `main`. `.github/workflows/warmup.yml` runs the warmup script hourly and on dispatch. `.github/workflows/pr.yml` runs typecheck and tests on every PR.
+Pushing to `main` runs `.github/workflows/deploy.yml`: migrate, then the SHA-pinned `yearn/yearn-gha` Cloudflare deploy (needs migrate). Warmup starts after migrate and does not block deploy. It has no manual trigger: the reusable deploy rejects anything but a push to `main`. `.github/workflows/warmup.yml` runs the warmup script hourly and on dispatch. `.github/workflows/weekly-audit.yml` runs `audit:prices:backfill` Mondays 06:30 UTC and on dispatch (Doppler `yearn-price` / `warmup`). The audit requires `defillama` for every vault and underlying and a separate `derived` row for each vault, deduplicated by chain/token/day/source. Other sources do not satisfy those requirements. Unsupported provider targets and vaults younger than the window remain visible source gaps; they are not silently waived. JSON includes the complete `missing` tuple list and counts by chain and source. Missing `RPC_URL_<id>` configuration fails the audit and skips warmup until configured. The job then pings `$UPTIME_URL` on success or `$UPTIME_URL/fail` on failure (healthchecks.io scheme); add `UPTIME_URL` to that Doppler config. If unset the heartbeat is skipped with a warning. `.github/workflows/pr.yml` runs typecheck and tests on every PR.
 
 ## Testing
 
@@ -160,3 +162,11 @@ bun run test
 ```
 
 See [the graph backfill runbook](docs/historical-pricing/backfill-runbook.md) and [unresolved inventory guide](docs/historical-pricing/README.md).
+
+## Historical price incident repair
+
+The [Curve LP repair runbook](docs/historical-pricing/curve-lp-repair.md) covers the
+provider rejection manifest, database quarantine, dated replacements, cache
+revision and required consumer refresh for issues #61 and #62. Run migrations
+before the updated worker or jobs. Historical closed-day responses now require
+browser revalidation and have a five-minute edge TTL so corrections can propagate.

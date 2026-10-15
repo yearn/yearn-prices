@@ -20,6 +20,8 @@
     "db:down": "docker compose down",
     "db:migrate": "DATABASE_URL=postgres://postgres:postgres@127.0.0.1:54329/price_service PGSSLMODE=disable db-migrate up --config ./database.json --env dev",
     "warmup": "bun run scripts/warmup-prices.ts",
+    "audit:prices": "bun run scripts/audit-prices.ts",
+    "audit:prices:backfill": "bun run scripts/audit-prices.ts --backfill",
     "backfill:token-address-checksums": "bun run scripts/backfill-token-address-checksums.ts",
     "backfill:historical-gaps": "bun run scripts/backfill-historical-gaps.ts",
     "replay:historical-gaps": "bun run scripts/replay-historical-gaps.ts",

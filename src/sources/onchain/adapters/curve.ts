@@ -430,6 +430,33 @@ async function resolvePool(
   return poolFromRegistry(state.client, state.address, state.blockNumber, forEachRegistry)
 }
 
+export async function resolveCurvePoolCoins(
+  target: RecursivePriceTarget,
+  options: OnchainAdapterOptions
+): Promise<{ pool: Address; coins: string[] } | null> {
+  const state = await contractContext(target, options)
+  const forEachRegistry = registryWalk(state.client, state.blockNumber)
+  const pool = await resolvePool(target, state, forEachRegistry)
+  if (!pool) {
+    return null
+  }
+  const coinCount = await readCoinCount(state.client, pool as Address, state.blockNumber, forEachRegistry)
+  if (!coinCount) {
+    return null
+  }
+  const coins = await Promise.all(
+    Array.from({ length: coinCount.count }, async (_, index) => {
+      const coin = await readCoinAddress(state.client, pool as Address, index, state.blockNumber)
+      if (coin && coinCount.coins && coin.address.toLowerCase() !== coinCount.coins[index]?.toLowerCase()) return null
+      return coin?.address.toLowerCase() === CURVE_NATIVE_TOKEN ? WRAPPED_NATIVE[state.chainId] : coin?.address
+    })
+  )
+  if (coins.some((coin) => !coin)) {
+    return null
+  }
+  return { pool: pool as Address, coins: coins as string[] }
+}
+
 export function curveAdapter(options: OnchainAdapterOptions): PlannedPriceAdapter {
   const discover = async (target: RecursivePriceTarget) => {
     const state = await contractContext(target, options)

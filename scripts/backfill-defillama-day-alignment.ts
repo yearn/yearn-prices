@@ -38,6 +38,8 @@ import {
   runInGroups,
   unixToIsoTimestamp
 } from '../src/utils'
+import { plausibleWrites, storedCurveLpGuard } from './lib/curve-lp-guard'
+import { KONG_URL } from './lib/kong-vaults'
 
 const databaseUrl = process.env.DATABASE_URL
 if (!databaseUrl) {
@@ -45,6 +47,7 @@ if (!databaseUrl) {
 }
 
 const pool = createPool(databaseUrl)
+const curveLpGuard = storedCurveLpGuard(pool)
 
 const cliArgs = process.argv
   .slice(2)
@@ -76,7 +79,7 @@ interface MissingDay {
   token: string
   timestamp: number
   day: string
-  kind: 'gap' | 'not-found' | 'stale-row'
+  kind: 'gap' | 'not-found' | 'stale-row' | 'implausible'
 }
 
 interface FailedToken {
@@ -109,7 +112,6 @@ const TOKEN_CONCURRENCY =
 console.log(`starting phase=${phase} concurrency=${TOKEN_CONCURRENCY} retry=${RETRY_PATH || 'none'} out=${REPORT_PATH}`)
 
 const defiLlama = new DefiLlamaClient()
-const KONG_URL = 'https://kong.yearn.fi/api/rest/list/vaults?origin=yearn'
 
 interface TokenRow {
   chain: string
@@ -244,6 +246,7 @@ async function repairPrices(): Promise<void> {
   let processed = 0
   let updated = 0
   let gaps = 0
+  let implausible = 0
   let notFound = 0
   const failedTokens: string[] = []
 
@@ -290,12 +293,18 @@ async function repairPrices(): Promise<void> {
         }
 
         const built = buildDefiLlamaWrites(chain, token, fetchTimestamps, coin)
-        const writes = built.writes
+        const { writes, rejected } = await plausibleWrites(built.writes, curveLpGuard)
         const batchMissing: MissingDay[] = []
         for (const fetchTimestamp of built.missing) {
           gaps += 1
           const stale = storedPrices.has(normalizeToEndOfDay(fetchTimestamp))
           const missing = describeMissing(chain, token, fetchTimestamp, stale ? 'stale-row' : 'gap')
+          batchMissing.push(missing)
+          console.warn(`${missing.kind} ${coinKey} ${missing.day}`)
+        }
+        for (const rejectedWrite of rejected) {
+          implausible += 1
+          const missing = describeMissing(chain, token, rejectedWrite.timestamp, 'implausible')
           batchMissing.push(missing)
           console.warn(`${missing.kind} ${coinKey} ${missing.day}`)
         }
@@ -328,13 +337,13 @@ async function repairPrices(): Promise<void> {
     if (processed % 25 === 0) {
       await writeReport(true)
       console.log(
-        `progress tokens=${processed}/${tokens.length} rows=${updated} gaps=${gaps} notFound=${notFound} failed=${failedTokens.length}`
+        `progress tokens=${processed}/${tokens.length} rows=${updated} gaps=${gaps} implausible=${implausible} notFound=${notFound} failed=${failedTokens.length}`
       )
     }
   })
 
   console.log(
-    `prices done tokens=${processed} rows=${updated} gaps=${gaps} notFound=${notFound} failed=${failedTokens.length}`
+    `prices done tokens=${processed} rows=${updated} gaps=${gaps} implausible=${implausible} notFound=${notFound} failed=${failedTokens.length}`
   )
   if (failedTokens.length > 0) {
     console.log(`retry: bun run scripts/backfill-defillama-day-alignment.ts prices --retry=${REPORT_PATH}`)
@@ -362,7 +371,7 @@ async function selectTokens(): Promise<TokenRow[]> {
 
   if (RETRY_PATH === 'db') {
     const { rows } = await pool.query<TokenRow>(`
-      SELECT DISTINCT chain, token FROM backfill_missing ORDER BY 1, 2
+      SELECT DISTINCT chain, token FROM backfill_missing WHERE kind <> 'implausible' ORDER BY 1, 2
     `)
     if (rows.length > 0) {
       await pool.query('DELETE FROM backfill_progress WHERE token_key = ANY($1::text[])', [
@@ -388,6 +397,7 @@ async function selectTokens(): Promise<TokenRow[]> {
   }
   const keyed = new Map<string, TokenRow>()
   for (const entry of [...(previous.failed ?? []), ...(previous.missing ?? [])]) {
+    if ('kind' in entry && entry.kind === 'implausible') continue
     keyed.set(`${entry.chain}:${entry.token}`, { chain: entry.chain, token: entry.token })
   }
 

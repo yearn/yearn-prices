@@ -1,4 +1,5 @@
 import { DefiLlamaClient } from '../../clients/defillama'
+import { isRejectedPrice } from '../../prices/rejections'
 import { chainIdToName } from '../../utils/chains'
 import { nowUnix, toFetchTimestamp } from '../../utils/time'
 import { HistoricalPriceSourceBase } from '../base'
@@ -26,7 +27,7 @@ export class DefiLlamaHistoricalSource extends HistoricalPriceSourceBase {
       return null
     }
     const chain = chainIdToName(chainId)
-    if (!chain) {
+    if (!chain || isRejectedPrice(chain, token, timestamp, this.name)) {
       return null
     }
 
@@ -49,6 +50,10 @@ export class DefiLlamaHistoricalSource extends HistoricalPriceSourceBase {
       if (DEFILLAMA_UNSUPPORTED_CHAINS.has(target.chainId)) continue
       const chain = chainIdToName(target.chainId)
       if (!chain) continue
+      if (isRejectedPrice(chain, target.token, target.timestamp, this.name)) {
+        onSettled?.([target])
+        continue
+      }
       const coinKey = `${chain}:${target.token.toLowerCase()}`
       grouped[coinKey] ??= []
       grouped[coinKey].push(target.timestamp)

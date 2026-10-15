@@ -1,5 +1,6 @@
 import { ApiError } from '../../http/errors'
-import { normalizeTokenAddress } from '../../utils/chains'
+import { isRejectedPrice } from '../../prices/rejections'
+import { chainIdToName, normalizeTokenAddress } from '../../utils/chains'
 import {
   InvalidPricingError,
   isRetryablePricingError,
@@ -102,6 +103,12 @@ function toInputEvidence(input: RecursivePriceInput): PriceInputEvidence {
 }
 
 export function validatePath(path: ResolvedPricePath, target: RecursivePriceTarget): ResolvedPricePath {
+  if (
+    target.timestamp != null &&
+    isRejectedPrice(chainIdToName(target.chainId) ?? '', target.token, target.timestamp, path.source)
+  ) {
+    throw new InvalidPricingError('Quarantined provider observation cannot be a pricing dependency')
+  }
   if (path.chainId !== target.chainId || path.token.toLowerCase() !== target.token.toLowerCase()) {
     throw new InvalidPricingError('Resolved path does not match its requested chain and token')
   }

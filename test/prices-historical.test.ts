@@ -1,6 +1,6 @@
 import type { Pool } from '@neondatabase/serverless'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { CACHE_CONTROL_IMMUTABLE, CACHE_CONTROL_TODAY } from '../src/cache'
+import { CACHE_CONTROL_HISTORICAL, CACHE_CONTROL_TODAY } from '../src/cache'
 import worker from '../src/index'
 import { handleHistorical } from '../src/routes/historical/exact'
 import type { Env } from '../src/types'
@@ -38,7 +38,7 @@ describe('handleHistorical', () => {
     vi.restoreAllMocks()
   })
 
-  it('marks a closed-day hit immutable and a today hit short-lived', async () => {
+  it('requires revalidation for closed-day hits and keeps today short-lived', async () => {
     const today = normalizeToEndOfDay(Math.floor(Date.now() / 1000))
     const hit = (timestamp: number) =>
       handleHistorical(
@@ -59,7 +59,7 @@ describe('handleHistorical', () => {
         TOKEN_KEY
       )
 
-    expect((await hit(TIMESTAMP)).headers.get('cache-control')).toBe(CACHE_CONTROL_IMMUTABLE)
+    expect((await hit(TIMESTAMP)).headers.get('cache-control')).toBe(CACHE_CONTROL_HISTORICAL)
     expect((await hit(today)).headers.get('cache-control')).toBe(CACHE_CONTROL_TODAY)
   })
 
@@ -129,5 +129,65 @@ describe('handleHistorical', () => {
     expect(response.status).toBe(404)
     expect(response.headers.get('cache-control')).toBe('public, s-maxage=300, max-age=300')
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  describe('hyperliquid', () => {
+    const HYPE_USDC = '0xb88339cb7199b77e23db6e890353e22632ba630f'
+    const HYPE_KEY = `hyperliquid:${HYPE_USDC}`
+    const workerFetch = (key: string) => {
+      vi.stubGlobal('caches', { default: { match: async () => undefined, put: async () => {} } })
+      return worker.fetch(
+        new Request(`https://svc/api/prices/historical/${TIMESTAMP}/${key}`, {
+          headers: { authorization: 'Bearer k' }
+        }),
+        { ...ENV, API_KEY_TEST: 'k' } as unknown as Env,
+        { waitUntil: vi.fn() } as unknown as ExecutionContext
+      )
+    }
+
+    it('returns the stored quote with its provenance', async () => {
+      const response = await handleHistorical(
+        request(),
+        ENV,
+        pool([
+          {
+            chain: 'hyperliquid',
+            token: HYPE_USDC,
+            timestamp: new Date(TIMESTAMP * 1000),
+            price: '0.9998',
+            symbol: 'USDC',
+            confidence: '0.99',
+            source: 'defillama'
+          }
+        ]),
+        String(TIMESTAMP),
+        HYPE_KEY
+      )
+
+      await expect(response.json()).resolves.toEqual({
+        coins: {
+          [HYPE_KEY]: { price: 0.9998, symbol: 'USDC', timestamp: TIMESTAMP, confidence: 0.99, source: 'defillama' }
+        }
+      })
+    })
+
+    it('returns NOT_FOUND instead of an invented price when nothing is stored', async () => {
+      await expect(handleHistorical(request(), ENV, pool([]), String(TIMESTAMP), HYPE_KEY)).rejects.toMatchObject({
+        code: 'NOT_FOUND'
+      })
+    })
+
+    it.each(['hyperevm', 'fakechain'])('maps unsupported namespace %s to a 400', async (chain) => {
+      const response = await workerFetch(`${chain}:${HYPE_USDC}`)
+
+      expect(response.status).toBe(400)
+      await expect(response.json()).resolves.toEqual({
+        error: { code: 'INVALID_INPUT', message: `Unsupported chain: ${chain}` }
+      })
+    })
+
+    it('maps a malformed token address to a 400', async () => {
+      expect((await workerFetch('ethereum:0xnothex')).status).toBe(400)
+    })
   })
 })

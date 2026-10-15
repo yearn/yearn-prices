@@ -1,4 +1,5 @@
-import type { PriceSource } from '../types'
+import { isRejectedPrice } from '../prices/rejections'
+import { isDefiLlamaSource, type PriceSource } from '../types'
 import { chunk } from '../utils/collections'
 import { pgTimestampToUnix, unixToIsoTimestamp } from '../utils/time'
 import { EXACT_READ_CHUNK_SIZE, FINALIZATION_BATCH_SIZE, FINALIZATION_LOCK_RETRY_LIMIT } from './constants'
@@ -40,7 +41,7 @@ export interface FinalizationTarget {
   resolution: FinalizationResolution | null
 }
 
-export type FinalizationStatus = 'inserted' | 'skipped_concurrent_existing' | 'unresolved'
+export type FinalizationStatus = 'inserted' | 'skipped_concurrent_existing' | 'unresolved' | 'rejected_implausible'
 
 export interface FinalizationTargetResult {
   chainId: number
@@ -58,6 +59,7 @@ export interface FinalizationOptions {
   lockTimeout?: string
   statementTimeout?: string
   readChunkSize?: number
+  isPlausible?: (target: FinalizationTarget & { resolution: FinalizationResolution }) => Promise<boolean>
   onBatchStart?: (batchSize: number) => void
   onBatchSettled?: (settled: FinalizationBatchSettled) => void | Promise<void>
 }
@@ -67,6 +69,7 @@ export interface FinalizationOutcome {
   inserted: number
   skippedConcurrentExisting: number
   unresolved: number
+  rejectedImplausible: number
   lockRetries: number
   lockWaitMs: number
   lockHoldMs: number
@@ -232,7 +235,9 @@ async function applyBatch(
 async function finalizeBatch(
   pool: BackfillClientPool,
   batch: FinalizationTarget[],
-  options: Required<Omit<FinalizationOptions, 'dryRun' | 'batchSize' | 'onBatchStart' | 'onBatchSettled'>>
+  options: Required<
+    Omit<FinalizationOptions, 'dryRun' | 'batchSize' | 'isPlausible' | 'onBatchStart' | 'onBatchSettled'>
+  >
 ): Promise<{ results: FinalizationTargetResult[]; lockRetries: number; lockWaitMs: number; lockHoldMs: number }> {
   const lockTimeout = timeoutLiteral(options.lockTimeout)
   const statementTimeout = timeoutLiteral(options.statementTimeout)
@@ -310,16 +315,42 @@ export async function finalizeBackfillTargets(
   let lockWaitMs = 0
   let lockHoldMs = 0
 
-  for (const batch of chunk(targets, batchSize)) {
+  for (const unchecked of chunk(targets, batchSize)) {
+    const { isPlausible } = options
+    const rejected = new Set<string>()
+    const batch = await Promise.all(
+      unchecked.map(async (target) => {
+        const { resolution } = target
+        if (!resolution || !isDefiLlamaSource(resolution.source)) return target
+        let plausible = !isRejectedPrice(target.chain, target.token, target.eodTimestamp, resolution.source)
+        try {
+          if (plausible && isPlausible) plausible = await isPlausible({ ...target, resolution })
+        } catch (error) {
+          console.warn(
+            `finalize:plausibility-skipped ${target.chain}:${target.token} ${target.eodTimestamp} ${error instanceof Error ? error.message : String(error)}`
+          )
+        }
+        if (plausible) return target
+        rejected.add(priceKey(target.chain, target.token, target.eodTimestamp))
+        return { ...target, resolution: null }
+      })
+    )
+    const remap = (batchResults: FinalizationTargetResult[]) =>
+      batchResults.map((result) =>
+        result.status === 'unresolved' && rejected.has(priceKey(result.chain, result.token, result.eodTimestamp))
+          ? { ...result, status: 'rejected_implausible' as const }
+          : result
+      )
     options.onBatchStart?.(batch.length)
     if (options.dryRun) {
-      const dryResults = await finalizeDryRun(pool, batch, transactionOptions.readChunkSize)
+      const dryResults = remap(await finalizeDryRun(pool, batch, transactionOptions.readChunkSize))
       results.push(...dryResults)
       await options.onBatchSettled?.({ batch, results: dryResults, lockRetries: 0, lockWaitMs: 0, lockHoldMs: 0 })
       continue
     }
 
-    const outcome = await finalizeBatch(pool, batch, transactionOptions)
+    const settled = await finalizeBatch(pool, batch, transactionOptions)
+    const outcome = { ...settled, results: remap(settled.results) }
     results.push(...outcome.results)
     lockRetries += outcome.lockRetries
     lockWaitMs += outcome.lockWaitMs
@@ -338,6 +369,7 @@ export async function finalizeBackfillTargets(
     inserted: results.filter((result) => result.status === 'inserted').length,
     skippedConcurrentExisting: results.filter((result) => result.status === 'skipped_concurrent_existing').length,
     unresolved: results.filter((result) => result.status === 'unresolved').length,
+    rejectedImplausible: results.filter((result) => result.status === 'rejected_implausible').length,
     lockRetries,
     lockWaitMs,
     lockHoldMs

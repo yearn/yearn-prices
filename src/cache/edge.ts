@@ -1,6 +1,10 @@
 import { captureError } from '../observability'
 import type { Env } from '../types'
 
+// Deploying this revision makes all pre-quarantine historical cache entries
+// unreachable, including arbitrary batch/range combinations and source filters.
+export const HISTORICAL_CACHE_REVISION = '2026-10-quarantine-v1'
+
 // Cloudflare edge caching via the Cache API.
 //
 // A worker-generated Response with a Cache-Control header only drives the
@@ -18,6 +22,13 @@ function edgeCache(): Cache {
 // into separate cache entries. Canonicalize the URL before match/put so they collide.
 export function canonicalCacheKey(rawUrl: string): string {
   const url = new URL(rawUrl)
+  if (
+    url.pathname.startsWith('/api/prices/historical/') ||
+    url.pathname === '/api/prices/batchHistorical' ||
+    url.pathname === '/api/prices/rangeHistorical'
+  ) {
+    url.searchParams.set('_price_cache_revision', HISTORICAL_CACHE_REVISION)
+  }
   const coins = url.searchParams.get('coins')
   if (coins !== null) {
     url.searchParams.set('coins', canonicalizeCoins(coins, url.pathname))

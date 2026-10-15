@@ -11,6 +11,8 @@ export const SOURCE_PRIORITY = [
 
 export type PriceSource = (typeof SOURCE_PRIORITY)[number]
 
+export const isDefiLlamaSource = (source: string) => source.startsWith('defillama')
+
 export interface Env {
   DATABASE_URL: string
   ENSO_API_KEY?: string

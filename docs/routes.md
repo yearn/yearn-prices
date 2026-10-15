@@ -40,6 +40,7 @@ Supported chain names:
 - `arbitrum`
 - `berachain`
 - `katana`
+- `hyperliquid`
 
 Token addresses must be EVM `0x` addresses with 40 hex characters. Chain names and token addresses are normalized to lowercase.
 
@@ -385,9 +386,9 @@ Common error cases:
 
 Price responses set cache headers based on the requested timestamps and whether every requested value was found.
 
-- Historical non-today exact price: `public, max-age=31536000, immutable`
+- Historical non-today exact price: `public, s-maxage=300, max-age=0, must-revalidate`
 - Requests involving today's UTC day, or a batch pair whose day has not closed yet: `public, s-maxage=300, max-age=3600, stale-while-revalidate=14400`
-- Fully resolved batch or range for past days: `public, max-age=31536000, immutable`
+- Fully resolved batch or range for past days: `public, s-maxage=300, max-age=0, must-revalidate`
 - Partially resolved batch or range for past days: `public, s-maxage=300, max-age=300`
 - Historical not found responses: `public, s-maxage=300, max-age=300`
 - Spot: `public, s-maxage=120, stale-while-revalidate=600`
@@ -396,8 +397,14 @@ A historical `404`, or a pair omitted from a partial batch or range, means the r
 
 ## Edge caching
 
-Worker-generated responses do not populate Cloudflare's edge cache from a `Cache-Control` header alone — that header only drives the client/browser cache. Successful `GET` responses for all price routes are therefore stored in the edge cache (`caches.default`) explicitly and served from it on subsequent requests, using the TTLs above. A request is served from the edge before any Enso fetch or database query runs.
+Worker-generated responses do not populate Cloudflare's edge cache from a `Cache-Control` header alone — that header only drives the client/browser cache. Successful `GET` responses for all price routes are therefore stored in the edge cache (`caches.default`) explicitly and served from it on subsequent requests, using the TTLs above. A request is served from the edge before any Enso fetch or database query runs. Historical cache keys include a worker-controlled incident revision; deploying a new revision bypasses older entries for exact, batch and range requests, including source filters.
 
 Spot has no upstream cache policy (Enso sends only a weak `etag`), so its `s-maxage=120` is a chosen shared-cache TTL — short enough to keep prices fresh, long enough to absorb bursts — mirroring the Enso proxy already shipping in yearn.fi.
 
 The store/TTL decision is delegated to the Cache API: `caches.default.put()` reads the response's `Cache-Control`, refusing `no-store`/`private` and deriving the edge TTL from `s-maxage` (falling back to `max-age`, then `Expires`). Only successful responses are offered to `put()` — errors return straight from the worker's catch block and are never edge-stored (generic errors additionally carry `no-store` for downstream caches; historical not-found is the deliberate exception, returning a short-lived cacheable negative result). Today's data sets `s-maxage=300` so the shared edge refreshes every ~5min, tracking the hourly warmup far more closely than the 1h browser `max-age`. The cache key is the request URL canonicalized first (sorted query params, and `coins` re-serialized with sorted keys and lowercased addresses) so requests that differ only in JSON ordering, whitespace, or address casing share one entry. Positional arrays — a range's `[start, end]` and a batch token's timestamp list — are never reordered, so two requests that differ in those never collide.
+
+Known invalid provider observations are quarantined before source selection.
+See the [Curve LP repair runbook](historical-pricing/curve-lp-repair.md) for the
+incident targets and the public `revision=2026-10-quarantine-v1` query parameter
+consumers must use to bypass previously delivered immutable responses. The new
+cache policy cannot retroactively evict a browser response that is never re-requested.

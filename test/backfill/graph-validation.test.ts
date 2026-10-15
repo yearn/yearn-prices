@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { validateGraphResolution } from '../../src/backfill/graph-validation'
 import { parseManifest } from '../../src/backfill/manifest'
+import { REJECTED_OBSERVATIONS } from '../../src/prices/rejections'
 import type { GraphNode } from '../../src/sources/onchain/graph'
 
 const timestamp = 1704067199
@@ -52,6 +53,27 @@ function fixture() {
   }
 }
 describe('graph finalization evidence', () => {
+  it('rejects a derived root whose selected child is a quarantined provider quote', () => {
+    const { root, child, nodes } = fixture()
+    const rejected = REJECTED_OBSERVATIONS[0]
+    for (const node of [root, child]) {
+      node.target.timestamp = rejected.timestamp
+      node.path!.requestedTimestamp = rejected.timestamp
+      node.path!.observedTimestamp = rejected.timestamp
+    }
+    child.target.token = rejected.token
+    child.path!.token = rejected.token
+    child.path!.priceUsd = 72_061_183.43742615
+    root.path!.inputs[0] = { ...child.path! }
+    root.path!.metadata.block = {
+      number: 100,
+      timestamp: rejected.timestamp - 5,
+      requestedTimestamp: rejected.timestamp
+    }
+    expect(() => validateGraphResolution(root, { ...target, eodTimestamp: rejected.timestamp }, nodes)).toThrow(
+      'quarantined provider observation'
+    )
+  })
   it.each([-21600, 21600])('accepts the 6-hour boundary %s', (offset) => {
     const { root, child, nodes } = fixture()
     child.path!.observedTimestamp += offset

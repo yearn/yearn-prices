@@ -18,6 +18,7 @@ import {
 } from '../src/sources'
 import type { GraphNode } from '../src/sources/onchain/graph'
 import { preflightTokenCasings } from './backfill-historical-gaps'
+import { storedTargetGuard } from './lib/curve-lp-guard'
 import { replayGraph } from './lib/graph-replay'
 import { offlineProvider } from './lib/offline-provider'
 import { storedHistoricalPrices } from './lib/stored-historical-prices'
@@ -126,12 +127,20 @@ try {
     )
     const result = await finalizeBackfillTargets(pool, finalTargets, {
       dryRun: !values.write,
+      isPlausible: storedTargetGuard(pool),
       onBatchSettled(batch) {
         settled += batch.results.length
         for (const result of batch.results) {
           const status = !values.write && result.status === 'inserted' ? 'would-insert' : result.status
           const root = rootsByTarget.get(priceKey(result.chain, result.token, result.eodTimestamp))!
-          emit(targetOutcome(result, status, result.status === 'inserted' ? root.path : null))
+          emit(
+            targetOutcome(
+              result,
+              status,
+              result.status === 'inserted' ? root.path : null,
+              result.status === 'rejected_implausible' ? 'implausible-lp-quote' : null
+            )
+          )
         }
         emit({
           type: 'finalized-batch',
@@ -148,11 +157,19 @@ try {
       inserted: values.write ? result.inserted : 0,
       wouldInsert: values.write ? 0 : result.inserted,
       skippedConcurrentExisting: result.skippedConcurrentExisting,
-      unresolved: pending.length - finalTargets.length + result.unresolved
+      unresolved: pending.length - finalTargets.length + result.unresolved,
+      rejectedImplausible: result.rejectedImplausible
     })
   }
   if (!pending.length)
-    emit({ type: 'summary', inserted: 0, wouldInsert: 0, skippedConcurrentExisting: 0, unresolved: 0 })
+    emit({
+      type: 'summary',
+      inserted: 0,
+      wouldInsert: 0,
+      skippedConcurrentExisting: 0,
+      unresolved: 0,
+      rejectedImplausible: 0
+    })
   emit({ type: 'complete', finishedAt: new Date().toISOString() })
 } catch (error) {
   emit({

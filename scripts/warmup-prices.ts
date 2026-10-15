@@ -15,7 +15,7 @@ import { DEFILLAMA_UNSUPPORTED_CHAINS } from '../src/sources'
 import { CHAINLINK_FEEDS, createChainlinkHistoricalSource, getChainlinkFeed } from '../src/sources/chainlink'
 import { buildDefiLlamaPayloads } from '../src/sources/defillama/batch'
 import { buildDefiLlamaWrites } from '../src/sources/defillama/match'
-import type { HistoricalRequestTuple, KongVaultListItem, TokenPriceWrite } from '../src/types'
+import type { HistoricalRequestTuple, TokenPriceWrite } from '../src/types'
 import {
   chainIdToName,
   chainNameToId,
@@ -28,6 +28,8 @@ import {
   runInGroups,
   toFetchTimestamp
 } from '../src/utils'
+import { plausibleWrites, storedCurveLpGuard } from './lib/curve-lp-guard'
+import { fetchYearnVaults, type NormalizedVault } from './lib/kong-vaults'
 
 const databaseUrl = process.env.DATABASE_URL
 if (!databaseUrl) {
@@ -43,12 +45,14 @@ const stats: WarmupStats = {
   insertedDirect: 0,
   insertedDerived: 0,
   insertedCurve: 0,
-  insertedChainlink: 0
+  insertedChainlink: 0,
+  rejectedImplausible: 0
 }
 const defiLlama = new DefiLlamaClient(undefined, () => {
   stats.retries += 1
 })
 const chainlink = createChainlinkHistoricalSource()
+const curveLpGuard = storedCurveLpGuard(pool)
 
 const REQUEST_GROUP_SIZE = 5
 const REQUEST_GROUP_DELAY_MS = 200
@@ -76,16 +80,6 @@ function tokenSymbol(chainId: number, token: `0x${string}`): Promise<string | nu
   return pending
 }
 
-interface NormalizedVault {
-  chain: string
-  chainId: number
-  vaultToken: `0x${string}`
-  underlyingToken: `0x${string}`
-  symbol: string | null
-  apiVersion: string | null
-  decimals: number
-}
-
 interface WarmupStats {
   cacheHits: number
   apiCalls: number
@@ -95,6 +89,7 @@ interface WarmupStats {
   insertedDerived: number
   insertedCurve: number
   insertedChainlink: number
+  rejectedImplausible: number
 }
 
 function parseChain(value: string): number {
@@ -151,37 +146,6 @@ function chainlinkFeedVaults(chainId: number): NormalizedVault[] {
       decimals: 18
     }
   })
-}
-
-async function fetchYearnVaults(): Promise<NormalizedVault[]> {
-  const response = await fetch('https://kong.yearn.fi/api/rest/list/vaults?origin=yearn')
-  if (!response.ok) {
-    throw new Error(`Failed to fetch Kong vault list: ${response.status}`)
-  }
-
-  const json = (await response.json()) as KongVaultListItem[]
-  const vaults: NormalizedVault[] = []
-
-  for (const item of json) {
-    const chain = chainIdToName(item.chainId)
-    if (!chain || !item.asset?.address || !item.decimals) {
-      continue
-    }
-
-    try {
-      vaults.push({
-        chain,
-        chainId: item.chainId,
-        vaultToken: normalizeTokenAddress(item.address),
-        underlyingToken: normalizeTokenAddress(item.asset.address),
-        symbol: item.symbol,
-        apiVersion: item.apiVersion,
-        decimals: item.decimals
-      })
-    } catch {}
-  }
-
-  return vaults
 }
 
 function buildDailyTimestamps(start: number, end: number): number[] {
@@ -254,8 +218,10 @@ async function warmDirectPrices(vaults: NormalizedVault[], timestamps: number[],
         }
       }
 
-      await insertTokenPrices(pool, writes)
-      stats.insertedDirect += writes.length
+      const { writes: plausible, rejected } = await plausibleWrites(writes, curveLpGuard)
+      stats.rejectedImplausible += rejected.length
+      await insertTokenPrices(pool, plausible)
+      stats.insertedDirect += plausible.length
     } catch (error) {
       stats.failures += 1
       console.error('DeFiLlama batch failed', payload, error)

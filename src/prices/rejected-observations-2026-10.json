@@ -1,0 +1,226 @@
+[
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0x3b3ac5386837dc563660fb6a0937dfaa5924333b",
+    "timestamp": 1780444799,
+    "rederive": true,
+    "issue": 61
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0x3b3ac5386837dc563660fb6a0937dfaa5924333b",
+    "timestamp": 1780531199,
+    "rederive": true,
+    "issue": 61
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0x3b3ac5386837dc563660fb6a0937dfaa5924333b",
+    "timestamp": 1780617599,
+    "rederive": true,
+    "issue": 61
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0x3b3ac5386837dc563660fb6a0937dfaa5924333b",
+    "timestamp": 1780703999,
+    "rederive": true,
+    "issue": 61
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0x3b3ac5386837dc563660fb6a0937dfaa5924333b",
+    "timestamp": 1780790399,
+    "rederive": true,
+    "issue": 61
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0x3b3ac5386837dc563660fb6a0937dfaa5924333b",
+    "timestamp": 1780876799,
+    "rederive": true,
+    "issue": 61
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0x3b3ac5386837dc563660fb6a0937dfaa5924333b",
+    "timestamp": 1780963199,
+    "rederive": true,
+    "issue": 61
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0x3b3ac5386837dc563660fb6a0937dfaa5924333b",
+    "timestamp": 1781049599,
+    "rederive": true,
+    "issue": 61
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0x02d341ccb60faaf662bc0554d13778015d1b285c",
+    "timestamp": 1703116799,
+    "rederive": true,
+    "issue": 62
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0x051d7e5609917bd9b73f04bac0ded8dd46a74301",
+    "timestamp": 1703116799,
+    "rederive": true,
+    "issue": 62
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0x067079c14b85169e6a29703769daddef90816f4c",
+    "timestamp": 1703116799,
+    "rederive": true,
+    "issue": 62
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0x390f3595bca2df7d23783dfd126427cceb997bf4",
+    "timestamp": 1703116799,
+    "rederive": true,
+    "issue": 62
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0x3a283d9c08e8b55966afb64c515f5143cf907611",
+    "timestamp": 1703116799,
+    "rederive": true,
+    "issue": 62
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0x3d229e1b4faab62f621ef2f6a610961f7bd7b23b",
+    "timestamp": 1703116799,
+    "rederive": true,
+    "issue": 62
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0x4acc1bf7d6a591016641325aa6664a1cd178f002",
+    "timestamp": 1703116799,
+    "rederive": true,
+    "issue": 62
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0x4ebdf703948ddcea3b11f675b4d1fba9d2414a14",
+    "timestamp": 1703116799,
+    "rederive": true,
+    "issue": 62
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0x5282a4ef67d9c33135340fb3289cc1711c13638c",
+    "timestamp": 1703116799,
+    "rederive": true,
+    "issue": 62
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0x5b5cfe992adac0c9d48e05854b2d91c73a003858",
+    "timestamp": 1703116799,
+    "rederive": true,
+    "issue": 62
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0x6e0e681441be6cb1d8405752462488bd4d691e3a",
+    "timestamp": 1703116799,
+    "rederive": true,
+    "issue": 62
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0x971add32ea87f10bd192671630be3be8a11b8623",
+    "timestamp": 1703116799,
+    "rederive": true,
+    "issue": 62
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0x9978c6b08d28d3b74437c917c5dd7c026df9d55c",
+    "timestamp": 1703116799,
+    "rederive": true,
+    "issue": 62
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0xb19059ebb43466c323583928285a49f558e572fd",
+    "timestamp": 1703116799,
+    "rederive": true,
+    "issue": 62
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0xbe4f3ad6c9458b901c81b734cb22d9eae9ad8b50",
+    "timestamp": 1703116799,
+    "rederive": true,
+    "issue": 62
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0xde5331ac4b3630f94853ff322b66407e0d6331e8",
+    "timestamp": 1703116799,
+    "rederive": true,
+    "issue": 62
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0xecdd0ce505da71cd9de855cd6804ba1e8c7bdb07",
+    "timestamp": 1703116799,
+    "rederive": true,
+    "issue": 62
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0xf5f5b97624542d72a9e06f04804bf81baa15e2b4",
+    "timestamp": 1703116799,
+    "rederive": true,
+    "issue": 62
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0xfed2b54453f75634bcdaea5e5b11a3f99b9c28fa",
+    "timestamp": 1703116799,
+    "rederive": true,
+    "issue": 62
+  },
+  {
+    "chain": "ethereum",
+    "chainId": 1,
+    "token": "0x69accb968b19a53790f43e57558f5e443a91af22",
+    "timestamp": 1769731199,
+    "rederive": false,
+    "issue": 62
+  }
+]

@@ -1,5 +1,7 @@
+import { isRejectedPrice } from '../prices/rejections'
 import type { GraphNode } from '../sources/onchain/graph'
 import { SOURCE_PRIORITY } from '../types'
+import { chainIdToName } from '../utils/chains'
 import { MAXIMUM_ACCEPTED_OFFSET_SECONDS } from './constants'
 import type { FinalizationResolution } from './finalize'
 import type { NormalizedTarget } from './manifest'
@@ -35,6 +37,9 @@ export function validateGraphResolution(
       !SOURCE_PRIORITY.includes(path.source)
     )
       throw new Error('Invalid graph price identity or value')
+    if (isRejectedPrice(chainIdToName(path.chainId) ?? '', path.token, target.eodTimestamp, path.source)) {
+      throw new Error('Selected graph contains a quarantined provider observation')
+    }
     if (
       !Number.isSafeInteger(path.observedTimestamp) ||
       Math.abs(path.observedTimestamp - target.eodTimestamp) > MAXIMUM_ACCEPTED_OFFSET_SECONDS
