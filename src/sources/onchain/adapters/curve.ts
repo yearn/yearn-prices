@@ -20,7 +20,7 @@ import { WRAPPED_NATIVE } from '../tokens'
 import type { RecursivePriceContext, RecursivePriceTarget, ResolvedPricePath } from '../types'
 
 const CURVE_ADDRESS_PROVIDER = '0x0000000022D53366457F9d5E68Ec105046FC4383' as Address
-const CURVE_NATIVE_TOKEN = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+export const CURVE_NATIVE_TOKEN = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
 const MAX_REGISTRY_ID = 12
 const MAX_COINS = 8
 /**
@@ -54,11 +54,11 @@ const registryAbi = parseAbi([
 const metaRegistryAbi = parseAbi(['function get_n_coins(address) view returns (uint256)'])
 const poolCoinCountAbi = parseAbi(['function N_COINS() view returns (uint256)'])
 const registryCoinsAbi = parseAbi(['function get_coins(address) view returns (address[8])'])
-const coinUintAbi = parseAbi([
+export const coinUintAbi = parseAbi([
   'function coins(uint256) view returns (address)',
   'function balances(uint256) view returns (uint256)'
 ])
-const coinIntAbi = parseAbi([
+export const coinIntAbi = parseAbi([
   'function coins(int128) view returns (address)',
   'function balances(int128) view returns (uint256)'
 ])
@@ -137,7 +137,7 @@ async function poolFromRegistry(
   })
 }
 
-async function readCoinAddress(
+export async function readCoinAddress(
   client: PublicClient,
   poolAddress: Address,
   index: number,

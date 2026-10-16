@@ -5,6 +5,7 @@ import { balancerAdapter } from './balancer'
 import { beetsBarAdapter } from './beets-bar'
 import { compoundAdapter } from './compound'
 import { curveAdapter } from './curve'
+import { curveOracleAdapter } from './curve-oracle'
 import { erc4626Adapter } from './erc4626'
 import { nativeShareAdapter } from './native-share'
 import { pairAdapter } from './pair'
@@ -21,6 +22,7 @@ import { yip88LiquidLockerAdapter } from './yip88-liquid-locker'
 export function createOnchainPriceAdapters(options: OnchainAdapterOptions): PlannedPriceAdapter[] {
   return [
     yip88LiquidLockerAdapter(options),
+    curveOracleAdapter(options),
     nativeShareAdapter(options),
     reserveRTokenAdapter(options),
     beetsBarAdapter(options),

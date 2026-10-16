@@ -64,7 +64,7 @@ Provider failures remain
 retryable errors in the run cache and do not trigger individual-request retries.
 
 The default `--scheduler graph` discovers a workload-wide dependency graph.
-Each of the 13 on-chain adapters exposes `discover(target)`: historical reads
+Each of the 14 on-chain adapters exposes `discover(target)`: historical reads
 produce a complete child list, conversion evidence, and a pure evaluation
 function. Discovery does not require child prices. The runner batches each
 new market frontier, deduplicates nodes by chain/token/timestamp/block context,
