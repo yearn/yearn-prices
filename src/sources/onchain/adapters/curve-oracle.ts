@@ -4,7 +4,6 @@ import {
   childTarget,
   contractContext,
   maybe,
-  normalizedAddress,
   type OnchainAdapterOptions,
   rawState,
   recursiveInput,
@@ -13,9 +12,17 @@ import {
 import { InvalidPricingError } from '../errors'
 import { scaledRaw } from '../math'
 import { type PlannedPriceAdapter, plannedAdapter } from '../plan'
+import { WRAPPED_NATIVE } from '../tokens'
+import { CURVE_NATIVE_TOKEN, coinIntAbi, coinUintAbi, readCoinAddress } from './curve'
 
 /** Below this, a pool's EMA follows whoever trades last, not the market. */
 export const MIN_QUOTE_LIQUIDITY_USD = 20_000
+
+/**
+ * Stableswap pools cap the price fed into the EMA at 2e18, so an EMA near the
+ * cap reads the cap, not the market. Crypto pools (with `price_scale`) do not.
+ */
+const STABLESWAP_ORACLE_CEILING = 19n * 10n ** 17n
 
 /**
  * Reviewed 2-coin pools whose EMA `price_oracle` prices a token when DefiLlama
@@ -49,11 +56,9 @@ export const CURVE_ORACLE_POOLS: Readonly<Record<number, Readonly<Record<string,
   }
 }
 
-const poolAbi = parseAbi([
-  'function coins(uint256 i) view returns (address)',
-  'function balances(uint256 i) view returns (uint256)',
-  'function stored_rates() view returns (uint256[])'
-])
+const ratesAbi = parseAbi(['function stored_rates() view returns (uint256[])'])
+const fixedRatesAbi = parseAbi(['function stored_rates() view returns (uint256[2])'])
+const priceScaleAbi = parseAbi(['function price_scale() view returns (uint256)'])
 const indexedOracleAbi = parseAbi(['function price_oracle(uint256 i) view returns (uint256)'])
 const oracleAbi = parseAbi(['function price_oracle() view returns (uint256)'])
 
@@ -76,17 +81,17 @@ export function curveOracleAdapter(options: OnchainAdapterOptions): PlannedPrice
     const state = await contractContext(target, options)
     const { client, blockNumber } = state
 
-    const [coin0Raw, coin1Raw] = await Promise.all(
-      [0n, 1n].map((i) =>
-        maybe(() => client.readContract({ address: pool, abi: poolAbi, functionName: 'coins', args: [i], blockNumber }))
-      )
-    )
-    if (!coin0Raw || !coin1Raw) return null
-    const coins = [normalizedAddress(coin0Raw), normalizedAddress(coin1Raw)]
-    const index = coins.findIndex((coin) => coin?.toLowerCase() === target.token.toLowerCase())
-    const quote = coins[1 - index]
-    if (index < 0 || !quote) throw new InvalidPricingError(`Curve oracle pool ${pool} does not pair the token`)
+    const [coin0, coin1, coin2] = await Promise.all([0, 1, 2].map((i) => readCoinAddress(client, pool, i, blockNumber)))
+    if (!coin0 || !coin1) return null
+    if (coin2) throw new InvalidPricingError(`Curve oracle pool ${pool} has more than 2 coins`)
+    const coins = [coin0, coin1]
+    const index = coins.findIndex((coin) => coin.address.toLowerCase() === target.token.toLowerCase())
+    if (index < 0) throw new InvalidPricingError(`Curve oracle pool ${pool} does not pair the token`)
     const quoteIndex = 1 - index
+    const quoteCoin = coins[quoteIndex]
+    const isNative = coins.map((coin) => coin.address.toLowerCase() === CURVE_NATIVE_TOKEN)
+    const quote = isNative[quoteIndex] ? WRAPPED_NATIVE[target.chainId] : quoteCoin.address
+    if (!quote) throw new InvalidPricingError(`No wrapped native asset is configured on chain ${target.chainId}`)
 
     let method = 'price_oracle(uint256)'
     let oracleRaw = await maybe(() =>
@@ -106,22 +111,36 @@ export function curveOracleAdapter(options: OnchainAdapterOptions): PlannedPrice
     }
     if (oracleRaw == null) return null
     if (oracleRaw <= 0n) throw new InvalidPricingError('Curve price oracle returned zero')
+    if (oracleRaw >= STABLESWAP_ORACLE_CEILING) {
+      const priceScale = await maybe(() =>
+        client.readContract({ address: pool, abi: priceScaleAbi, functionName: 'price_scale', blockNumber })
+      )
+      if (priceScale == null) throw new InvalidPricingError(`Curve oracle pool ${pool} reads at the stableswap EMA cap`)
+    }
 
     const [rates, quoteBalanceRaw, decimals0, decimals1] = await Promise.all([
-      maybe(() => client.readContract({ address: pool, abi: poolAbi, functionName: 'stored_rates', blockNumber })),
+      maybe(() =>
+        client.readContract({ address: pool, abi: ratesAbi, functionName: 'stored_rates', blockNumber })
+      ).then(
+        (dynamic) =>
+          dynamic ??
+          maybe(() =>
+            client.readContract({ address: pool, abi: fixedRatesAbi, functionName: 'stored_rates', blockNumber })
+          )
+      ),
       maybe(() =>
         client.readContract({
           address: pool,
-          abi: poolAbi,
+          abi: quoteCoin.indexType === 'uint256' ? coinUintAbi : coinIntAbi,
           functionName: 'balances',
           args: [BigInt(quoteIndex)],
           blockNumber
         })
       ),
-      tokenDecimals(client, coins[0] as string, blockNumber),
-      tokenDecimals(client, coins[1] as string, blockNumber)
+      isNative[0] ? 18 : tokenDecimals(client, coin0.address, blockNumber),
+      isNative[1] ? 18 : tokenDecimals(client, coin1.address, blockNumber)
     ])
-    if (quoteBalanceRaw == null) return null
+    if (quoteBalanceRaw == null) throw new InvalidPricingError(`Curve oracle pool ${pool} balance is unreadable`)
     const coin1InCoin0 =
       (scaledRaw(oracleRaw, 18) * rateMultiplier(rates, 1, decimals1)) / rateMultiplier(rates, 0, decimals0)
     const tokenInQuote = index === 1 ? coin1InCoin0 : 1 / coin1InCoin0
