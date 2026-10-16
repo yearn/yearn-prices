@@ -22,7 +22,8 @@ export interface CoverageReport {
   missingByKind: Record<AuditKind, number>
 }
 
-export function expectedTuples(vaults: NormalizedVault[], timestamps: number[]): ExpectedTuple[] {
+export function expectedTuples(allVaults: NormalizedVault[], timestamps: number[]): ExpectedTuple[] {
+  const vaults = allVaults.filter((vault) => !vault.isRetired && vault.tvl > 0)
   const tokens = new Map<string, Omit<ExpectedTuple, 'timestamp'>>()
   const add = (chain: string, token: string, kind: AuditKind, source: AuditSource) => {
     const key = `${chain}:${token.toLowerCase()}:${source}`

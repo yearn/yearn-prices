@@ -3,7 +3,7 @@ import type { NormalizedVault } from '../../scripts/lib/kong-vaults'
 import { auditCoverage, auditFailed, expectedTuples } from '../../scripts/lib/price-audit'
 
 const vault = (vaultToken: string, underlyingToken: string, chain = 'ethereum') =>
-  ({ chain, chainId: 1, vaultToken, underlyingToken }) as NormalizedVault
+  ({ chain, chainId: 1, vaultToken, underlyingToken, isRetired: false, tvl: 1 }) as NormalizedVault
 
 it('reports every missing derived day even when DefiLlama coverage is complete', () => {
   const days = [10, 20, 30, 40, 50, 60, 70]
@@ -38,4 +38,16 @@ it('deduplicates shared underlyings without dropping a nested vault source requi
   expect(auditFailed(report, [])).toBe(false)
   expect(auditFailed(report, [1])).toBe(true)
   expect(auditFailed(report, [], true)).toBe(true)
+})
+
+it('skips retired and zero-TVL vaults', () => {
+  const tuples = expectedTuples(
+    [{ ...vault('0xr', '0xa'), isRetired: true }, { ...vault('0xz', '0xb'), tvl: 0 }, vault('0xv', '0xa')],
+    [10]
+  )
+  expect(tuples.map((tuple) => `${tuple.token}:${tuple.source}`)).toEqual([
+    '0xv:defillama',
+    '0xv:derived',
+    '0xa:defillama'
+  ])
 })

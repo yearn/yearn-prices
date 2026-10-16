@@ -153,7 +153,9 @@ function chainlinkFeedVaults(chainId: number): NormalizedVault[] {
       underlyingToken: address,
       symbol: null,
       apiVersion: null,
-      decimals: 18
+      decimals: 18,
+      isRetired: false,
+      tvl: 0
     }
   })
 }
