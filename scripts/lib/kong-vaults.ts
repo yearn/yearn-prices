@@ -11,6 +11,8 @@ export interface NormalizedVault {
   symbol: string | null
   apiVersion: string | null
   decimals: number
+  isRetired: boolean
+  tvl: number
 }
 
 export async function fetchYearnVaults(): Promise<NormalizedVault[]> {
@@ -38,7 +40,9 @@ export async function fetchYearnVaults(): Promise<NormalizedVault[]> {
         underlyingToken: normalizeTokenAddress(item.asset.address),
         symbol: item.symbol,
         apiVersion: item.apiVersion,
-        decimals: item.decimals
+        decimals: item.decimals,
+        isRetired: item.isRetired === true,
+        tvl: item.tvl ?? 0
       })
     } catch (error) {
       console.warn(`skip:kong-vault ${item.chainId}:${item.address}`, error)

@@ -126,6 +126,8 @@ export interface KongVaultListItem {
   symbol: string | null
   apiVersion: string | null
   decimals: number | null
+  isRetired?: boolean | null
+  tvl?: number | null
   asset?: {
     address: string
     symbol?: string | null
