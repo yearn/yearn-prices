@@ -12,6 +12,7 @@ export interface NormalizedVault {
   apiVersion: string | null
   decimals: number
   isRetired: boolean
+  isHidden: boolean
   tvl: number
 }
 
@@ -42,6 +43,7 @@ export async function fetchYearnVaults(): Promise<NormalizedVault[]> {
         apiVersion: item.apiVersion,
         decimals: item.decimals,
         isRetired: item.isRetired === true,
+        isHidden: item.isHidden === true,
         tvl: item.tvl ?? 0
       })
     } catch (error) {

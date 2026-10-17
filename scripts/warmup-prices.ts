@@ -155,6 +155,7 @@ function chainlinkFeedVaults(chainId: number): NormalizedVault[] {
       apiVersion: null,
       decimals: 18,
       isRetired: false,
+      isHidden: false,
       tvl: 0
     }
   })
