@@ -386,9 +386,9 @@ Common error cases:
 
 Price responses set cache headers based on the requested timestamps and whether every requested value was found.
 
-- Historical non-today exact price: `public, s-maxage=300, max-age=0, must-revalidate`
+- Historical non-today exact price: `public, s-maxage=2592000, max-age=3600`
 - Requests involving today's UTC day, or a batch pair whose day has not closed yet: `public, s-maxage=300, max-age=3600, stale-while-revalidate=14400`
-- Fully resolved batch or range for past days: `public, s-maxage=300, max-age=0, must-revalidate`
+- Fully resolved batch or range for past days: `public, s-maxage=2592000, max-age=3600`
 - Partially resolved batch or range for past days: `public, s-maxage=300, max-age=300`
 - Historical not found responses: `public, s-maxage=300, max-age=300`
 - Spot: `public, s-maxage=120, stale-while-revalidate=600`

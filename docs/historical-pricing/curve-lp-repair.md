@@ -25,8 +25,8 @@ new migration rather than editing this snapshot.
 4. The worker uses historical edge-cache revision `2026-10-quarantine-v1` for
    every exact, batch and range cache key, including source-filtered combinations.
    Pre-incident Cache API entries become unreachable on deployment. New complete
-   closed-day responses use `public, s-maxage=300, max-age=0, must-revalidate`.
-   Subsequent repairs become visible at the edge within five minutes.
+   closed-day responses use `public, s-maxage=2592000, max-age=3600`.
+   Subsequent repairs must bump `HISTORICAL_CACHE_REVISION` to become visible at the edge.
 
 Previously delivered browser or downstream immutable responses cannot be
 revoked by a worker deployment. Consumers must purge their own saved responses

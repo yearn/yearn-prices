@@ -1,8 +1,8 @@
 import { isClosedDay, isTodayNormalized } from '../utils/time'
 
-// Historical rows can be repaired. Browsers revalidate; the edge may retain a
-// response for at most five minutes. Never promise that a historical quote is immutable.
-export const CACHE_CONTROL_HISTORICAL = 'public, s-maxage=300, max-age=0, must-revalidate'
+// Historical rows can be repaired, but repairs invalidate the edge by bumping
+// HISTORICAL_CACHE_REVISION. Keep closed days at the edge for 30 days.
+export const CACHE_CONTROL_HISTORICAL = 'public, s-maxage=2592000, max-age=3600'
 // Today's value changes intraday as warmup (hourly) backfills it. s-maxage=300 lets the
 // shared edge refresh every ~5min — far tighter than the warmup cadence — while browsers
 // keep the gentler 1h max-age.

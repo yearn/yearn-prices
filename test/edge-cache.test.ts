@@ -244,7 +244,7 @@ describe('validation before the edge-cache read', () => {
 describe('cache-control policies', () => {
   it('requires revalidation for settled days and keeps today short-lived', () => {
     expect(cacheControlForHistorical(PAST)).toBe(CACHE_CONTROL_HISTORICAL)
-    expect(cacheControlForHistorical(PAST)).toBe('public, s-maxage=300, max-age=0, must-revalidate')
+    expect(cacheControlForHistorical(PAST)).toBe('public, s-maxage=2592000, max-age=3600')
     expect(cacheControlForHistorical(TODAY)).toBe(CACHE_CONTROL_TODAY)
   })
 

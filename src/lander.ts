@@ -213,7 +213,7 @@ export function renderLandingPage(env: Env, baseUrl: string): string {
     <h2>Caching</h2>
     <ul class="bullets">
       <li>Spot: <code>public, s-maxage=120, stale-while-revalidate=600</code>.</li>
-      <li>Historical prices for past days: <code>public, s-maxage=300, max-age=0, must-revalidate</code>.</li>
+      <li>Historical prices for past days: <code>public, s-maxage=2592000, max-age=3600</code>.</li>
       <li>Historical requests for today's UTC day: <code>public, s-maxage=300, max-age=3600, stale-while-revalidate=14400</code>.</li>
       <li>Partially resolved batch or range for past days, and historical not-found: <code>public, s-maxage=300, max-age=300</code>.</li>
       <li>Responses are edge-cached at Cloudflare with canonicalized URLs, so requests that differ only in query order, whitespace, or address casing share one entry.</li>
