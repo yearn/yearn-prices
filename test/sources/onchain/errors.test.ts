@@ -19,6 +19,7 @@ describe('isRetryablePricingError', () => {
       named('UnknownRpcError', 'An unknown RPC error occurred'),
       named('TimeoutError', 'The request timed out'),
       named('SocketError', 'other side closed'),
+      named('BlockNotFoundError', 'Block at number "79261817" could not be found.'),
       new Error('fetch failed'),
       new Error('Status: 429'),
       new Error('HTTP 503 from upstream')

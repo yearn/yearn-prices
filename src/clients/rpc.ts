@@ -1,4 +1,4 @@
-import { createPublicClient, defineChain, http, type PublicClient, parseAbi } from 'viem'
+import { BlockNotFoundError, createPublicClient, defineChain, http, type PublicClient, parseAbi } from 'viem'
 import { CHAIN_ID_TO_NAME } from '../utils/chains'
 
 const SHARE_PRICE_ABI_V2 = parseAbi(['function pricePerShare() view returns (uint256)'])
@@ -230,11 +230,21 @@ async function searchBlockByTimestamp(
 
   const bounds = seedBounds(chainId, timestamp, latestBlock.number, latestTimestamp)
   let probes = 0
+  let missing: BlockNotFoundError | undefined
 
   while (bounds.low <= bounds.high) {
     const mid = nextProbe(bounds, timestamp, probes)
     probes += 1
-    const block = await client.getBlock({ blockNumber: mid })
+    let block
+    try {
+      block = await client.getBlock({ blockNumber: mid })
+    } catch (error) {
+      if (!(error instanceof BlockNotFoundError)) throw error
+      // Pruned or pre-migration history (Optimism pre-Bedrock): skip above it.
+      missing = error
+      bounds.low = mid + 1n
+      continue
+    }
     const blockTimestamp = Number(block.timestamp)
     rememberSample(chainId, mid, blockTimestamp)
 
@@ -256,6 +266,9 @@ async function searchBlockByTimestamp(
     }
   }
 
+  if (missing && bounds.lowTimestamp === 0) {
+    throw missing
+  }
   setCapped(blockCache, cacheKey, bounds.best, MAX_BLOCK_CACHE)
   return bounds.best
 }

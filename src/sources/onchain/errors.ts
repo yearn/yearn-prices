@@ -44,6 +44,7 @@ export function isRetryablePricingError(error: unknown): boolean {
       current.name === 'UnknownRpcError' ||
       current.name === 'TimeoutError' ||
       current.name === 'SocketError' ||
+      current.name === 'BlockNotFoundError' ||
       message.includes('http request failed') ||
       message.includes('rpc request failed') ||
       message.includes('unknown rpc error occurred') ||
