@@ -1,4 +1,4 @@
-import type { PublicClient } from 'viem'
+import { BlockNotFoundError, type PublicClient } from 'viem'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { estimateBlockByTimestamp, getChainClient } from '../../src/clients/rpc'
 
@@ -96,6 +96,21 @@ describe('estimateBlockByTimestamp', () => {
     const block = await estimateBlockByTimestamp(fakeChain(), 910_007, GENESIS - 1)
 
     expect(block).toBe(0n)
+  })
+
+  it('searches past blocks the provider cannot serve', async () => {
+    const client = {
+      async getBlock(args?: { blockNumber?: bigint }) {
+        const number = args?.blockNumber ?? LATEST
+        if (number < 600n) throw new BlockNotFoundError({ blockNumber: number })
+        return { number, timestamp: BigInt(timestampOf(number)) }
+      }
+    } as unknown as PublicClient
+
+    await expect(estimateBlockByTimestamp(client, 910_020, timestampOf(700n) + 1)).resolves.toBe(700n)
+    await expect(estimateBlockByTimestamp(client, 910_020, timestampOf(100n))).rejects.toBeInstanceOf(
+      BlockNotFoundError
+    )
   })
 
   it('lands on the same block as a linear scan when block times are irregular', async () => {

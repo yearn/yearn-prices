@@ -536,6 +536,7 @@ try {
       ...stats
     })
   )
+  if (stats.failures > 0) process.exitCode = 1
 } finally {
   await pool.end()
 }
