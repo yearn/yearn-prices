@@ -235,7 +235,7 @@ async function searchBlockByTimestamp(
   while (bounds.low <= bounds.high) {
     const mid = nextProbe(bounds, timestamp, probes)
     probes += 1
-    let block
+    let block: Awaited<ReturnType<PublicClient['getBlock']>>
     try {
       block = await client.getBlock({ blockNumber: mid })
     } catch (error) {
