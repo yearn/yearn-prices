@@ -103,6 +103,7 @@ export function pairAdapter(options: OnchainAdapterOptions): PlannedPriceAdapter
       ]
     }
     const tokens = [token0, token1]
+    const totalSupply = totalSupplyRaw
     function quote(inputs: Array<ResolvedPricePath | null>, prices: number[], extra: Record<string, unknown> = {}) {
       return {
         priceUsd: calculatePoolNavPrice(
@@ -112,7 +113,7 @@ export function pairAdapter(options: OnchainAdapterOptions): PlannedPriceAdapter
             decimals: decimals[index],
             priceUsd: prices[index]
           })),
-          totalSupplyRaw,
+          totalSupply,
           poolDecimals
         ),
         blockNumber: state.numericBlockNumber,
