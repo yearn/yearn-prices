@@ -68,6 +68,53 @@ function historicalClient(reads: Record<string, unknown>) {
   } as unknown as PublicClient
 }
 
+const SUSD = '0x8c6f28f2f1a3c87f0f938b96d27520d9751ec8d9'
+const PHASE1_AGGREGATOR = '0x3333333333333333333333333333333333333333'
+const PHASE1_START = 1_700_000_000
+const PHASE2_START = 1_700_600_000
+
+function phaseRounds(phase: bigint, count: number, start: number, spacing: number) {
+  const rounds: Record<string, unknown> = {}
+  for (let id = 1; id <= count; id += 1) {
+    const roundId = (phase << 64n) | BigInt(id)
+    const ts = BigInt(start + (id - 1) * spacing)
+    rounds[String(roundId)] = [roundId, BigInt(id) * 1_000_000n, ts, ts, roundId]
+  }
+  return rounds
+}
+
+function densePhases(omit?: bigint) {
+  const feed = getChainlinkFeed(10, SUSD)
+  if (!feed) {
+    throw new Error('Optimism sUSD feed is not configured')
+  }
+  const phase1 = phaseRounds(1n, 1000, PHASE1_START, 600)
+  const phase2 = phaseRounds(2n, 5000, PHASE2_START, 300)
+  const rounds: Record<string, unknown> = { ...phase1, ...phase2 }
+  if (omit !== undefined) {
+    delete rounds[String(omit)]
+  }
+  const phase1Latest = phase1[String((1n << 64n) | 1000n)] as bigint[]
+  const client = historicalClient({
+    [feed.toLowerCase()]: {
+      latestRoundData: phase2[String((2n << 64n) | 5000n)],
+      phaseAggregators: { '1': PHASE1_AGGREGATOR },
+      getRoundData: rounds,
+      decimals: 8
+    },
+    [PHASE1_AGGREGATOR]: {
+      latestRoundData: [1000n, phase1Latest[1], phase1Latest[2], phase1Latest[3], 1000n]
+    }
+  })
+  const counter = { getRoundData: 0 }
+  const readContract = client.readContract.bind(client)
+  client.readContract = ((params: { functionName: string }) => {
+    if (params.functionName === 'getRoundData') counter.getRoundData += 1
+    return readContract(params as never)
+  }) as typeof client.readContract
+  return { source: createChainlinkHistoricalSource({ clientForChain: () => client }), counter }
+}
+
 describe('ChainlinkHistoricalSource', () => {
   it('returns null for an unknown token', async () => {
     await expect(
@@ -417,6 +464,29 @@ describe('ChainlinkHistoricalSource', () => {
       symbol: null,
       confidence: null
     })
+  })
+  it('binary-searches a dense phase for the latest round at or before the request', async () => {
+    const { source, counter } = densePhases()
+    const result = await source.getHistoricalPrice(10, SUSD, PHASE2_START + 2499 * 300 + 150)
+
+    expect(result).toEqual({ price: 25, timestamp: PHASE2_START + 2499 * 300, symbol: null, confidence: null })
+    expect(counter.getRoundData).toBeLessThan(20)
+  })
+
+  it('hops to the previous phase when the request predates the current phase', async () => {
+    const { source } = densePhases()
+    const result = await source.getHistoricalPrice(10, SUSD, PHASE1_START + 399 * 600 + 10)
+
+    expect(result).toEqual({ price: 4, timestamp: PHASE1_START + 399 * 600, symbol: null, confidence: null })
+  })
+
+  it('returns null when the request predates the first phase', async () => {
+    await expect(densePhases().source.getHistoricalPrice(10, SUSD, PHASE1_START - 1)).resolves.toBeNull()
+  })
+
+  it('returns null when getRoundData reverts at the search upper bound', async () => {
+    const { source } = densePhases((2n << 64n) | 4999n)
+    await expect(source.getHistoricalPrice(10, SUSD, PHASE2_START + 100 * 300)).resolves.toBeNull()
   })
 })
 
