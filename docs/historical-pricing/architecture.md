@@ -182,16 +182,25 @@ finds an observation. That research label is deliberately absent from the main
 post-backfill report because it does not establish success in the completed
 backfill.
 
-## Curve quote fallback and graph plans
+## Missing-leg derivation in plans
 
-Curve's recursive resolver can value an unsupported constituent through a
-historical `get_dy` quote against a priced reserve, subject to executable
-liquidity checks. Transient or invalid child failures do not qualify for that
-fallback. The graph plan requires prices for every constituent and evaluates
-without additional RPC calls. It does not capture the conditional `get_dy`
-fallback, so a recursive Curve result may be available while its graph result
-remains unresolved. Both paths share pool discovery, reserve accounting and NAV
-calculation.
+A plan can declare `derive`. `derive` values a route when some constituents
+have no price. The recursive engine and the graph both use it. Only an
+unsupported child can be missing. Transient, budget, invalid, cycle and
+depth failures do not qualify.
+
+The graph runs `derive` only when every missing child is a terminal miss: no
+market price, no routes and no attempts. A dependency with a budget or depth
+cutoff never qualifies. A null result records the route as unsupported.
+
+`derive` reads RPC at evaluation time. The reads use the plan's block. The
+same per-node read budget meters them (`scripts/lib/graph-replay.ts:78-80`).
+
+Two rules use `derive`. Curve values each missing coin through a historical
+`get_dy` quote against the most valuable priced reserve, subject to executable
+liquidity checks. A volatile Solidly pair (`stable()` returns false) values its
+one missing leg at the priced leg's reserve value under the constant-product
+rule. A pair without `stable()` or a stable pair does not derive.
 
 ## Evidence and storage boundaries
 

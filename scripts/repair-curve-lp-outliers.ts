@@ -5,7 +5,7 @@ config({ quiet: true })
 
 import { getChainClient } from '../src/clients/rpc'
 import { createPool } from '../src/db'
-import { REJECTED_OBSERVATIONS } from '../src/prices/rejections'
+import { CURVE_LP_REJECTED_OBSERVATIONS } from '../src/prices/rejections'
 import { createOnchainPriceAdapters, RecursivePriceEngine } from '../src/sources/onchain'
 import { createReadBudget } from '../src/sources/onchain/read-budget'
 import type { MarketPriceResolver } from '../src/sources/onchain/types'
@@ -33,7 +33,7 @@ const emit = (record: unknown) => console.info(JSON.stringify(record))
 try {
   const tally: Record<string, number> = {}
   let quarantined = 0
-  for (const target of REJECTED_OBSERVATIONS) {
+  for (const target of CURVE_LP_REJECTED_OBSERVATIONS) {
     const result = await repairCurveLpOutlier(pool, target, values.write, async () => {
       const client = getChainClient(target.chainId)
       if (!client) throw new Error(`RPC_URL_${target.chainId} is required for replacement pricing`)
@@ -66,7 +66,7 @@ try {
   emit({
     type: 'summary',
     mode: values.write ? 'write' : 'dry-run',
-    targets: REJECTED_OBSERVATIONS.length,
+    targets: CURVE_LP_REJECTED_OBSERVATIONS.length,
     quarantinedRows: quarantined,
     statuses: tally
   })

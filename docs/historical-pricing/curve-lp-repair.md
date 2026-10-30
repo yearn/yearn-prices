@@ -91,3 +91,14 @@ constant-price reference and TVL observations before closing #61.
 
 Regression cases are in `test/integration/price-quarantine.integration.test.ts`,
 `test/scripts/repair-curve-lp.test.ts`, and the source, finalization and cache tests.
+
+## sUSD Optimism parity repair (#74)
+
+From 2026-07-01 to 2026-10-20 the warmup stored DeFiLlama rows for Optimism sUSD
+(`0x8c6f28f2...`) at exactly 1.000, and for the sUSD3CRV-f LP (`0x061b8712...`) at
+virtual_price x $1. Real sUSD price per Chainlink was $0.23-0.40.
+Quarantined: both provider tokens x 112 days (224 rejections, `defillama` and
+`defillama-alias`), plus every `derived` Optimism row in that window for the
+dependent tokens listed in `migrations/20261101000100-quarantine-susd-optimism-parity.js`.
+Consumers must re-fetch with `revision=2026-11-susd-quarantine-v1`.
+Replacement comes from the Chainlink sUSD/USD feed plus graph re-derivation, never from provider rows.

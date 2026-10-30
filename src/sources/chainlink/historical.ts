@@ -12,7 +12,7 @@ import { getChainlinkFeed, hasChainlinkFeeds } from './feeds'
 const MAX_STALENESS_SECONDS = 172_800
 const AGGREGATOR_ROUND_MASK = (1n << 64n) - 1n
 const PHASE_SHIFT = 64n
-const MAX_ROUND_WALK = 2048
+const MAX_PHASE_HOPS = 8
 
 const FEED_ABI = parseAbi([
   'function latestRoundData() view returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)',
@@ -23,16 +23,59 @@ const FEED_ABI = parseAbi([
 
 type RoundData = readonly [bigint, bigint, bigint, bigint, bigint]
 
-function previousRoundId(roundId: bigint): bigint | null {
-  const aggregatorRound = roundId & AGGREGATOR_ROUND_MASK
-  if (aggregatorRound <= 1n) {
-    return null
-  }
-  return roundId - 1n
-}
-
 function encodeRoundId(phase: bigint, aggregatorRound: bigint): bigint {
   return (phase << PHASE_SHIFT) | (aggregatorRound & AGGREGATOR_ROUND_MASK)
+}
+
+async function roundAt(
+  client: PublicClient,
+  feed: Address,
+  phase: bigint,
+  aggregatorRound: bigint
+): Promise<RoundData | null> {
+  const round = await maybe(() =>
+    client.readContract({
+      address: feed,
+      abi: FEED_ABI,
+      functionName: 'getRoundData',
+      args: [encodeRoundId(phase, aggregatorRound)]
+    })
+  )
+  return round && round[3] > 0n ? round : null
+}
+
+async function searchPhase(
+  client: PublicClient,
+  feed: Address,
+  afterRoundId: bigint,
+  timestamp: number
+): Promise<RoundData | null | undefined> {
+  const phase = afterRoundId >> PHASE_SHIFT
+  let hi = (afterRoundId & AGGREGATOR_ROUND_MASK) - 1n
+  if (hi < 1n) {
+    return undefined
+  }
+  const top = await roundAt(client, feed, phase, hi)
+  if (!top) {
+    return null
+  }
+  if (Number(top[3]) <= timestamp) {
+    return top
+  }
+  let lo = 1n
+  hi -= 1n
+  let best: RoundData | undefined
+  while (lo <= hi) {
+    const mid = (lo + hi) / 2n
+    const candidate = await roundAt(client, feed, phase, mid)
+    if (candidate && Number(candidate[3]) <= timestamp) {
+      best = candidate
+      lo = mid + 1n
+    } else {
+      hi = mid - 1n
+    }
+  }
+  return best
 }
 
 async function previousPhaseRound(
@@ -130,24 +173,16 @@ export class ChainlinkHistoricalSource extends HistoricalPriceSourceBase {
 
     let round: RoundData = reads[0]
     const decimals = reads[1]
-    for (let walked = 0; walked < MAX_ROUND_WALK && Number(round[3]) > timestamp; walked += 1) {
-      const previous = previousRoundId(round[0])
-      if (previous != null) {
-        const older = await maybe(() =>
-          client.readContract({
-            address: feed,
-            abi: FEED_ABI,
-            functionName: 'getRoundData',
-            args: [previous]
-          })
-        )
-        if (!older) {
-          return null
-        }
+    for (let hops = 0; Number(round[3]) > timestamp; hops += 1) {
+      const older = await searchPhase(client, feed, round[0], timestamp)
+      if (older === null) {
+        return null
+      }
+      if (older) {
         round = older
         continue
       }
-      const olderPhase = await previousPhaseRound(client, feed, round[0])
+      const olderPhase = hops < MAX_PHASE_HOPS ? await previousPhaseRound(client, feed, round[0]) : null
       if (!olderPhase) {
         return null
       }

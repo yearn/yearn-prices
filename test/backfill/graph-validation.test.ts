@@ -7,6 +7,7 @@ import type { GraphNode } from '../../src/sources/onchain/graph'
 const timestamp = 1704067199
 const token = '0x1111111111111111111111111111111111111111'
 const childToken = '0x2222222222222222222222222222222222222222'
+const missingToken = '0x3333333333333333333333333333333333333333'
 const target = parseManifest(JSON.stringify({ version: 1, targets: [{ chainId: 1, token, eodTimestamp: timestamp }] }))
   .targets[0]
 function fixture() {
@@ -95,6 +96,32 @@ describe('graph finalization evidence', () => {
     const { root, nodes } = fixture()
     root.path!.metadata.block = { number: 100, timestamp: timestamp + 1, requestedTimestamp: timestamp }
     expect(() => validateGraphResolution(root, target, nodes)).toThrow('block evidence')
+  })
+  it('accepts a derived route whose missing dependency is a terminal miss', () => {
+    const { root, nodes } = fixture()
+    root.routes[0].dependencies.push({ key: 'missing' } as never)
+    nodes.set('missing', {
+      key: 'missing',
+      target: { chainId: 1, token: missingToken, timestamp, blockNumber: 100 },
+      market: 'missing',
+      routes: [],
+      attempts: [],
+      path: null
+    } as unknown as GraphNode)
+    expect(validateGraphResolution(root, target, nodes).price).toBe(1)
+  })
+  it('rejects a derived route whose missing dependency has attempts', () => {
+    const { root, nodes } = fixture()
+    root.routes[0].dependencies.push({ key: 'missing' } as never)
+    nodes.set('missing', {
+      key: 'missing',
+      target: { chainId: 1, token: missingToken, timestamp, blockNumber: 100 },
+      market: 'error',
+      routes: [],
+      attempts: [{ adapter: 'market-price', reason: 'retryable', error: '429' }],
+      path: null
+    } as unknown as GraphNode)
+    expect(() => validateGraphResolution(root, target, nodes)).toThrow('Incomplete')
   })
   it('rejects input values inconsistent with the selected child', () => {
     const { root, nodes } = fixture()

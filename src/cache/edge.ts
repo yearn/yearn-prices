@@ -3,7 +3,7 @@ import type { Env } from '../types'
 
 // Deploying this revision makes all pre-quarantine historical cache entries
 // unreachable, including arbitrary batch/range combinations and source filters.
-export const HISTORICAL_CACHE_REVISION = '2026-10-quarantine-v1'
+export const HISTORICAL_CACHE_REVISION = '2026-11-susd-quarantine-v1'
 
 // Cloudflare edge caching via the Cache API.
 //

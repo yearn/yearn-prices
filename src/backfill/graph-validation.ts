@@ -1,5 +1,5 @@
 import { isRejectedPrice } from '../prices/rejections'
-import type { GraphNode } from '../sources/onchain/graph'
+import { type GraphNode, isTerminalMiss } from '../sources/onchain/graph'
 import { SOURCE_PRIORITY } from '../types'
 import { chainIdToName } from '../utils/chains'
 import { MAXIMUM_ACCEPTED_OFFSET_SECONDS } from './constants'
@@ -61,12 +61,18 @@ export function validateGraphResolution(
       )
         throw new Error('Invalid historical block evidence')
       const route = node.routes.find((route) => route.adapter === path.adapter && !route.error)
-      if (!route || route.dependencies.length !== path.inputs.length) throw new Error('Missing selected route evidence')
-      for (const [index, dependency] of route.dependencies.entries()) {
+      if (!route) throw new Error('Missing selected route evidence')
+      let consumed = 0
+      for (const dependency of route.dependencies) {
         const child = nodes.get(dependency.key)
-        if (dependency.cutoff || !child?.path) throw new Error('Incomplete selected dependency')
-        const input = path.inputs[index]
+        if (dependency.cutoff || !child) throw new Error('Incomplete selected dependency')
+        if (!child.path) {
+          if (!isTerminalMiss(child)) throw new Error('Incomplete selected dependency')
+          continue
+        }
+        const input = path.inputs[consumed++]
         if (
+          !input ||
           input.chainId !== child.target.chainId ||
           input.token.toLowerCase() !== child.target.token.toLowerCase() ||
           input.priceUsd !== child.path.priceUsd ||
@@ -77,6 +83,7 @@ export function validateGraphResolution(
           throw new Error('Selected dependency evidence mismatch')
         visit(child)
       }
+      if (consumed !== path.inputs.length) throw new Error('Missing selected route evidence')
     }
     visiting.delete(node.key)
     validated.add(node.key)

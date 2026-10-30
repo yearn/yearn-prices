@@ -9,6 +9,7 @@ import {
   RecursiveDependencyError,
   RetryablePricingError
 } from './errors'
+import type { PriceDependency } from './plan'
 import type { RecursivePriceContext, RecursivePriceInput, RecursivePriceTarget, ResolvedPricePath } from './types'
 
 export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
@@ -235,7 +236,7 @@ export async function requireChildren(
 }
 
 /**
- * Prices every constituent of a basket, reporting the unpriceable ones as null
+ * Prices every plan dependency, reporting the unpriceable ones as null
  * so the caller can value them another way. Only an unsupported child is
  * absent; every other failure (transient, budget, invalid, cycle, max-depth)
  * is rethrown, since substituting a derived value there would publish a
@@ -243,21 +244,16 @@ export async function requireChildren(
  */
 export async function optionalChildren(
   context: RecursivePriceContext,
-  parent: RecursivePriceTarget,
-  addresses: string[],
-  blockNumber: number,
-  label: string
+  dependencies: PriceDependency[]
 ): Promise<Array<ResolvedPricePath | null>> {
-  const results = await Promise.all(
-    addresses.map((address) => context.resolve(childTarget(parent, address, blockNumber)))
-  )
-  return results.map((result) => {
+  const results = await Promise.all(dependencies.map(({ target }) => context.resolve(target)))
+  return results.map((result, index) => {
     if (result.path) {
       return result.path
     }
     if (result.failure.reason !== 'unsupported') {
       throw new RecursiveDependencyError(
-        `${label} ${result.failure.token} is unavailable (${result.failure.reason})`,
+        `${dependencies[index].label} ${result.failure.token} is unavailable (${result.failure.reason})`,
         result.failure
       )
     }

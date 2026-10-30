@@ -1,11 +1,11 @@
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { config as loadEnv } from 'dotenv'
 
 loadEnv()
 
-import { parseAbi } from 'viem'
+import { BaseError, ContractFunctionZeroDataError, parseAbi } from 'viem'
 import { parseManifest } from '../src/backfill/manifest'
 import {
   DefiLlamaClient,
@@ -414,13 +414,25 @@ async function warmGraphFallbackPrices(
       })
       stats.insertedGraph += summary.inserted
       stats.rejectedImplausible += summary.rejectedImplausible
+      const replayFile = `${out}.replay.jsonl`
+      const blockedBy = new Map<string, string>()
+      if (existsSync(replayFile)) {
+        for (const line of readFileSync(replayFile, 'utf8').trim().split('\n')) {
+          const record = line ? JSON.parse(line) : null
+          const dependency = record?.type === 'target' && record.failure?.attempts?.[0]?.dependency?.token
+          if (dependency) blockedBy.set(`${record.target.chainId}:${record.target.token.toLowerCase()}`, dependency)
+        }
+      }
       for (const line of readFileSync(out, 'utf8').trim().split('\n')) {
         const record = JSON.parse(line)
         if (record.type !== 'target-outcome' || (record.status !== 'unresolved' && record.status !== 'rejected'))
           continue
         if (record.reason === 'retryable') stats.failures += 1
+        const blocker = blockedBy.get(`${record.target.chainId}:${record.target.token.toLowerCase()}`)
         console.warn(
-          `gap:graph ${record.target.chain}:${record.target.token} ${record.target.eodTimestamp} ${record.reason}`
+          `gap:graph ${record.target.chain}:${record.target.token} ${record.target.eodTimestamp} ${record.reason}${
+            blocker ? ` blocked-by:${blocker}` : ''
+          }`
         )
       }
     } catch (error) {
@@ -505,6 +517,10 @@ async function warmDerivedVaultPrices(
       ])
       stats.insertedDerived += 1
     } catch (error) {
+      if (error instanceof BaseError && error.walk((e) => e instanceof ContractFunctionZeroDataError)) {
+        console.warn(`gap:derived-vault-not-deployed ${vault.chain}:${vault.vaultToken} ${timestamp}`)
+        return
+      }
       stats.failures += 1
       console.error('Derived vault price failed', { vault: vault.vaultToken, timestamp, chainId: vault.chainId }, error)
     }

@@ -89,12 +89,12 @@ const ALIASES: readonly DefiLlamaCoinGeckoAlias[] = [
   {
     chain: 'optimism',
     token: normalizeTokenAddress('0xb153fb3d196a8eb25522705560ac152eeec57901'),
-    identifier: 'coingecko:magic-internet-money-optimism',
+    identifier: 'coingecko:magic-internet-money',
     kind: 'coingecko-alias',
     bridgeIssuer: 'Abracadabra omnichain MIM',
     assumption: 'provider-identifier-alias-after-direct-market-miss',
     rationale:
-      'Abracadabra identifies the requested Optimism contract as omnichain MIM, and CoinGecko maps that exact chain and contract to its Optimism MIM market.',
+      "Abracadabra identifies the Optimism contract as omnichain MIM, DeFiLlama does not serve CoinGecko's Optimism-specific id, so the canonical MIM market is used after a direct contract miss.",
     references: [OPTIMISM_TOKEN_LIST_REFERENCE, ABRACADABRA_OMNICHAIN_MIM_REFERENCE, COINGECKO_OPTIMISM_MIM_REFERENCE]
   },
   fantomProxy({
