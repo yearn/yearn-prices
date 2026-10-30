@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../../../src/http/errors'
 import { graphKey, resolveHistoricalGraph } from '../../../src/sources/onchain/graph'
-import { plannedAdapter } from '../../../src/sources/onchain/plan'
+import { type PricePlan, plannedAdapter } from '../../../src/sources/onchain/plan'
 import type { RecursivePriceTarget, ResolvedPricePath } from '../../../src/sources/onchain/types'
 
 const t = (n: number, block = 10): RecursivePriceTarget => ({
@@ -23,7 +23,7 @@ const price = (target: RecursivePriceTarget, priceUsd = 2): ResolvedPricePath =>
   metadata: {}
 })
 const id = (target: RecursivePriceTarget) => parseInt(target.token, 16)
-function fixture(edges: Record<number, number[]>) {
+function fixture(edges: Record<number, number[]>, derive?: PricePlan['derive']) {
   const discover = vi.fn(async (target: RecursivePriceTarget) => {
     const children = edges[id(target)]
     return children
@@ -34,7 +34,8 @@ function fixture(edges: Record<number, number[]>) {
             priceUsd: inputs.reduce((n, path) => n + path.priceUsd, 0),
             inputs: inputs.map((path) => ({ path })),
             metadata: {}
-          })
+          }),
+          derive
         }
       : null
   })
@@ -116,6 +117,38 @@ describe('historical price graph', () => {
     })
     expect(result.nodes[0].path?.priceUsd).toBe(7)
     expect(result.nodes[0].path?.adapter).toBe('fixture')
+  })
+  it('derives only around terminal misses', async () => {
+    const derive = vi.fn(async (inputs: Array<ResolvedPricePath | null>) => ({
+      priceUsd: 10 * inputs.filter(Boolean).length,
+      inputs: [],
+      metadata: {}
+    }))
+    const { adapter } = fixture({ 1: [2, 3], 4: [2, 5] }, derive)
+    const result = await resolveHistoricalGraph({
+      roots: [t(1), t(4)],
+      market: async (target) => {
+        if (id(target) === 5) throw new ApiError('UNAVAILABLE', '429')
+        return id(target) === 2 ? price(target) : null
+      },
+      prefetch: async () => {},
+      adapters: () => [adapter]
+    })
+    expect(result.nodes.find((n) => id(n.target) === 1)?.path?.priceUsd).toBe(10)
+    expect(result.nodes.find((n) => id(n.target) === 4)?.path).toBeNull()
+    expect(result.nodes.find((n) => id(n.target) === 4)?.reason).toBe('retryable')
+    expect(derive).toHaveBeenCalledTimes(1)
+  })
+  it('records a null derivation as unsupported', async () => {
+    const { adapter } = fixture({ 1: [2, 3] }, async () => null)
+    const result = await resolveHistoricalGraph({
+      roots: [t(1)],
+      market: async (target) => (id(target) === 2 ? price(target) : null),
+      prefetch: async () => {},
+      adapters: () => [adapter]
+    })
+    expect(result.nodes[0].path).toBeNull()
+    expect(result.nodes[0].routes[0].error?.reason).toBe('unsupported')
   })
   it('can resolve a cycle through an independent alternative without circular price evidence', async () => {
     const cyclic = fixture({ 1: [2], 2: [1] }).adapter

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { pairAdapter } from '../../../src/sources/onchain/adapters/pair'
 import { RecursivePriceEngine } from '../../../src/sources/onchain/engine'
 import { RetryablePricingError } from '../../../src/sources/onchain/errors'
+import { resolveHistoricalGraph } from '../../../src/sources/onchain/graph'
 import { adapterOptions, BLOCK_TIMESTAMP, fakeClient, marketFor, priceWith } from './helpers'
 
 const LP = '0x1111111111111111111111111111111111111111'
@@ -95,6 +96,42 @@ describe('pairAdapter', () => {
     it('leaves the LP unresolved when a constituent has no price', async () => {
       const result = await dated({ [WETH]: 2413.6269911487775 })
 
+      expect(result.path).toBeNull()
+      expect(result.failure?.reason).toBe('unsupported')
+    })
+  })
+
+  describe('one-leg derivation', () => {
+    const withStable = (stable?: boolean) => ({
+      ...reads,
+      [LP]: { ...reads[LP], ...(stable === undefined ? {} : { stable }) }
+    })
+
+    it('derives the missing leg of a volatile pair in the recursive engine and the graph', async () => {
+      const adapter = pairAdapter(adapterOptions(withStable(false)))
+      const recursive = await priceWith(adapter, { [TOKEN_A]: 1 }, LP)
+      expect(recursive.path?.priceUsd).toBeCloseTo(2)
+      expect(recursive.path?.inputs).toHaveLength(1)
+      expect(recursive.path?.metadata).toMatchObject({
+        valuationRule: 'constant-product-derived-constituent',
+        derivedReserves: [{ index: 1, address: TOKEN_B, anchorIndex: 0, impliedPriceUsd: 2 }]
+      })
+      const graph = await resolveHistoricalGraph({
+        roots: [{ chainId: 1, token: LP, timestamp: null }],
+        market: marketFor({ [TOKEN_A]: 1 }),
+        prefetch: async () => {},
+        adapters: () => [adapter]
+      })
+      const root = graph.nodes.find((node) => node.key === graph.roots[0])
+      expect(root?.path?.priceUsd).toBeCloseTo(2)
+      expect(root?.path?.metadata.valuationRule).toBe('constant-product-derived-constituent')
+    })
+
+    it.each([
+      ['a stable pair', true],
+      ['a pair without stable()', undefined]
+    ])('does not derive a missing leg for %s', async (_, stable) => {
+      const result = await priceWith(pairAdapter(adapterOptions(withStable(stable))), { [TOKEN_A]: 1 }, LP)
       expect(result.path).toBeNull()
       expect(result.failure?.reason).toBe('unsupported')
     })

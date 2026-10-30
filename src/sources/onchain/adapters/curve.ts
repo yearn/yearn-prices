@@ -8,16 +8,15 @@ import {
   maybe,
   normalizedAddress,
   type OnchainAdapterOptions,
-  optionalChildren,
   rawState,
   recursiveInput,
   tokenDecimals
 } from '../context'
 import { InvalidPricingError } from '../errors'
 import { calculatePoolNavPrice, scaledRaw } from '../math'
-import type { PlannedPriceAdapter } from '../plan'
+import { type PlannedPriceAdapter, plannedAdapter } from '../plan'
 import { WRAPPED_NATIVE } from '../tokens'
-import type { RecursivePriceContext, RecursivePriceTarget, ResolvedPricePath } from '../types'
+import type { RecursivePriceTarget, ResolvedPricePath } from '../types'
 
 const CURVE_ADDRESS_PROVIDER = '0x0000000022D53366457F9d5E68Ec105046FC4383' as Address
 export const CURVE_NATIVE_TOKEN = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
@@ -564,30 +563,12 @@ export function curveAdapter(options: OnchainAdapterOptions): PlannedPriceAdapte
           []
         )
       },
-      // Recursive resolution preserves main's conditional RPC fallback. Graph
-      // evaluation remains pure and requires every declared constituent.
-      async resolve(context: RecursivePriceContext) {
-        const inputs = await optionalChildren(
-          context,
-          target,
-          coins.map((coin) => coin.address),
-          state.numericBlockNumber,
-          'Curve constituent'
-        )
+      async derive(inputs: Array<ResolvedPricePath | null>) {
         const marketPrices = inputs.map((path) => path?.priceUsd ?? null)
-        const derived = marketPrices.some((price) => price == null)
-          ? await deriveMissingLegs(state, poolAddress as Address, coins, marketPrices)
-          : { prices: marketPrices as number[], derivedCoins: [] }
+        const derived = await deriveMissingLegs(state, poolAddress as Address, coins, marketPrices)
         return derived ? quote(inputs, derived.prices, derived.derivedCoins) : null
       }
     }
   }
-  return {
-    name: 'curve-reserve-nav',
-    discover,
-    async resolve(target, context) {
-      const plan = await discover(target)
-      return plan ? plan.resolve(context) : null
-    }
-  }
+  return plannedAdapter('curve-reserve-nav', discover)
 }

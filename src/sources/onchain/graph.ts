@@ -1,5 +1,5 @@
 import { buildAdapterPath, classifyError, validatePath } from './engine'
-import { evaluatePlan, type PlannedPriceAdapter, type PricePlan } from './plan'
+import { derivePlan, evaluatePlan, type PlannedPriceAdapter, type PricePlan } from './plan'
 import type {
   MarketPriceResolver,
   PriceResolutionFailureReason,
@@ -39,6 +39,10 @@ export interface GraphNode {
   reason: PriceResolutionFailureReason | null
   height: number
 }
+// ponytail: a missing child that is itself an LP with missing legs is not a terminal miss; graph stays unresolved where the live path might derive
+export function isTerminalMiss(node: GraphNode): boolean {
+  return node.market === 'missing' && node.routes.length === 0 && node.attempts.length === 0
+}
 const order: PriceResolutionFailureReason[] = ['retryable', 'budget', 'invalid', 'cycle', 'max-depth', 'unsupported']
 const select = (reasons: PriceResolutionFailureReason[]) =>
   order.find((reason) => reasons.includes(reason)) ?? 'unsupported'
@@ -77,6 +81,10 @@ export async function resolveHistoricalGraph(options: {
   if (roots.length > maxNodes) throw new Error('Graph node budget cannot fit roots')
   const nodes = new Map<string, GraphNode>()
   const plans = new Map<GraphRoute, { plan: PricePlan; adapter: PlannedPriceAdapter }>()
+  function usable(route: GraphRoute, dep: GraphRoute['dependencies'][number]) {
+    const child = nodes.get(dep.key)
+    return !dep.cutoff && !!child && (!!child.path || (!!plans.get(route)!.plan.derive && isTerminalMiss(child)))
+  }
   function add(target: RecursivePriceTarget, depth: number) {
     const key = graphKey(target)
     let node = nodes.get(key)
@@ -199,7 +207,7 @@ export async function resolveHistoricalGraph(options: {
     for (const node of [...nodes.values()].reverse()) {
       if (node.market === 'price' && node.path) continue
       for (const [index, route] of node.routes.entries()) {
-        if (route.error || route.dependencies.some((dep) => dep.cutoff || !nodes.get(dep.key)?.path)) continue
+        if (route.error || !route.dependencies.every((dep) => usable(route, dep))) continue
         if (route.dependencies.some((dep) => reaches(dep.key, node.key))) continue
         const children = route.dependencies.map((dep) => nodes.get(dep.key)!)
         const height = 1 + Math.max(-1, ...children.map((child) => child.height))
@@ -209,14 +217,19 @@ export async function resolveHistoricalGraph(options: {
         if (previous?.index === index && previous.signature === signature) break
         try {
           const captured = plans.get(route)!
-          node.path = buildAdapterPath(
-            node.target,
-            captured.adapter,
-            evaluatePlan(
-              captured.plan,
-              children.map((child) => child.path!)
-            )
-          )
+          const inputs = children.map((child) => child.path)
+          const quote = inputs.every(Boolean)
+            ? evaluatePlan(captured.plan, inputs as ResolvedPricePath[])
+            : await derivePlan(captured.plan, inputs)
+          if (!quote) {
+            route.error = {
+              adapter: route.adapter,
+              reason: 'unsupported',
+              error: 'Plan could not derive missing inputs'
+            }
+            continue
+          }
+          node.path = buildAdapterPath(node.target, captured.adapter, quote)
           node.height = height
           selected.set(node.key, { index, signature })
           versions.set(node.key, (versions.get(node.key) ?? 0) + 1)
@@ -233,7 +246,7 @@ export async function resolveHistoricalGraph(options: {
       for (const route of node.routes) {
         const children = route.dependencies.map((dep) => nodes.get(dep.key))
         if (
-          children.every((child) => child?.path) &&
+          route.dependencies.every((dep) => usable(route, dep)) &&
           node.depth + 1 + Math.max(-1, ...children.map((child) => child!.height)) >= maxDepth
         ) {
           route.error ??= {

@@ -11,20 +11,22 @@ import {
   recursiveInput,
   tokenDecimals
 } from '../context'
-import { calculatePoolNavPrice } from '../math'
+import { calculatePoolNavPrice, scaledRaw } from '../math'
 import { type PlannedPriceAdapter, plannedAdapter } from '../plan'
+import type { ResolvedPricePath } from '../types'
 
 const pairAbi = parseAbi([
   'function token0() view returns (address)',
   'function token1() view returns (address)',
-  'function getReserves() view returns (uint256 reserve0, uint256 reserve1, uint256 blockTimestampLast)'
+  'function getReserves() view returns (uint256 reserve0, uint256 reserve1, uint256 blockTimestampLast)',
+  'function stable() view returns (bool)'
 ])
 
-/** Prices an LP token at the NAV of its reserves, so every leg must be priced. */
+/** Prices an LP token at the NAV of its reserves. A volatile Solidly pair may derive one unpriced leg. */
 export function pairAdapter(options: OnchainAdapterOptions): PlannedPriceAdapter {
   return plannedAdapter('amm-reserve-nav', async (target) => {
     const state = await contractContext(target, options)
-    const [token0Raw, token1Raw, reserves, totalSupplyRaw, poolDecimalsRaw] = await Promise.all([
+    const [token0Raw, token1Raw, reserves, totalSupplyRaw, poolDecimalsRaw, stable] = await Promise.all([
       maybe(() =>
         state.client.readContract({
           address: state.address,
@@ -64,6 +66,14 @@ export function pairAdapter(options: OnchainAdapterOptions): PlannedPriceAdapter
           functionName: 'decimals',
           blockNumber: state.blockNumber
         })
+      ),
+      maybe(() =>
+        state.client.readContract({
+          address: state.address,
+          abi: pairAbi,
+          functionName: 'stable',
+          blockNumber: state.blockNumber
+        })
       )
     ])
     if (!token0Raw || !token1Raw || !reserves || totalSupplyRaw == null || poolDecimalsRaw == null) {
@@ -92,42 +102,57 @@ export function pairAdapter(options: OnchainAdapterOptions): PlannedPriceAdapter
         { address: token1, decimals: token1Decimals, balanceRaw: rawState(reserves[1]) }
       ]
     }
+    const tokens = [token0, token1]
+    function quote(inputs: Array<ResolvedPricePath | null>, prices: number[], extra: Record<string, unknown> = {}) {
+      return {
+        priceUsd: calculatePoolNavPrice(
+          tokens.map((address, index) => ({
+            address,
+            balanceRaw: balances[index],
+            decimals: decimals[index],
+            priceUsd: prices[index]
+          })),
+          totalSupplyRaw,
+          poolDecimals
+        ),
+        blockNumber: state.numericBlockNumber,
+        inputs: inputs.flatMap((path, index) =>
+          path
+            ? [
+                recursiveInput(path, {
+                  method: 'pool-reserve-nav',
+                  balanceRaw: rawState(balances[index]),
+                  decimals: decimals[index]
+                })
+              ]
+            : []
+        ),
+        metadata: { ...metadata, ...extra }
+      }
+    }
     return {
-      dependencies: [token0, token1].map((address) => ({
+      dependencies: tokens.map((address) => ({
         target: childTarget(target, address, state.numericBlockNumber),
         label: 'AMM constituent'
       })),
       metadata,
       evaluate(inputs) {
-        return {
-          priceUsd: calculatePoolNavPrice(
-            [
-              {
-                address: token0,
-                balanceRaw: reserves[0],
-                decimals: token0Decimals,
-                priceUsd: inputs[0].priceUsd
-              },
-              {
-                address: token1,
-                balanceRaw: reserves[1],
-                decimals: token1Decimals,
-                priceUsd: inputs[1].priceUsd
-              }
-            ],
-            totalSupplyRaw,
-            poolDecimals
-          ),
-          blockNumber: state.numericBlockNumber,
-          inputs: inputs.map((path, index) =>
-            recursiveInput(path, {
-              method: 'pool-reserve-nav',
-              balanceRaw: rawState(balances[index]),
-              decimals: decimals[index]
-            })
-          ),
-          metadata
-        }
+        return quote(
+          inputs,
+          inputs.map((path) => path.priceUsd)
+        )
+      },
+      async derive(inputs) {
+        const index = inputs.findIndex((path) => !path)
+        const anchor = inputs[1 - index]
+        if (stable !== false || index < 0 || !anchor || balances[index] <= 0n) return null
+        const pricedValue = scaledRaw(balances[1 - index], decimals[1 - index]) * anchor.priceUsd
+        const impliedPriceUsd = pricedValue / scaledRaw(balances[index], decimals[index])
+        const prices = inputs.map((path) => path?.priceUsd ?? impliedPriceUsd)
+        return quote(inputs, prices, {
+          valuationRule: 'constant-product-derived-constituent',
+          derivedReserves: [{ index, address: tokens[index], anchorIndex: 1 - index, impliedPriceUsd }]
+        })
       }
     }
   })

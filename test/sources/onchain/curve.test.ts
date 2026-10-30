@@ -32,7 +32,7 @@ const reads = {
 }
 
 describe('curveAdapter', () => {
-  it('preserves recursive quote fallback while keeping graph dependencies explicit', async () => {
+  it('derives a missing leg with get_dy in both the recursive engine and the graph', async () => {
     const quoteReads = {
       [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
       [CURVE_POOL]: {
@@ -62,8 +62,22 @@ describe('curveAdapter', () => {
       adapters: () => [adapter]
     })
     const root = graph.nodes.find((node) => node.key === graph.roots[0])!
-    expect(root.path).toBeNull()
+    expect(root.path?.priceUsd).toBeCloseTo(2)
+    expect(root.path?.metadata.valuationRule).toBe('get-dy-derived-constituents')
     expect(root.routes[0].dependencies.map((dep) => dep.target.token.toLowerCase())).toEqual([TOKEN_A, TOKEN_B])
+    const failing = marketFor({ [TOKEN_A]: 1 })
+    const throwing = await resolveHistoricalGraph({
+      roots: [{ chainId: 1, token: LP, timestamp: null }],
+      market: async (target) => {
+        if (target.token.toLowerCase() === TOKEN_B) throw new RetryablePricingError('market down')
+        return failing(target)
+      },
+      prefetch: async () => {},
+      adapters: () => [adapter]
+    })
+    const unresolved = throwing.nodes.find((node) => node.key === throwing.roots[0])!
+    expect(unresolved.path).toBeNull()
+    expect(unresolved.reason).toBe('retryable')
     const complete = await resolveHistoricalGraph({
       roots: [{ chainId: 1, token: LP, timestamp: null }],
       market: marketFor({ [TOKEN_A]: 1, [TOKEN_B]: 1 }),
