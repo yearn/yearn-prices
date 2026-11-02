@@ -19,10 +19,10 @@ function configureLocalNeon(host: string): void {
   neonConfig.wsProxy = () => (host === 'db.localtest.me' ? 'db.localtest.me:4444/v2' : '127.0.0.1:4444/v2')
   neonConfig.pipelineTLS = false
   neonConfig.pipelineConnect = false
-  neonConfig.poolQueryViaFetch = true
 }
 
 export function createPool(connectionString: string): Pool {
+  neonConfig.poolQueryViaFetch = true
   const host = connectionHostname(connectionString)
   if (host && LOCAL_NEON_HOSTS.has(host)) {
     configureLocalNeon(host)

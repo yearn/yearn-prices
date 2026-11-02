@@ -30,9 +30,9 @@ describe('createPool', () => {
     void pool.end()
   })
 
-  it('leaves neon.tech connection config alone', () => {
+  it('queries neon.tech over HTTP, not WebSocket', () => {
     createPool('postgres://user:pass@ep-example.us-east-2.aws.neon.tech/neondb?sslmode=require')
-    expect(neonConfig.poolQueryViaFetch).toBe(snapshot.poolQueryViaFetch)
+    expect(neonConfig.poolQueryViaFetch).toBe(true)
     expect(neonConfig.useSecureWebSocket).toBe(snapshot.useSecureWebSocket)
   })
 })
