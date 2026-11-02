@@ -5,6 +5,12 @@ export type AuditKind = 'underlying' | 'vault'
 export const AUDIT_SOURCES = ['defillama', 'derived'] as const satisfies readonly PriceSource[]
 export type AuditSource = (typeof AUDIT_SOURCES)[number]
 
+export const DEFILLAMA_UNLISTED_VAULTS = new Set([
+  'ethereum:0x790a60024bc3aea28385b60480f15a0771f26d09',
+  'berachain:0x982940ebfc5caa2f5b5a82aac2dfa99f18bb7da4',
+  'berachain:0xc82971bcff09171e16ac08aee9f4ea3fb16c3bdc'
+])
+
 export interface ExpectedTuple {
   chain: string
   token: string
@@ -30,7 +36,8 @@ export function expectedTuples(allVaults: NormalizedVault[], timestamps: number[
     if (!tokens.has(key)) tokens.set(key, { chain, token, kind, source })
   }
   for (const vault of vaults) {
-    add(vault.chain, vault.vaultToken, 'vault', 'defillama')
+    if (!DEFILLAMA_UNLISTED_VAULTS.has(`${vault.chain}:${vault.vaultToken.toLowerCase()}`))
+      add(vault.chain, vault.vaultToken, 'vault', 'defillama')
     add(vault.chain, vault.vaultToken, 'vault', 'derived')
   }
   for (const vault of vaults) add(vault.chain, vault.underlyingToken, 'underlying', 'defillama')

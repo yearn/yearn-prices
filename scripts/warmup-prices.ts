@@ -44,6 +44,10 @@ if (!databaseUrl) {
 }
 
 const pool = createPool(databaseUrl)
+const quiet = process.argv.includes('--quiet')
+const gap = (message: string) => {
+  if (!quiet) console.warn(message)
+}
 const stats: WarmupStats = {
   cacheHits: 0,
   apiCalls: 0,
@@ -118,7 +122,7 @@ function parseArgs(argv: string[]): { start: number; end: number; chainId: numbe
   for (let index = 0; index < argv.length; index += 1) {
     const current = argv[index]
     const next = argv[index + 1]
-    if (current === '--graph') continue
+    if (current === '--graph' || current === '--quiet') continue
     if (current.startsWith('--') && next) {
       options.set(current, next)
       index += 1
@@ -227,7 +231,7 @@ async function warmDirectPrices(vaults: NormalizedVault[], timestamps: number[],
         const built = buildDefiLlamaWrites(chain, token, requestedTimestamps, response.coins[tokenKey])
         writes.push(...built.writes)
         for (const requestedTimestamp of built.missing) {
-          console.warn(`gap:defillama ${tokenKey} ${requestedTimestamp}`)
+          gap(`gap:defillama ${tokenKey} ${requestedTimestamp}`)
         }
       }
 
@@ -282,7 +286,7 @@ async function warmChainlinkPrices(vaults: NormalizedVault[], timestamps: number
       const result = await chainlink.getHistoricalPrice(underlying.chainId, underlying.token, request.timestamp)
 
       if (result == null) {
-        console.warn(`gap:chainlink ${request.chain}:${request.token} ${request.timestamp}`)
+        gap(`gap:chainlink ${request.chain}:${request.token} ${request.timestamp}`)
         return
       }
 
@@ -341,7 +345,7 @@ async function warmCurveFallbackPrices(
 
       const client = getChainClient(underlying.chainId)
       if (!client) {
-        console.warn(`gap:missing-rpc chainId=${underlying.chainId}`)
+        gap(`gap:missing-rpc chainId=${underlying.chainId}`)
         return
       }
 
@@ -355,7 +359,7 @@ async function warmCurveFallbackPrices(
       })
 
       if (price == null) {
-        console.warn(`gap:curve ${request.chain}:${request.token} ${request.timestamp}`)
+        gap(`gap:curve ${request.chain}:${request.token} ${request.timestamp}`)
         return
       }
 
@@ -429,7 +433,7 @@ async function warmGraphFallbackPrices(
           continue
         if (record.reason === 'retryable') stats.failures += 1
         const blocker = blockedBy.get(`${record.target.chainId}:${record.target.token.toLowerCase()}`)
-        console.warn(
+        gap(
           `gap:graph ${record.target.chain}:${record.target.token} ${record.target.eodTimestamp} ${record.reason}${
             blocker ? ` blocked-by:${blocker}` : ''
           }`
@@ -483,13 +487,13 @@ async function warmDerivedVaultPrices(
     try {
       const underlying = underlyingMap.get(`${vault.chain}:${vault.underlyingToken}:${timestamp}`)
       if (!underlying) {
-        console.warn(`gap:derived-underlying ${vault.chain}:${vault.underlyingToken} ${timestamp}`)
+        gap(`gap:derived-underlying ${vault.chain}:${vault.underlyingToken} ${timestamp}`)
         return
       }
 
       const client = getChainClient(vault.chainId)
       if (!client) {
-        console.warn(`gap:missing-rpc chainId=${vault.chainId}`)
+        gap(`gap:missing-rpc chainId=${vault.chainId}`)
         return
       }
 
@@ -518,7 +522,7 @@ async function warmDerivedVaultPrices(
       stats.insertedDerived += 1
     } catch (error) {
       if (error instanceof BaseError && error.walk((e) => e instanceof ContractFunctionZeroDataError)) {
-        console.warn(`gap:derived-vault-not-deployed ${vault.chain}:${vault.vaultToken} ${timestamp}`)
+        gap(`gap:derived-vault-not-deployed ${vault.chain}:${vault.vaultToken} ${timestamp}`)
         return
       }
       stats.failures += 1
@@ -532,7 +536,7 @@ try {
   const timestamps = buildDailyTimestamps(start, end)
   const vaults = chainId !== undefined ? chainlinkFeedVaults(chainId) : await fetchYearnVaults()
 
-  console.info(`Warmup start: ${timestamps.length} days, ${vaults.length} vaults`)
+  if (!quiet) console.info(`Warmup start: ${timestamps.length} days, ${vaults.length} vaults`)
   if (chainId !== undefined) {
     await warmChainlinkPrices(vaults, timestamps, stats)
   } else {

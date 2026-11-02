@@ -52,7 +52,7 @@ try {
     console.error(`audit: ${report.missing.length} gaps, running warmup`)
     const warmup = spawnSync(
       'bun',
-      ['run', 'scripts/warmup-prices.ts', '--start', String(start), '--end', String(end)],
+      ['run', 'scripts/warmup-prices.ts', '--start', String(start), '--end', String(end), '--quiet'],
       {
         stdio: ['inherit', 2, 'inherit']
       }
@@ -64,8 +64,15 @@ try {
     report = await audit(vaults)
   }
 
-  console.info(JSON.stringify({ window: { start, end }, missingRpc, warmupFailed, ...report }))
+  const { missing, ...summary } = report
+  console.info(JSON.stringify({ window: { start, end }, missingRpc, warmupFailed, ...summary }))
   if (auditFailed(report, missingRpc, warmupFailed)) {
+    const byToken: Record<string, number> = {}
+    for (const tuple of missing) {
+      const key = `${tuple.chain}:${tuple.token} ${tuple.kind}/${tuple.source}`
+      byToken[key] = (byToken[key] ?? 0) + 1
+    }
+    for (const [key, days] of Object.entries(byToken)) console.error(`audit: missing ${key} days=${days}`)
     process.exitCode = 1
   }
 } finally {
