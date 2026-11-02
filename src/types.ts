@@ -16,11 +16,7 @@ export const isDefiLlamaSource = (source: string) => source.startsWith('defillam
 export interface Env {
   DATABASE_URL: string
   ENSO_API_KEY?: string
-  OTEL_EXPORTER_OTLP_ENDPOINT?: string
-  OTEL_EXPORTER_OTLP_HEADERS?: string
-  OTEL_EXPORTER_OTLP_LOGS_ENDPOINT?: string
-  OTEL_EXPORTER_OTLP_LOGS_HEADERS?: string
-  OTEL_SERVICE_NAME?: string
+  SENTRY_DSN?: string
   [key: string]: string | undefined
 }
 

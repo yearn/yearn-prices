@@ -1,8 +1,8 @@
+import * as Sentry from '@sentry/cloudflare'
 import { CACHE_CONTROL_NO_STORE, readEdgeCache, writeEdgeCache } from './cache'
 import { createPool } from './db'
 import { ApiError, authenticateRequest, jsonError, notFoundErrorHeaders, optionsResponse, withCors } from './http'
 import { renderLandingPage } from './lander'
-import { captureError } from './observability'
 import { handleHealth } from './routes/health'
 import { handleBatchHistorical } from './routes/historical/batch'
 import { handleHistorical } from './routes/historical/exact'
@@ -55,7 +55,7 @@ async function routePriceRequest(request: Request, env: Env, pathname: string): 
   throw new ApiError('NOT_FOUND', 'Route not found')
 }
 
-export default {
+const handler = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     if (request.method === 'OPTIONS') {
       return optionsResponse()
@@ -117,7 +117,7 @@ export default {
           error.code === 'NOT_FOUND' && notFoundCacheable
             ? withCors(notFoundErrorHeaders())
             : withCors({ 'cache-control': CACHE_CONTROL_NO_STORE })
-        if (error.status >= 500) captureError(ctx, env, error)
+        if (error.status >= 500) Sentry.captureException(error)
         return jsonError(error, headers)
       }
 
@@ -129,7 +129,7 @@ export default {
           error: error instanceof Error ? error.message : String(error)
         })
       )
-      captureError(ctx, env, error)
+      Sentry.captureException(error)
       return jsonError(
         new ApiError('INTERNAL_ERROR', 'Unexpected internal error'),
         withCors({ 'cache-control': CACHE_CONTROL_NO_STORE })
@@ -137,3 +137,5 @@ export default {
     }
   }
 }
+
+export default Sentry.withSentry((env: Env) => ({ dsn: env.SENTRY_DSN }), handler)

@@ -1,4 +1,4 @@
-import { captureError } from '../observability'
+import * as Sentry from '@sentry/cloudflare'
 import type { Env } from '../types'
 
 // Deploying this revision makes all pre-quarantine historical cache entries
@@ -128,7 +128,7 @@ export function writeEdgeCache(ctx: ExecutionContext, env: Env, request: Request
     edgeCache()
       .put(cacheKey(request), response.clone())
       .catch((error: unknown) => {
-        captureError(ctx, env, error)
+        Sentry.captureException(error)
       })
   )
 }
