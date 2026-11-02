@@ -59,5 +59,8 @@ it('skips retired, hidden, and zero-TVL vaults', () => {
 
 it('skips defillama vault tuples for unlisted vaults', () => {
   const tuples = expectedTuples([vault('0x790a60024bC3aea28385b60480f15a0771f26D09', '0xu')], [1])
-  expect(tuples.map((tuple) => `${tuple.kind}/${tuple.source}`).sort()).toEqual(['underlying/defillama', 'vault/derived'])
+  expect(tuples.map((tuple) => `${tuple.kind}/${tuple.source}`).sort()).toEqual([
+    'underlying/defillama',
+    'vault/derived'
+  ])
 })
