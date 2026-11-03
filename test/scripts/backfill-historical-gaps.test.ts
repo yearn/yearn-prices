@@ -612,6 +612,42 @@ describe('createChartFetcher', () => {
     expect(fetched.attempts).toBe(2)
     expect(fetched.rateLimited).toBe(1)
   })
+
+  it('holds sibling chart requests for the full Retry-After cooldown', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('{}', { status: 429, headers: { 'retry-after': '120' } }))
+      .mockImplementation(async () => Response.json({ coins: {} }))
+    vi.stubGlobal('fetch', fetchMock)
+    const fetcher = createChartFetcher('6h')
+    const first = fetcher('ethereum:0xa', EOD, 1)
+    await vi.advanceTimersByTimeAsync(0)
+    const second = fetcher('ethereum:0xb', EOD, 1)
+
+    await vi.advanceTimersByTimeAsync(119_999)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    await Promise.all([first, second])
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('caps an absurd Retry-After instead of stalling the job', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('{}', { status: 429, headers: { 'retry-after': '604800' } }))
+      .mockImplementation(async () => Response.json({ coins: {} }))
+    vi.stubGlobal('fetch', fetchMock)
+    const pending = createChartFetcher('6h')('ethereum:0xa', EOD, 1)
+    await vi.advanceTimersByTimeAsync(600_000)
+    await pending
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('parseArgs', () => {

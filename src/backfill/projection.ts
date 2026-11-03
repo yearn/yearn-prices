@@ -1,6 +1,69 @@
 import type { GraphNode } from '../sources/onchain/graph'
 import { dependencyRoute } from './investigation'
 
+export interface BackfillTargetOutcome {
+  target: { chainId: number; token: string; eodTimestamp: number }
+  status: string
+  [key: string]: unknown
+}
+
+const REMAINING_OUTCOME_STATUSES = new Set(['unresolved', 'rejected', 'rejected_implausible'])
+const RESOLVED_OUTCOME_STATUSES = new Set([
+  'skipped_existing',
+  'inserted',
+  'would-insert',
+  'skipped_concurrent_existing'
+])
+
+/** Reconcile one authoritative final outcome for every normalized target. */
+export function reconcileTargetOutcomes(outcomes: BackfillTargetOutcome[], targetCount: number) {
+  if (!Number.isSafeInteger(targetCount) || targetCount < 0) throw new Error('Invalid normalized target count')
+  const seen = new Set<string>()
+  const remaining: BackfillTargetOutcome[] = []
+  let alreadyStored = 0
+  let insertedOrProjected = 0
+  let concurrentExisting = 0
+  let unresolved = 0
+  let rejected = 0
+  let rejectedImplausible = 0
+
+  for (const outcome of outcomes) {
+    const { chainId, token, eodTimestamp } = outcome.target ?? ({} as BackfillTargetOutcome['target'])
+    if (!Number.isSafeInteger(chainId) || typeof token !== 'string' || !Number.isSafeInteger(eodTimestamp))
+      throw new Error('Malformed final target outcome')
+    const key = `${chainId}:${token.toLowerCase()}:${eodTimestamp}`
+    if (seen.has(key)) throw new Error('Duplicate final target outcome')
+    seen.add(key)
+
+    if (outcome.status === 'skipped_existing') alreadyStored++
+    else if (outcome.status === 'inserted' || outcome.status === 'would-insert') insertedOrProjected++
+    else if (outcome.status === 'skipped_concurrent_existing') concurrentExisting++
+    else if (REMAINING_OUTCOME_STATUSES.has(outcome.status)) {
+      remaining.push(outcome)
+      if (outcome.status === 'unresolved') unresolved++
+      else if (outcome.status === 'rejected') rejected++
+      else rejectedImplausible++
+    } else if (!RESOLVED_OUTCOME_STATUSES.has(outcome.status)) {
+      throw new Error(`Unknown final target outcome status: ${outcome.status}`)
+    }
+  }
+
+  if (outcomes.length !== targetCount)
+    throw new Error(`Final target outcomes do not reconcile: expected ${targetCount}, found ${outcomes.length}`)
+
+  return {
+    targetCount,
+    alreadyStored,
+    insertedOrProjected,
+    concurrentExisting,
+    remaining,
+    remainingOriginalTargets: remaining.length,
+    unresolved,
+    rejected,
+    rejectedImplausible
+  }
+}
+
 /** Trace only roots that the completed backfill leaves unresolved. Unused
  * graph branches and older inventory failures do not belong in the forecast. */
 export function remainingPriceProjection(nodes: GraphNode[], remainingRoots: string[]) {

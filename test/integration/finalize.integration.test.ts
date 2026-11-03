@@ -35,7 +35,14 @@ function target(overrides: Partial<FinalizationTarget> = {}): FinalizationTarget
     token: TOKEN,
     tokenLowercase: TOKEN_LOWERCASE,
     eodTimestamp: EOD,
-    resolution: { price: 1.0012, symbol: 'USDC', confidence: 0.99, source: 'defillama' },
+    resolution: {
+      price: 1.0012,
+      symbol: 'USDC',
+      confidence: 0.99,
+      source: 'defillama',
+      observedTimestamp: OBSERVED,
+      observationEndpoint: '/batchHistorical'
+    },
     ...overrides
   }
 }
@@ -48,8 +55,18 @@ async function seedPrice(source: PriceSource, price = 2.5, timestamp = EOD): Pro
   )
 }
 
-async function priceRows(): Promise<Array<{ price: string; source: string; timestamp: Date }>> {
-  const result = await pool.query('SELECT price, source, timestamp FROM token_prices ORDER BY source')
+async function priceRows(): Promise<
+  Array<{
+    price: string
+    source: string
+    timestamp: Date
+    observed_at: Date | null
+    observation_endpoint: string | null
+  }>
+> {
+  const result = await pool.query(
+    'SELECT price, source, timestamp, observed_at, observation_endpoint FROM token_prices ORDER BY source'
+  )
   return result.rows
 }
 
@@ -96,6 +113,8 @@ describe('finalization writes', () => {
     expect(Number(rows[0].price)).toBeCloseTo(1.0012)
     expect(Math.floor(rows[0].timestamp.getTime() / 1000)).toBe(EOD)
     expect(Math.floor(rows[0].timestamp.getTime() / 1000)).not.toBe(OBSERVED)
+    expect(Math.floor(rows[0].observed_at!.getTime() / 1000)).toBe(OBSERVED)
+    expect(rows[0].observation_endpoint).toBe('/batchHistorical')
   })
 
   it('skips the row on a rerun instead of updating it', async () => {
@@ -118,6 +137,18 @@ describe('finalization writes', () => {
     const rows = await priceRows()
     expect(rows).toHaveLength(1)
     expect(Number(rows[0].price)).toBeCloseTo(2.5)
+  })
+
+  it('replaces a hidden provisional same-source row and finalizes it', async () => {
+    await seedPrice('defillama', 2.5)
+    await pool.query('UPDATE token_prices SET finalized = FALSE')
+    const outcome = await finalizeBackfillTargets(backfillPool(), [target()])
+
+    expect(outcome.inserted).toBe(1)
+    const result = await pool.query('SELECT price, finalized FROM token_prices')
+    expect(result.rows).toHaveLength(1)
+    expect(Number(result.rows[0].price)).toBeCloseTo(1.0012)
+    expect(result.rows[0].finalized).toBe(true)
   })
 
   it('reports a different-source row committed before the guard as skipped_concurrent_existing', async () => {

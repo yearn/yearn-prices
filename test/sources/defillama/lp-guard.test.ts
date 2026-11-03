@@ -98,4 +98,47 @@ describe('createCurveLpGuard', () => {
     })
     expect(await isPlausible(1, LP, TIMESTAMP, 6_656_790_044_458_034)).toBe(true)
   })
+
+  it.each([true, false])(
+    'keeps pre-deployment absence separate from later pool discovery (before first=%s)',
+    async (beforeFirst) => {
+      const deployedAt = TIMESTAMP - 100
+      const client = {
+        async readContract({
+          address,
+          functionName,
+          args,
+          blockNumber
+        }: {
+          address: string
+          functionName: string
+          args?: readonly unknown[]
+          blockNumber?: bigint
+        }) {
+          if (blockNumber === 1n) throw new Error('contract not deployed at this block')
+          const contract = stableReads[address.toLowerCase()]
+          if (!contract || !(functionName in contract)) throw new Error('function unavailable')
+          const value = contract[functionName]
+          if (Array.isArray(value) && functionName === 'coins') return value[Number(args?.[0])]
+          return value
+        }
+      }
+      const isPlausible = createCurveLpGuard({
+        clientForChain: () => client as never,
+        coinPrices: async (_chainId, coins) =>
+          coins.map((coin) => peggedCoins[coin.toLowerCase() as keyof typeof peggedCoins] ?? null),
+        blockForTimestamp: async (_client, _chainId, timestamp) => (timestamp < deployedAt ? 1n : 2n),
+        blockTimestampForTarget: async (_client, blockNumber, target) =>
+          blockNumber === 1n ? (target.timestamp ?? TIMESTAMP) - 1 : (target.timestamp ?? TIMESTAMP)
+      })
+      const checkBefore = () => isPlausible(1, LP, TIMESTAMP - 200, 6_656_790_044_458_034)
+      const checkAfter = () => isPlausible(1, LP, TIMESTAMP, 6_656_790_044_458_034)
+
+      const results = beforeFirst
+        ? [await checkBefore(), await checkAfter()]
+        : [await checkAfter(), await checkBefore()]
+
+      expect(results).toEqual(beforeFirst ? [true, false] : [false, true])
+    }
+  )
 })

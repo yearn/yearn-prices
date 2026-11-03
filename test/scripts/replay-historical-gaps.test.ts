@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   aliasEligibilityOf,
   buildReport,
+  captureRanges,
+  chartClient,
   classifyDirection,
   hasEqualDistanceTie,
   matchChartResponse,
@@ -12,7 +14,14 @@ import {
 } from '../../scripts/replay-historical-gaps'
 import { type NormalizedTarget, parseManifest } from '../../src/backfill/manifest'
 import { groupContiguousRanges } from '../../src/backfill/ranges'
+import { SharedCooldownRateLimiter } from '../../src/clients/http-client'
 import { getDefiLlamaCoinGeckoAlias } from '../../src/sources/defillama/aliases'
+import { DEFI_LLAMA_TOKEN_BATCH } from '../../src/sources/defillama/batch'
+
+afterEach(() => {
+  vi.useRealTimers()
+  vi.unstubAllGlobals()
+})
 
 const DAY_SECONDS = 86_400
 const BASE_EOD = 1_704_153_599
@@ -35,6 +44,75 @@ function identifierOf(item: { target: NormalizedTarget }): string {
 function eodOf(item: { target: NormalizedTarget }): number {
   return item.target.eodTimestamp
 }
+
+it('keeps sibling replay chart calls behind the full shared Retry-After cooldown', async () => {
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(new Response('{}', { status: 429, headers: { 'retry-after': '120' } }))
+    .mockImplementation(async () => Response.json({ coins: {} }))
+  vi.stubGlobal('fetch', fetchMock)
+  const limiter = new SharedCooldownRateLimiter(10, 1000)
+  const first = chartClient(limiter, () => {}).getChart(['ethereum:0xa'], { start: BASE_EOD, period: '1d' })
+  await vi.advanceTimersByTimeAsync(0)
+  const second = chartClient(limiter, () => {}).getChart(['ethereum:0xb'], { start: BASE_EOD, period: '1d' })
+
+  await vi.advanceTimersByTimeAsync(119_999)
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+  await vi.advanceTimersByTimeAsync(1)
+  await Promise.all([first, second])
+  expect(fetchMock).toHaveBeenCalledTimes(3)
+})
+
+it('coalesces same-range replay identifiers in conservative chart batches and keeps per-range records', async () => {
+  const ranges = Array.from({ length: DEFI_LLAMA_TOKEN_BATCH + 1 }, (_, index) => {
+    const token = `0x${(index + 1).toString(16)}`
+    return {
+      identifier: `ethereum:${token}`,
+      rangeStart: BASE_EOD,
+      rangeEnd: BASE_EOD,
+      items: [{ cohort: 'gap' as const, target: target('ethereum', token, 0) }]
+    }
+  })
+  const fetchMock = vi.fn(async (input: string | URL | Request) => {
+    const url = new URL(input.toString())
+    const identifiers = url.pathname.split('/chart/')[1].split(',')
+    return Response.json({
+      coins: Object.fromEntries(
+        identifiers.map((identifier) => [identifier, chart([{ timestamp: BASE_EOD, price: 2 }])])
+      )
+    })
+  })
+  vi.stubGlobal('fetch', fetchMock)
+  const stats = { apiCalls: 0, retries: 0, requestFailures: 0 }
+  const captureRecords: unknown[] = []
+  const requestRecords: unknown[] = []
+
+  const results = await captureRanges(
+    { label: '6h', searchWidth: '6h', offsetSeconds: 21_600 },
+    'direct',
+    ranges,
+    () => undefined,
+    new SharedCooldownRateLimiter(10, 1000),
+    stats,
+    new Map(),
+    captureRecords as never,
+    requestRecords as never
+  )
+
+  const identifierCounts = fetchMock.mock.calls.map(
+    ([input]) => new URL(input.toString()).pathname.split('/chart/')[1].split(',').length
+  )
+  expect(identifierCounts.sort()).toEqual([1, DEFI_LLAMA_TOKEN_BATCH])
+  expect(stats).toMatchObject({ apiCalls: 2, retries: 0, requestFailures: 0 })
+  expect(results.size).toBe(ranges.length)
+  expect([...results.values()]).toEqual(
+    Array.from({ length: ranges.length }, () => expect.objectContaining({ kind: 'matched' }))
+  )
+  expect(captureRecords).toHaveLength(ranges.length)
+  expect(requestRecords).toHaveLength(ranges.length)
+})
 
 describe('groupContiguousRanges', () => {
   it('merges consecutive days for the same identifier into one range', () => {

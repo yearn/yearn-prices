@@ -19,6 +19,8 @@ export interface DefiLlamaRequestOptions {
   retryRateLimits?: boolean
   retryTransportErrors?: boolean
   retryInvalidJson?: boolean
+  onRateLimit?: (retryAfterMs: number | null, url: string, status: number) => void
+  signal?: AbortSignal
 }
 
 /** Widest window DeFiLlama may search for a sample around a requested timestamp. */

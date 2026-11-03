@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { insertTokenPrices, type Queryable } from '../src/db/queries'
+import { finalizeTokenPrices, insertProvisionalTokenPrices, insertTokenPrices, type Queryable } from '../src/db/queries'
 import type { TokenPriceWrite } from '../src/types'
 import { currentUtcDayEnd, normalizeToEndOfDay } from '../src/utils'
 
@@ -61,5 +61,38 @@ describe('insertTokenPrices', () => {
 
     expect(calls).toHaveLength(1)
     expect(calls[0].text).toContain('DO UPDATE')
+  })
+
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY])('rejects invalid price %s before writing', async (price) => {
+    const { calls, client } = recorder()
+
+    await expect(insertTokenPrices(client, [row(HISTORICAL, { price })])).rejects.toThrow(/finite and positive/)
+    expect(calls).toHaveLength(0)
+  })
+
+  it('finalizes provisional rows and refuses to overwrite finalized conflicts', async () => {
+    const { calls, client } = recorder()
+    await finalizeTokenPrices(client, [row(HISTORICAL, { price: 2 })])
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0].text).toContain('finalized = EXCLUDED.finalized')
+    expect(calls[0].text).toContain('WHERE token_prices.finalized = FALSE')
+    expect(calls[0].values).toContain(true)
+  })
+
+  it('keeps a pre-midnight provisional intent provisional after its day closes', async () => {
+    const { calls, client } = recorder()
+    await insertProvisionalTokenPrices(client, [row(HISTORICAL, { finalizationIntent: 'provisional' })])
+
+    expect(calls).toHaveLength(1)
+    expect(calls[0].values).toContain(false)
+    expect(calls[0].text).toContain('WHERE token_prices.finalized = FALSE')
+  })
+
+  it('does not mark a current UTC day as finalized', async () => {
+    const { calls, client } = recorder()
+
+    await expect(finalizeTokenPrices(client, [row(currentUtcDayEnd())])).rejects.toThrow(/current UTC day/)
+    expect(calls).toHaveLength(0)
   })
 })

@@ -118,7 +118,7 @@ describe('the closest-observation matcher', () => {
     ).toMatchObject({ kind: 'matched', price: 1000 })
   })
 
-  it('rejects malformed observations without failing the response', () => {
+  it('uses a valid in-window observation when other samples are malformed', () => {
     const entry = {
       prices: [
         { timestamp: EOD - 10, price: 0 },
@@ -134,6 +134,27 @@ describe('the closest-observation matcher', () => {
       ]
     }
     expect(matchChartObservation(entry, EOD)).toMatchObject({ kind: 'matched', price: 999, offsetSeconds: -40 })
+  })
+
+  it.each([null, 5, [], { prices: [{ timestamp: 'bad', price: 123 }] }, { prices: [null] }])(
+    'keeps present malformed chart content distinct from a confirmed miss: %j',
+    (entry) => {
+      expect(matchChartObservation(entry, EOD)).toEqual({ kind: 'invalid_response' })
+    }
+  )
+
+  it('keeps malformed samples invalid even when valid samples are only outside the requested window', () => {
+    expect(
+      matchChartObservation(
+        {
+          prices: [
+            { timestamp: EOD + MAXIMUM_ACCEPTED_OFFSET_SECONDS + 1, price: 10 },
+            { timestamp: 'bad', price: 11 }
+          ]
+        },
+        EOD
+      )
+    ).toEqual({ kind: 'invalid_response' })
   })
 
   it('returns not_found for a missing coin entry and for an empty price list', () => {

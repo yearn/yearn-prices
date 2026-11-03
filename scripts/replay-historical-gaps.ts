@@ -18,9 +18,11 @@ import { type MatchResult, matchChartObservation, windowEligibleObservations } f
 import { priceKey } from '../src/backfill/priced-keys'
 import { gitRevision, toolVersion } from '../src/backfill/provenance'
 import { type ContiguousRange, groupContiguousRanges, rangeSpanDays } from '../src/backfill/ranges'
-import { DefiLlamaClient, SlidingWindowRateLimiter } from '../src/clients'
+import { DefiLlamaClient } from '../src/clients'
+import { SharedCooldownRateLimiter } from '../src/clients/http-client'
 import { createPool, getBatchHistoricalPrices } from '../src/db'
 import { getDefiLlamaCoinGeckoAlias, listDefiLlamaCoinGeckoAliases } from '../src/sources/defillama/aliases'
+import { DEFI_LLAMA_TOKEN_BATCH } from '../src/sources/defillama/batch'
 import type { ExactPriceRecord, HistoricalRequestTuple } from '../src/types'
 import { chunk } from '../src/utils'
 
@@ -148,6 +150,13 @@ export function parseArgs(argv: string[]): Args {
 
 type CohortTarget = { cohort: Cohort; target: NormalizedTarget }
 type TargetRange = ContiguousRange<CohortTarget>
+interface ChartRangeBatch {
+  identifiers: string[]
+  ranges: TargetRange[]
+  rangeStart: number
+  rangeEnd: number
+  spanDays: number
+}
 
 function groupCohortRanges(
   items: CohortTarget[],
@@ -160,6 +169,44 @@ function groupCohortRanges(
     (item) => item.target.eodTimestamp,
     maximumSpanDays
   )
+}
+
+export function groupChartRangeBatches(
+  ranges: TargetRange[],
+  maximumIdentifiers = DEFI_LLAMA_TOKEN_BATCH
+): ChartRangeBatch[] {
+  const groups = new Map<
+    string,
+    { rangeStart: number; rangeEnd: number; spanDays: number; byIdentifier: Map<string, TargetRange[]> }
+  >()
+
+  for (const range of ranges) {
+    const spanDays = rangeSpanDays(range)
+    const key = `${range.rangeStart}:${spanDays}`
+    let group = groups.get(key)
+    if (!group) {
+      group = { rangeStart: range.rangeStart, rangeEnd: range.rangeEnd, spanDays, byIdentifier: new Map() }
+      groups.set(key, group)
+    }
+    const identifierRanges = group.byIdentifier.get(range.identifier) ?? []
+    identifierRanges.push(range)
+    group.byIdentifier.set(range.identifier, identifierRanges)
+  }
+
+  const batches: ChartRangeBatch[] = []
+  for (const group of groups.values()) {
+    const identifiers = [...group.byIdentifier.keys()]
+    for (const identifierChunk of chunk(identifiers, maximumIdentifiers)) {
+      batches.push({
+        identifiers: identifierChunk,
+        ranges: identifierChunk.flatMap((identifier) => group.byIdentifier.get(identifier) ?? []),
+        rangeStart: group.rangeStart,
+        rangeEnd: group.rangeEnd,
+        spanDays: group.spanDays
+      })
+    }
+  }
+  return batches
 }
 
 export function matchChartResponse(
@@ -359,7 +406,7 @@ async function run(args: Args): Promise<void> {
 
   const pool = createPool(databaseUrl)
   const stats = { apiCalls: 0, retries: 0, requestFailures: 0 }
-  const rateLimiter = new SlidingWindowRateLimiter(10, 1000)
+  const rateLimiter = new SharedCooldownRateLimiter(10, 1000)
 
   try {
     const allTargets: Array<{ cohort: Cohort; target: NormalizedTarget }> = [
@@ -464,13 +511,14 @@ async function run(args: Args): Promise<void> {
   }
 }
 
-function chartClient(rateLimiter: SlidingWindowRateLimiter, onRetry: () => void): DefiLlamaClient {
+export function chartClient(rateLimiter: SharedCooldownRateLimiter, onRetry: () => void): DefiLlamaClient {
   return new DefiLlamaClient(rateLimiter, onRetry, {
     timeoutMs: CHART_REQUEST_TIMEOUT_MS,
     honorRetryAfter: true,
     retryAfterCapMs: CHART_RETRY_AFTER_CAP_MS,
     retryTransportErrors: true,
-    retryInvalidJson: true
+    retryInvalidJson: true,
+    onRateLimit: (retryAfterMs) => rateLimiter.extendCooldown(retryAfterMs ?? 60_000)
   })
 }
 
@@ -478,12 +526,12 @@ export function aliasEligibilityOf(target: NormalizedTarget): ((observedTimestam
   return applicableAlias(target)?.isEligibleObservation
 }
 
-async function captureRanges(
+export async function captureRanges(
   window: ReplayWindow,
   method: Method,
   ranges: TargetRange[],
   eligibilityOf: (target: NormalizedTarget) => ((observedTimestamp: number) => boolean) | undefined,
-  rateLimiter: SlidingWindowRateLimiter,
+  rateLimiter: SharedCooldownRateLimiter,
   stats: { apiCalls: number; retries: number; requestFailures: number },
   existingByKey: Map<string, ExactPriceRecord>,
   captureRecords: CaptureRecord[],
@@ -491,7 +539,7 @@ async function captureRanges(
 ): Promise<Map<string, MatchResult>> {
   const resultByKey = new Map<string, MatchResult>()
 
-  for (const range of ranges) {
+  for (const batch of groupChartRangeBatches(ranges)) {
     let retries = 0
     const client = chartClient(rateLimiter, () => {
       retries += 1
@@ -500,54 +548,62 @@ async function captureRanges(
 
     stats.apiCalls += 1
     try {
-      const spanDays = rangeSpanDays(range)
-      const response = await client.getChart([range.identifier], {
-        start: range.rangeStart,
-        span: spanDays,
+      const response = await client.getChart(batch.identifiers, {
+        start: batch.rangeStart,
+        span: batch.spanDays,
         period: '1d',
         searchWidth: window.searchWidth
       })
-      const envelope = readChartCoin(response, range.identifier)
-      const coin = envelope.kind === 'coin' ? envelope.coin : undefined
+      for (const range of batch.ranges) {
+        const envelope = readChartCoin(response, range.identifier)
+        const coin = envelope.kind === 'coin' ? envelope.coin : undefined
+        const invalidCoin =
+          envelope.kind === 'invalid' ||
+          (envelope.kind === 'coin' &&
+            matchChartObservation(coin, range.rangeStart, { maximumOffsetSeconds: window.offsetSeconds }).kind ===
+              'invalid_response')
 
-      requestRecords.push(buildRequestRecord(window, method, range, envelope.kind === 'invalid', coin, 1 + retries))
+        requestRecords.push(buildRequestRecord(window, method, range, invalidCoin, coin, 1 + retries))
 
-      for (const { cohort, target } of range.items) {
-        const isEligibleObservation = eligibilityOf(target)
-        const matched = matchChartResponse(response, range.identifier, target.eodTimestamp, {
-          maximumOffsetSeconds: window.offsetSeconds,
-          isEligibleObservation
-        })
-        const key = priceKey(target.chain, target.token, target.eodTimestamp)
-        resultByKey.set(key, matched)
-        const record = buildCaptureRecord(
-          cohort,
-          target,
-          window.label,
-          method,
-          range.identifier,
-          range,
-          matched,
-          existingByKey,
-          1 + retries
-        )
-        record.equalDistanceTie = hasEqualDistanceTie(coin, target.eodTimestamp, {
-          offsetSeconds: window.offsetSeconds,
-          isEligibleObservation
-        })
-        captureRecords.push(record)
+        for (const { cohort, target } of range.items) {
+          const isEligibleObservation = eligibilityOf(target)
+          const matched = matchChartResponse(response, range.identifier, target.eodTimestamp, {
+            maximumOffsetSeconds: window.offsetSeconds,
+            isEligibleObservation
+          })
+          const key = priceKey(target.chain, target.token, target.eodTimestamp)
+          resultByKey.set(key, matched)
+          const record = buildCaptureRecord(
+            cohort,
+            target,
+            window.label,
+            method,
+            range.identifier,
+            range,
+            matched,
+            existingByKey,
+            1 + retries
+          )
+          record.equalDistanceTie = hasEqualDistanceTie(coin, target.eodTimestamp, {
+            offsetSeconds: window.offsetSeconds,
+            isEligibleObservation
+          })
+          captureRecords.push(record)
+        }
       }
     } catch (error) {
       stats.requestFailures += 1
       const attempts = Math.max(httpAttempts(error), 1 + retries)
       const codes = httpDiagnosticCodes(error)
-      requestRecords.push(buildFailedRequestRecord(window, method, range, attempts))
-      for (const { cohort, target } of range.items) {
-        const key = priceKey(target.chain, target.token, target.eodTimestamp)
-        resultByKey.set(key, { kind: 'not_found' })
-        captureRecords.push(
-          buildFailedCaptureRecord(cohort, target, window.label, method, range.identifier, range, attempts, codes)
-        )
+      for (const range of batch.ranges) {
+        requestRecords.push(buildFailedRequestRecord(window, method, range, attempts))
+        for (const { cohort, target } of range.items) {
+          const key = priceKey(target.chain, target.token, target.eodTimestamp)
+          resultByKey.set(key, { kind: 'not_found' })
+          captureRecords.push(
+            buildFailedCaptureRecord(cohort, target, window.label, method, range.identifier, range, attempts, codes)
+          )
+        }
       }
     }
   }

@@ -120,7 +120,10 @@ try {
               VALUES ${valuesSql.join(', ')}
             ),
             copied AS (
-              INSERT INTO token_prices (chain, token, timestamp, price, symbol, confidence, source, created_at)
+              INSERT INTO token_prices (
+                chain, token, timestamp, price, symbol, confidence, source, created_at,
+                finalized, observed_at, observation_endpoint
+              )
               SELECT
                 tp.chain,
                 mappings.new_token,
@@ -129,7 +132,10 @@ try {
                 tp.symbol,
                 tp.confidence,
                 tp.source,
-                tp.created_at
+                tp.created_at,
+                tp.finalized,
+                tp.observed_at,
+                tp.observation_endpoint
               FROM token_prices tp
               INNER JOIN mappings
                 ON tp.token = mappings.old_token

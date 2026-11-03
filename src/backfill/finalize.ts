@@ -30,6 +30,8 @@ export interface FinalizationResolution {
   symbol: string | null
   confidence: number | null
   source: PriceSource
+  observedTimestamp?: number | null
+  observationEndpoint?: string | null
 }
 
 export interface FinalizationTarget {
@@ -135,7 +137,7 @@ async function insertResolvedTargets(client: BackfillClient, targets: Finalizati
     const resolution = target.resolution as FinalizationResolution
     const offset = params.length
     valuesSql.push(
-      `($${offset + 1}, $${offset + 2}, $${offset + 3}::timestamptz, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7})`
+      `($${offset + 1}, $${offset + 2}, $${offset + 3}::timestamptz, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, TRUE, $${offset + 8}::timestamptz, $${offset + 9})`
     )
     params.push(
       target.chain,
@@ -144,15 +146,28 @@ async function insertResolvedTargets(client: BackfillClient, targets: Finalizati
       resolution.price,
       resolution.symbol,
       resolution.confidence,
-      resolution.source
+      resolution.source,
+      resolution.observedTimestamp == null ? null : unixToIsoTimestamp(resolution.observedTimestamp),
+      resolution.observationEndpoint ?? null
     )
   }
 
   const result = await client.query(
     `
-      INSERT INTO token_prices (chain, token, timestamp, price, symbol, confidence, source)
+      INSERT INTO token_prices (
+        chain, token, timestamp, price, symbol, confidence, source,
+        finalized, observed_at, observation_endpoint
+      )
       VALUES ${valuesSql.join(', ')}
-      ON CONFLICT (chain, token, timestamp, source) DO NOTHING
+      ON CONFLICT (chain, token, timestamp, source) DO UPDATE SET
+        price = EXCLUDED.price,
+        symbol = COALESCE(EXCLUDED.symbol, token_prices.symbol),
+        confidence = EXCLUDED.confidence,
+        finalized = TRUE,
+        observed_at = EXCLUDED.observed_at,
+        observation_endpoint = EXCLUDED.observation_endpoint,
+        updated_at = NOW()
+      WHERE token_prices.finalized = FALSE
       RETURNING chain, token, timestamp
     `,
     params

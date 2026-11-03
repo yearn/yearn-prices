@@ -103,14 +103,14 @@ describe('handleBatchHistorical', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('counts duplicate-cased keys for the same token once and keeps the historical policy', async () => {
-    const response = await handleBatchHistorical(
-      url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE], [CHECKSUM_KEY]: [DAY_ONE] }),
-      ENV,
-      pool([row(DAY_ONE, '1')])
-    )
-
-    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_HISTORICAL)
+  it('rejects duplicate normalized token keys even when their requested days differ', async () => {
+    await expect(
+      handleBatchHistorical(
+        url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE], [CHECKSUM_KEY]: [DAY_TWO] }),
+        ENV,
+        pool([])
+      )
+    ).rejects.toMatchObject({ code: 'INVALID_INPUT' })
   })
 
   it('uses the mutable policy for a batch touching a future day', async () => {

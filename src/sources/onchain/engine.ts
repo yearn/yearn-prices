@@ -7,6 +7,7 @@ import {
   ReadBudgetExceededError,
   RecursiveDependencyError
 } from './errors'
+import { signalKey, throwIfAborted } from './signal'
 import type {
   MarketPriceResolver,
   PriceInputEvidence,
@@ -47,8 +48,9 @@ const FAILURE_ORDER: PriceResolutionFailureReason[] = [
 ]
 
 function targetKey(target: RecursivePriceTarget): string {
-  return [target.chainId, target.token.toLowerCase(), target.timestamp ?? 'latest', target.blockNumber ?? 'none'].join(
-    ':'
+  return (
+    [target.chainId, target.token.toLowerCase(), target.timestamp ?? 'latest', target.blockNumber ?? 'none'].join(':') +
+    `:signal:${signalKey(target.signal)}`
   )
 }
 
@@ -67,7 +69,8 @@ function normalizeTarget(target: RecursivePriceTarget): RecursivePriceTarget {
     chainId: target.chainId,
     token: normalizeTokenAddress(target.token),
     timestamp: target.timestamp ?? null,
-    blockNumber: target.blockNumber ?? null
+    blockNumber: target.blockNumber ?? null,
+    ...(target.signal ? { signal: target.signal } : {})
   }
 }
 
@@ -185,11 +188,19 @@ export class RecursivePriceEngine {
     }
   }
 
-  async resolve(target: RecursivePriceTarget): Promise<RecursivePriceResult> {
-    return this.resolveAt(normalizeTarget(target), [])
+  async resolve(target: RecursivePriceTarget, signal?: AbortSignal): Promise<RecursivePriceResult> {
+    const activeSignal = signal ?? target.signal
+    throwIfAborted(activeSignal)
+    const normalized = normalizeTarget({ ...target, ...(activeSignal ? { signal: activeSignal } : {}) })
+    return this.resolveAt(normalized, [], activeSignal)
   }
 
-  private async resolveAt(target: RecursivePriceTarget, ancestry: string[]): Promise<RecursivePriceResult> {
+  private async resolveAt(
+    target: RecursivePriceTarget,
+    ancestry: string[],
+    signal?: AbortSignal
+  ): Promise<RecursivePriceResult> {
+    throwIfAborted(signal)
     const key = targetKey(target)
     if (ancestry.includes(key)) {
       return { path: null, failure: { reason: 'cycle', token: target.token, attempts: [] } }
@@ -212,7 +223,7 @@ export class RecursivePriceEngine {
     }
 
     const pending = this.inflight.get(key)
-    const work = pending ?? this.resolveUncached(target, ancestry, key)
+    const work = pending ?? this.resolveUncached(target, ancestry, key, signal)
     if (!pending) {
       this.inflight.set(key, work)
     }
@@ -222,7 +233,9 @@ export class RecursivePriceEngine {
       this.waiting.set(waiter, blocked)
     }
     try {
-      return await work
+      const result = await work
+      throwIfAborted(signal)
+      return result
     } finally {
       if (waiter !== undefined) {
         const blocked = this.waiting.get(waiter)
@@ -258,8 +271,10 @@ export class RecursivePriceEngine {
   private async resolveUncached(
     target: RecursivePriceTarget,
     ancestry: string[],
-    key: string
+    key: string,
+    signal?: AbortSignal
   ): Promise<RecursivePriceResult> {
+    throwIfAborted(signal)
     if (this.resolutions >= this.resolutionBudget) {
       const failure = { reason: 'budget' as const, token: target.token, attempts: [] }
       this.failed.set(key, failure)
@@ -272,13 +287,15 @@ export class RecursivePriceEngine {
     // asking again would only repeat that call. Children have not been tried.
     if (ancestry.length > 0) {
       try {
-        const market = await this.marketPrice(target)
+        const market = await this.marketPrice(target, signal)
+        throwIfAborted(signal)
         if (market) {
           const path = validatePath(market, target)
           this.successful.set(key, path)
           return { path, failure: null }
         }
       } catch (error) {
+        throwIfAborted(signal)
         const classified = classifyError(error)
         const reason = classified === 'unsupported' ? 'retryable' : classified
         attempts.push({ adapter: 'market-price', reason, error: errorMessage(error), cause: error })
@@ -290,9 +307,14 @@ export class RecursivePriceEngine {
 
     const nextAncestry = [...ancestry, key]
     const context: RecursivePriceContext = {
-      resolve: (child) => this.resolveAt(normalizeTarget(child), nextAncestry),
+      resolve: (child) =>
+        this.resolveAt(normalizeTarget({ ...child, ...(signal ? { signal } : {}) }), nextAncestry, signal),
       require: async (child, label) => {
-        const result = await this.resolveAt(normalizeTarget(child), nextAncestry)
+        const result = await this.resolveAt(
+          normalizeTarget({ ...child, ...(signal ? { signal } : {}) }),
+          nextAncestry,
+          signal
+        )
         if (result.path) {
           return result.path
         }
@@ -313,8 +335,10 @@ export class RecursivePriceEngine {
       : this.adapters
 
     for (const adapter of orderedAdapters) {
+      throwIfAborted(signal)
       try {
         const quote = await adapter.resolve(target, context)
+        throwIfAborted(signal)
         if (!quote) {
           continue
         }
@@ -323,6 +347,7 @@ export class RecursivePriceEngine {
         setCapped(this.adapterHints, adapterHintKey(target), adapter.name, MAX_ADAPTER_HINTS)
         return { path, failure: null }
       } catch (error) {
+        throwIfAborted(signal)
         attempts.push({
           adapter: adapter.name,
           reason: classifyError(error),
@@ -332,6 +357,7 @@ export class RecursivePriceEngine {
       }
     }
 
+    throwIfAborted(signal)
     const failure = {
       reason: selectFailureReason(attempts),
       token: target.token,

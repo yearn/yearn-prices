@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { remainingGapPositions, remainingPriceProjection } from '../../src/backfill/projection'
+import { reconcileTargetOutcomes, remainingGapPositions, remainingPriceProjection } from '../../src/backfill/projection'
 import type { GraphNode } from '../../src/sources/onchain/graph'
 
 function node(key: string, dependencies: string[] = [], priced = false): GraphNode {
@@ -53,4 +53,34 @@ it('classifies remaining gaps without marking any now-covered', () => {
 })
 it('keeps unknown history separate from positional gaps', () => {
   expect(remainingGapPositions([1, 3], null, null)).toEqual({ 'no-known-history': [1, 3] })
+})
+
+it('reconciles final outcomes and retains finalization rejections as remaining roots', () => {
+  const result = reconcileTargetOutcomes(
+    [
+      { target: { chainId: 1, token: 'stored', eodTimestamp: 1 }, status: 'skipped_existing' },
+      { target: { chainId: 1, token: 'inserted', eodTimestamp: 1 }, status: 'inserted' },
+      { target: { chainId: 1, token: 'concurrent', eodTimestamp: 1 }, status: 'skipped_concurrent_existing' },
+      { target: { chainId: 1, token: 'rejected', eodTimestamp: 1 }, status: 'rejected_implausible' }
+    ],
+    4
+  )
+
+  expect(result).toMatchObject({
+    targetCount: 4,
+    alreadyStored: 1,
+    insertedOrProjected: 1,
+    concurrentExisting: 1,
+    remainingOriginalTargets: 1,
+    rejectedImplausible: 1
+  })
+  expect(result.remaining.map((outcome) => outcome.target.token)).toEqual(['rejected'])
+})
+
+it('rejects incomplete or duplicate final target outcomes', () => {
+  const outcome = { target: { chainId: 1, token: '0xabc', eodTimestamp: 1 }, status: 'rejected_implausible' }
+  expect(() => reconcileTargetOutcomes([outcome], 2)).toThrow('do not reconcile')
+  expect(() =>
+    reconcileTargetOutcomes([outcome, { ...outcome, target: { ...outcome.target, token: '0xAbC' } }], 2)
+  ).toThrow('Duplicate final target outcome')
 })

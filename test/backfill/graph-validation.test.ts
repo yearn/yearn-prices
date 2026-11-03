@@ -81,6 +81,37 @@ describe('graph finalization evidence', () => {
     root.path!.inputs[0].observedTimestamp += offset
     expect(validateGraphResolution(root, target, nodes).price).toBe(1)
   })
+  it('does not label a derived path timestamp as a provider observation', () => {
+    const { root, nodes } = fixture()
+
+    expect(validateGraphResolution(root, target, nodes)).toMatchObject({
+      observedTimestamp: null,
+      observationEndpoint: null
+    })
+  })
+  it('retains a direct provider sample time and endpoint for finalization', () => {
+    const { root, nodes } = fixture()
+    root.market = 'price'
+    root.path!.source = 'defillama'
+    root.path!.adapter = 'defillama'
+    root.path!.observedTimestamp = timestamp + 120
+
+    expect(validateGraphResolution(root, target, nodes)).toMatchObject({
+      observedTimestamp: timestamp + 120,
+      observationEndpoint: '/batchHistorical'
+    })
+  })
+  it('leaves Chainlink observation provenance unknown when the resolver used request time', () => {
+    const { root, nodes } = fixture()
+    root.market = 'price'
+    root.path!.source = 'chainlink'
+    root.path!.adapter = 'chainlink'
+
+    expect(validateGraphResolution(root, target, nodes)).toMatchObject({
+      observedTimestamp: null,
+      observationEndpoint: null
+    })
+  })
   it('rejects a late child even when the root timestamp is in range', () => {
     const { root, child, nodes } = fixture()
     child.path!.observedTimestamp += 21601

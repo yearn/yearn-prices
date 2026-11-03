@@ -36,9 +36,12 @@ function isValidConfidence(value: unknown): boolean {
 }
 
 export function matchChartObservation(coin: unknown, eodTimestamp: number, options: MatchOptions = {}): MatchResult {
-  if (coin == null || typeof coin !== 'object' || Array.isArray(coin)) {
+  // An absent key is a confirmed miss; a present null/scalar/array value is a
+  // malformed provider observation and must remain retryable/diagnostic.
+  if (coin === undefined) {
     return { kind: 'not_found' }
   }
+  if (coin === null || typeof coin !== 'object' || Array.isArray(coin)) return { kind: 'invalid_response' }
 
   const entry = coin as Record<string, unknown>
   if (!Array.isArray(entry.prices) || !isValidSymbol(entry.symbol) || !isValidConfidence(entry.confidence)) {
@@ -46,8 +49,22 @@ export function matchChartObservation(coin: unknown, eodTimestamp: number, optio
   }
 
   const candidates = new Map<number, number>()
+  const maximumOffsetSeconds = options.maximumOffsetSeconds ?? MAXIMUM_ACCEPTED_OFFSET_SECONDS
+  let sawMalformedObservation = false
 
-  for (const { timestamp, price } of windowEligibleObservations(coin, eodTimestamp, options)) {
+  for (const raw of entry.prices) {
+    if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+      sawMalformedObservation = true
+      continue
+    }
+    const { timestamp, price } = raw as Record<string, unknown>
+    if (!isObservationTimestamp(timestamp) || !isObservationPrice(price)) {
+      sawMalformedObservation = true
+      continue
+    }
+    if (Math.abs(timestamp - eodTimestamp) > maximumOffsetSeconds) continue
+    if (options.isEligibleObservation && !options.isEligibleObservation(timestamp)) continue
+
     const collapsed = candidates.get(timestamp)
     if (collapsed !== undefined) {
       if (collapsed !== price) {
@@ -73,7 +90,7 @@ export function matchChartObservation(coin: unknown, eodTimestamp: number, optio
   }
 
   if (!selected) {
-    return { kind: 'not_found' }
+    return sawMalformedObservation ? { kind: 'invalid_response' } : { kind: 'not_found' }
   }
 
   return {

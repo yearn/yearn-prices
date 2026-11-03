@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { parseArgs } from 'node:util'
 import { dateOf, ranges } from '../src/backfill/coverage'
-import { remainingGapPositions, remainingPriceProjection } from '../src/backfill/projection'
+import { reconcileTargetOutcomes, remainingGapPositions, remainingPriceProjection } from '../src/backfill/projection'
 import { type GraphNode, graphKey } from '../src/sources/onchain/graph'
 
 const { values } = parseArgs({
@@ -20,7 +20,9 @@ const records = readFileSync(values.run, 'utf8')
   .split('\n')
   .map((line) => JSON.parse(line))
 if (records.at(-1)?.type !== 'complete') throw new Error('Projection requires a completed backfill report')
-const hasMissing = records.some((record) => ['unresolved', 'rejected'].includes(record.type))
+const targetOutcomes = records.filter((record) => record.type === 'target-outcome')
+const reconciliation = reconcileTargetOutcomes(targetOutcomes, records[0].targets)
+const hasMissing = reconciliation.remainingOriginalTargets > 0
 if (hasMissing && (!values.graph || !values.inventory || !values.coverage))
   throw new Error('Unresolved runs require --graph --inventory --coverage')
 const graph = (values.graph ? JSON.parse(readFileSync(values.graph, 'utf8')) : { roots: [], nodes: [] }) as {
@@ -39,22 +41,29 @@ const coverage = (values.coverage ? JSON.parse(readFileSync(values.coverage, 'ut
     usableRanges: Array<{ start: string; end: string }>
   }>
 }
-const missing = records
-  .filter((record) => ['unresolved', 'rejected'].includes(record.type))
-  .map(
-    (record) =>
-      record.graphKey ??
-      graphKey({
-        chainId: record.target.chainId,
-        token: record.target.token,
-        timestamp: record.target.eodTimestamp
-      })
-  )
+const missing = reconciliation.remaining.map((outcome) =>
+  graphKey({
+    chainId: outcome.target.chainId,
+    token: outcome.target.token,
+    timestamp: outcome.target.eodTimestamp
+  })
+)
 const projection = remainingPriceProjection(graph.nodes, missing)
 const summary = records.find((record) => record.type === 'summary')
 const existing = records.find((record) => record.type === 'existing')?.skipped ?? 0
-if (!summary || summary.unresolved !== missing.length)
-  throw new Error('Backfill accounting does not match remaining roots')
+if (!summary) throw new Error('Completed backfill report has no summary')
+const expectedNewPrices = reconciliation.insertedOrProjected
+const expectedFromSummary = records[0].mode === 'write' ? summary.inserted : summary.wouldInsert
+if (
+  existing !== reconciliation.alreadyStored ||
+  expectedFromSummary !== expectedNewPrices ||
+  summary.skippedConcurrentExisting !== reconciliation.concurrentExisting ||
+  summary.unresolved !== reconciliation.unresolved + reconciliation.rejected ||
+  summary.rejectedImplausible !== reconciliation.rejectedImplausible
+)
+  throw new Error('Backfill summary does not reconcile with final target outcomes')
+if (projection.remainingRootCount !== reconciliation.remainingOriginalTargets)
+  throw new Error('Projection roots do not reconcile with final target outcomes')
 const assets = projection.assets.map((asset) => {
   const identity = inventory.assets.find(
     (item) => item.chainId === asset.chainId && item.token.toLowerCase() === asset.token
@@ -89,7 +98,8 @@ const report = {
   assumption: 'Production backfill has the same outcome as this completed local dry run; verify after execution.',
   originalTargets: records[0].targets,
   alreadyStored: existing,
-  expectedNewPrices: records[0].mode === 'write' ? summary.inserted : summary.wouldInsert,
+  concurrentExisting: reconciliation.concurrentExisting,
+  expectedNewPrices,
   remainingOriginalTargets: projection.remainingRootCount,
   dependencyOnlyAssets: projection.dependencyOnlyAssetCount,
   investigationAssets: assets.length,
@@ -108,7 +118,9 @@ const md = [
     report.remainingOriginalTargets +
     ' original targets remain unresolved (' +
     report.alreadyStored +
-    ' were already stored).',
+    ' were already stored; ' +
+    report.concurrentExisting +
+    ' appeared concurrently during the run).',
   '',
   'The list below contains only the ' +
     report.investigationAssets +
@@ -152,6 +164,7 @@ console.log(
     assets: report.investigationAssets,
     missingAssetDays: report.missingAssetDays,
     expectedNewPrices: report.expectedNewPrices,
-    remainingOriginalTargets: report.remainingOriginalTargets
+    remainingOriginalTargets: report.remainingOriginalTargets,
+    concurrentExisting: report.concurrentExisting
   })
 )

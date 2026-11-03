@@ -34,6 +34,9 @@ export interface DbPriceRow {
   symbol: string | null
   confidence: string | number | null
   source: PriceSource
+  finalized?: boolean
+  observed_at?: string | Date | null
+  observation_endpoint?: string | null
 }
 
 export interface PricePoint {
@@ -47,6 +50,8 @@ export interface ExactPriceRecord extends PricePoint {
   chain: string
   token: string
   symbol: string | null
+  observedTimestamp?: number | null
+  observationEndpoint?: string | null
 }
 
 export interface HistoricalRequestTuple {
@@ -114,6 +119,12 @@ export interface TokenPriceWrite {
   symbol: string | null
   confidence: number | string | null
   source: PriceSource
+  /** Provider sample time; distinct from the requested daily key. */
+  observedTimestamp?: number | null
+  /** Endpoint used to obtain the observation, such as `/batchHistorical`. */
+  observationEndpoint?: string | null
+  /** Warmup's clock snapshot determines whether this write remains provisional. */
+  finalizationIntent?: 'provisional' | 'finalized'
 }
 
 export interface KongVaultListItem {

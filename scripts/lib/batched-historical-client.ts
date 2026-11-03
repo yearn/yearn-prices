@@ -3,6 +3,7 @@ import { ApiError } from '../../src/http/errors'
 import { buildDefiLlamaPayloads } from '../../src/sources/defillama/batch'
 import { matchPricesToRequests } from '../../src/sources/defillama/match'
 import type { DefiLlamaHistoricalCoin, DefiLlamaHistoricalResponse } from '../../src/types'
+import { normalizeToEndOfDay, nowUnix } from '../../src/utils/time'
 
 export interface CoinTarget {
   coin: string
@@ -10,22 +11,51 @@ export interface CoinTarget {
 }
 
 interface Pending extends CoinTarget {
+  requestTimestamp: number
   resolve: (coin: DefiLlamaHistoricalCoin | null) => void
   reject: (error: unknown) => void
+}
+
+export interface HistoricalObservationMetadata {
+  endpoint: '/batchHistorical'
+  requestedTimestamp: number
+  observedTimestamp: number | null
+}
+
+export interface BatchedHistoricalClientOptions {
+  /** Allow exact intraday lookup times in addition to closed UTC EOD targets. */
+  allowIntraday?: boolean
 }
 
 /** Offline EOD transport: the existing sources consume its single-lookup shape,
  * but every HTTP call uses batchHistorical. Caches belong to this run only. */
 export class BatchedHistoricalClient extends DefiLlamaClient {
-  readonly stats = { lookups: 0, uniqueLookups: 0, cacheHits: 0, batchRequests: 0, failedBatches: 0 }
+  readonly endpoint = '/batchHistorical' as const
+  readonly stats = {
+    lookups: 0,
+    uniqueLookups: 0,
+    cacheHits: 0,
+    batchRequests: 0,
+    failedBatches: 0,
+    invalidObservations: 0
+  }
   private readonly cache = new Map<string, Promise<DefiLlamaHistoricalCoin | null>>()
+  private readonly observationMetadata = new Map<string, HistoricalObservationMetadata>()
   private readonly pending = new Map<string, Pending>()
   private scheduled = false
   private draining = false
   private discovery: Map<string, CoinTarget> | null = null
 
-  constructor(private readonly transport: Pick<DefiLlamaClient, 'getBatchHistorical'>) {
+  constructor(
+    private readonly transport: Pick<DefiLlamaClient, 'getBatchHistorical'>,
+    private readonly options: BatchedHistoricalClientOptions = {}
+  ) {
     super()
+  }
+
+  getObservationMetadata(coin: string, requestedTimestamp: number): HistoricalObservationMetadata | null {
+    const metadata = this.observationMetadata.get(`${coin.toLowerCase()}:${requestedTimestamp}`)
+    return metadata ? { ...metadata } : null
   }
 
   /** Probe existing adapters without fetching unknown market observations.
@@ -66,14 +96,19 @@ export class BatchedHistoricalClient extends DefiLlamaClient {
   }
 
   private lookup(target: CoinTarget): Promise<DefiLlamaHistoricalCoin | null> {
-    if (
-      !Number.isSafeInteger(target.timestamp) ||
-      target.timestamp <= 0 ||
-      target.timestamp % 86400 !== 86399 ||
-      target.timestamp >= Date.now() / 1000
-    ) {
+    if (!Number.isSafeInteger(target.timestamp) || target.timestamp <= 0) {
       return Promise.reject(new Error('Offline batching requires a closed UTC EOD timestamp'))
     }
+    const now = nowUnix()
+    const todayEnd = normalizeToEndOfDay(now)
+    if (this.options.allowIntraday) {
+      if (target.timestamp > todayEnd || (target.timestamp > now && target.timestamp !== todayEnd)) {
+        return Promise.reject(new Error('Offline batching does not accept future timestamps'))
+      }
+    } else if (target.timestamp % 86400 !== 86399 || target.timestamp >= now) {
+      return Promise.reject(new Error('Offline batching requires a closed UTC EOD timestamp'))
+    }
+
     const normalized = { ...target, coin: target.coin.toLowerCase() }
     const key = `${normalized.coin}:${target.timestamp}`
     if (this.discovery) {
@@ -89,8 +124,9 @@ export class BatchedHistoricalClient extends DefiLlamaClient {
       return cached
     }
     this.stats.uniqueLookups += 1
+    const requestTimestamp = this.options.allowIntraday && target.timestamp === todayEnd ? now : target.timestamp
     const promise = new Promise<DefiLlamaHistoricalCoin | null>((resolve, reject) => {
-      this.pending.set(key, { ...normalized, resolve, reject })
+      this.pending.set(key, { ...normalized, requestTimestamp, resolve, reject })
     })
     this.cache.set(key, promise)
     this.schedule()
@@ -115,12 +151,12 @@ export class BatchedHistoricalClient extends DefiLlamaClient {
         const grouped: Record<string, number[]> = {}
         for (const target of work.values()) {
           grouped[target.coin] ??= []
-          grouped[target.coin].push(target.timestamp)
+          grouped[target.coin].push(target.requestTimestamp)
         }
         // Sequential batches share the transport's pacing and Retry-After gate.
-        for (const payload of buildDefiLlamaPayloads(grouped)) {
+        for (const payload of buildDefiLlamaPayloads(grouped, nowUnix(), false)) {
           const members = Object.entries(payload).flatMap(([coin, times]) =>
-            times.map((timestamp) => work.get(`${coin}:${timestamp}`)!)
+            [...work.values()].filter((target) => target.coin === coin && times.includes(target.requestTimestamp))
           )
           try {
             this.stats.batchRequests += 1
@@ -129,6 +165,7 @@ export class BatchedHistoricalClient extends DefiLlamaClient {
               throw new ApiError('UNAVAILABLE', 'Malformed DeFiLlama batch envelope')
             }
             const resolved = new Map<string, DefiLlamaHistoricalCoin | null>()
+            const failedCoins = new Map<string, ApiError>()
             for (const [coin, timestamps] of Object.entries(payload)) {
               const entry = response.coins[coin]
               if (
@@ -143,14 +180,20 @@ export class BatchedHistoricalClient extends DefiLlamaClient {
                       sample.price <= 0
                   ))
               ) {
-                throw new ApiError('UNAVAILABLE', 'Malformed DeFiLlama batch observations')
+                this.stats.invalidObservations += 1
+                console.warn(`skipping malformed DeFiLlama observations for ${coin}`)
+                failedCoins.set(coin, new ApiError('UNAVAILABLE', 'Malformed DeFiLlama batch observations'))
+                continue
               }
               const observations = new Map<number, number>()
-              for (const sample of entry?.prices ?? []) {
+              const conflicting = (entry?.prices ?? []).some((sample) => {
                 const previous = observations.get(sample.timestamp)
-                if (previous !== undefined && previous !== sample.price)
-                  throw new ApiError('UNAVAILABLE', 'Conflicting DeFiLlama batch observations')
                 observations.set(sample.timestamp, sample.price)
+                return previous !== undefined && previous !== sample.price
+              })
+              if (conflicting) {
+                failedCoins.set(coin, new ApiError('UNAVAILABLE', 'Conflicting DeFiLlama batch observations'))
+                continue
               }
               const matched = matchPricesToRequests(timestamps, entry?.prices ?? [])
               for (const timestamp of timestamps) {
@@ -158,7 +201,20 @@ export class BatchedHistoricalClient extends DefiLlamaClient {
                 resolved.set(`${coin}:${timestamp}`, sample ? { ...sample, symbol: entry.symbol } : null)
               }
             }
-            for (const member of members) member.resolve(resolved.get(`${member.coin}:${member.timestamp}`) ?? null)
+            for (const member of members) {
+              const failure = failedCoins.get(member.coin)
+              if (failure) {
+                member.reject(failure)
+                continue
+              }
+              const sample = resolved.get(`${member.coin}:${member.requestTimestamp}`) ?? null
+              this.observationMetadata.set(`${member.coin}:${member.timestamp}`, {
+                endpoint: this.endpoint,
+                requestedTimestamp: member.timestamp,
+                observedTimestamp: sample?.timestamp ?? null
+              })
+              member.resolve(sample)
+            }
           } catch (error) {
             this.stats.failedBatches += 1
             for (const member of members) member.reject(error)

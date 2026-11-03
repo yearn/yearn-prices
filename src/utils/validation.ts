@@ -10,9 +10,23 @@ const MAX_RANGE_TOKENS = 50
 const MAX_RANGE_DAYS = 366
 const MAX_SPOT_TOKENS = 50
 
+function normalizeRequestTimestamp(value: unknown, label: string): number {
+  const timestamp =
+    typeof value === 'number' ? value : typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : Number.NaN
+
+  ensure(Number.isSafeInteger(timestamp) && timestamp >= 0, 'INVALID_INPUT', `Invalid ${label}`)
+
+  const normalizedTimestamp = normalizeToEndOfDay(timestamp)
+  ensure(
+    Number.isFinite(new Date(normalizedTimestamp * 1000).getTime()),
+    'INVALID_INPUT',
+    `${label} is outside the supported timestamp range`
+  )
+  return normalizedTimestamp
+}
+
 export function parseTimestampSegment(segment: string): number {
-  ensure(/^\d+$/.test(segment), 'INVALID_INPUT', 'Timestamp must be a unix timestamp')
-  return normalizeToEndOfDay(Number(segment))
+  return normalizeRequestTimestamp(segment, 'timestamp')
 }
 
 export function parseOptionalSource(value: string | null): PriceSource | undefined {
@@ -82,6 +96,7 @@ export function parseBatchCoins(raw: string | null): HistoricalRequestTuple[] {
   ensure(entries.length <= MAX_BATCH_TOKENS, 'INVALID_INPUT', `A maximum of ${MAX_BATCH_TOKENS} tokens is allowed`)
 
   const requests: HistoricalRequestTuple[] = []
+  const seenTokenKeys = new Set<string>()
   for (const [tokenKey, timestamps] of entries) {
     ensure(Array.isArray(timestamps), 'INVALID_INPUT', `Batch timestamps for ${tokenKey} must be an array`)
     ensure(
@@ -91,14 +106,13 @@ export function parseBatchCoins(raw: string | null): HistoricalRequestTuple[] {
     )
 
     const parsedTokenKey = parseTokenKey(tokenKey)
+    const normalizedTokenKey = parsedTokenKey.tokenKey.toLowerCase()
+    ensure(!seenTokenKeys.has(normalizedTokenKey), 'INVALID_INPUT', `Duplicate normalized token key: ${tokenKey}`)
+    seenTokenKeys.add(normalizedTokenKey)
+
     const dedupedTimestamps = new Set<number>()
     for (const timestamp of timestamps) {
-      ensure(
-        typeof timestamp === 'number' || /^\d+$/.test(String(timestamp)),
-        'INVALID_INPUT',
-        `Invalid timestamp for ${tokenKey}`
-      )
-      dedupedTimestamps.add(normalizeToEndOfDay(Number(timestamp)))
+      dedupedTimestamps.add(normalizeRequestTimestamp(timestamp, `timestamp for ${tokenKey}`))
     }
 
     for (const normalizedTimestamp of dedupedTimestamps) {
@@ -131,22 +145,12 @@ export function parseRangeCoins(raw: string | null): RangeRequest[] {
   const entries = Object.entries(parsed)
   ensure(entries.length <= MAX_RANGE_TOKENS, 'INVALID_INPUT', `A maximum of ${MAX_RANGE_TOKENS} tokens is allowed`)
 
+  const seenTokenKeys = new Set<string>()
   return entries.map(([tokenKey, range]) => {
     ensure(Array.isArray(range) && range.length === 2, 'INVALID_INPUT', `Range for ${tokenKey} must be [start, end]`)
     const [startRaw, endRaw] = range
-    ensure(
-      typeof startRaw === 'number' || /^\d+$/.test(String(startRaw)),
-      'INVALID_INPUT',
-      `Invalid start timestamp for ${tokenKey}`
-    )
-    ensure(
-      typeof endRaw === 'number' || /^\d+$/.test(String(endRaw)),
-      'INVALID_INPUT',
-      `Invalid end timestamp for ${tokenKey}`
-    )
-
-    const startTimestamp = normalizeToEndOfDay(Number(startRaw))
-    const endTimestamp = normalizeToEndOfDay(Number(endRaw))
+    const startTimestamp = normalizeRequestTimestamp(startRaw, `start timestamp for ${tokenKey}`)
+    const endTimestamp = normalizeRequestTimestamp(endRaw, `end timestamp for ${tokenKey}`)
     ensure(startTimestamp <= endTimestamp, 'INVALID_INPUT', `Range start must be <= end for ${tokenKey}`)
     ensure(
       normalizedRangeDayCount(startTimestamp, endTimestamp) <= MAX_RANGE_DAYS,
@@ -155,6 +159,10 @@ export function parseRangeCoins(raw: string | null): RangeRequest[] {
     )
 
     const parsedTokenKey = parseTokenKey(tokenKey)
+    const normalizedTokenKey = parsedTokenKey.tokenKey.toLowerCase()
+    ensure(!seenTokenKeys.has(normalizedTokenKey), 'INVALID_INPUT', `Duplicate normalized token key: ${tokenKey}`)
+    seenTokenKeys.add(normalizedTokenKey)
+
     return {
       chain: parsedTokenKey.chain,
       token: parsedTokenKey.token,

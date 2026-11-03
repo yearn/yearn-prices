@@ -23,12 +23,15 @@ export function batchSpacedTimestamps(sorted: number[], batchSize = DEFI_LLAMA_T
 
 export function buildDefiLlamaPayloads(
   grouped: Record<string, number[]>,
-  currentTimestamp = nowUnix()
+  currentTimestamp = nowUnix(),
+  normalizeTodayToNow = true
 ): Array<Record<string, number[]>> {
   const tokenChunks: Array<{ tokenKey: string; timestamps: number[] }> = []
   for (const [tokenKey, timestamps] of Object.entries(grouped)) {
     const fetchTimestamps = [
-      ...new Set(timestamps.map((timestamp) => toFetchTimestamp(timestamp, currentTimestamp)))
+      ...new Set(
+        timestamps.map((timestamp) => (normalizeTodayToNow ? toFetchTimestamp(timestamp, currentTimestamp) : timestamp))
+      )
     ].sort((left, right) => left - right)
     for (const timestampChunk of batchSpacedTimestamps(fetchTimestamps)) {
       tokenChunks.push({ tokenKey, timestamps: timestampChunk })

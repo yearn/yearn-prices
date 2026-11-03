@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
-import { readdirSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { join } from 'node:path'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { Client } from 'pg'
 import type { TestProject } from 'vitest/node'
 
@@ -12,7 +12,6 @@ declare module 'vitest' {
 }
 
 const IMAGE = 'postgres:16-alpine'
-const MIGRATIONS_DIRECTORY = join(process.cwd(), 'migrations')
 const READINESS_ATTEMPTS = 60
 
 function docker(args: string[]): string {
@@ -34,18 +33,8 @@ function waitForReadiness(containerId: string): void {
 async function applyMigrations(databaseUrl: string): Promise<void> {
   const client = new Client({ connectionString: databaseUrl })
   await client.connect()
-  const require = createRequire(join(MIGRATIONS_DIRECTORY, 'index.cjs'))
-  const db = { runSql: (sql: string) => client.query(sql) }
-
-  const files = readdirSync(MIGRATIONS_DIRECTORY)
-    .filter((file) => file.endsWith('.js'))
-    .sort()
-
   try {
-    for (const file of files) {
-      const migration = require(join(MIGRATIONS_DIRECTORY, file)) as { up: (db: unknown) => Promise<unknown> }
-      await migration.up(db)
-    }
+    await migrate(drizzle(client), { migrationsFolder: join(process.cwd(), 'drizzle') })
   } finally {
     await client.end()
   }

@@ -19,8 +19,8 @@ export class EnsoSpotSource extends SpotPriceSourceBase {
     return chainIdToName(chainId) !== undefined
   }
 
-  async getSpotPrice(chainId: number, token: string): Promise<SpotPriceResult> {
-    const priceData = await this.client.getPrice(chainId, token.toLowerCase())
+  async getSpotPrice(chainId: number, token: string, signal?: AbortSignal): Promise<SpotPriceResult> {
+    const priceData = await this.client.getPrice(chainId, token.toLowerCase(), { signal })
 
     if (typeof priceData.price !== 'number' || !Number.isFinite(priceData.price) || priceData.price <= 0) {
       throw new ApiError('NOT_FOUND', `Enso returned no valid price for ${token}`)
