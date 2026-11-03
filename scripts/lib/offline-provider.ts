@@ -15,9 +15,7 @@ export function createOfflineDefiLlamaClient(rps: number, options: OfflineProvid
     timeoutMs: options.timeoutMs ?? 10000,
     honorRetryAfter: true,
     retryRateLimits: true,
-    // Preserve provider Retry-After values for offline jobs; the sleep helper
-    // splits waits longer than the platform's maximum single timer.
-    retryAfterCapMs: Number.MAX_SAFE_INTEGER,
+    retryAfterCapMs: 600_000,
     onRateLimit: (retryAfterMs) => rateLimiter.extendCooldown(retryAfterMs ?? 60_000)
   })
 }

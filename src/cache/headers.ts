@@ -1,4 +1,4 @@
-import { isClosedDay, isTodayNormalized } from '../utils/time'
+import { currentUtcDayEnd, normalizeToEndOfDay } from '../utils/time'
 
 // Historical rows can be repaired, but repairs invalidate the edge by bumping
 // HISTORICAL_CACHE_REVISION. Keep closed days at the edge for 30 days.
@@ -24,12 +24,16 @@ export const CACHE_CONTROL_SPOT = 'public, s-maxage=120, stale-while-revalidate=
 // deliberate exception: it returns a short-lived negative result (CACHE_CONTROL_NOT_FOUND).
 export const CACHE_CONTROL_NO_STORE = 'no-store'
 
+function mayBeProvisional(timestamp: number): boolean {
+  return normalizeToEndOfDay(timestamp) >= currentUtcDayEnd() - 86_400
+}
+
 export function cacheControlForHistorical(timestamp: number): string {
-  return isTodayNormalized(timestamp) ? CACHE_CONTROL_TODAY : CACHE_CONTROL_HISTORICAL
+  return mayBeProvisional(timestamp) ? CACHE_CONTROL_TODAY : CACHE_CONTROL_HISTORICAL
 }
 
 export function cacheControlForBatch(timestamps: number[], allResolved: boolean): string {
-  if (timestamps.some((timestamp) => !isClosedDay(timestamp))) {
+  if (timestamps.some(mayBeProvisional)) {
     return CACHE_CONTROL_TODAY
   }
 
@@ -37,7 +41,7 @@ export function cacheControlForBatch(timestamps: number[], allResolved: boolean)
 }
 
 export function cacheControlForRange(rangeEnds: number[], allResolved: boolean): string {
-  if (rangeEnds.some((timestamp) => isTodayNormalized(timestamp))) {
+  if (rangeEnds.some(mayBeProvisional)) {
     return CACHE_CONTROL_TODAY
   }
 

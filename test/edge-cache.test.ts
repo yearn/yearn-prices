@@ -357,6 +357,13 @@ describe('cache-control policies', () => {
     expect(cacheControlForHistorical(TODAY)).toBe(CACHE_CONTROL_TODAY)
   })
 
+  it('keeps the just-closed day short-lived while it may still be provisional', () => {
+    const yesterday = TODAY - 86_400
+    expect(cacheControlForHistorical(yesterday)).toBe(CACHE_CONTROL_TODAY)
+    expect(cacheControlForBatch([PAST, yesterday], true)).toBe(CACHE_CONTROL_TODAY)
+    expect(cacheControlForRange([yesterday], true)).toBe(CACHE_CONTROL_TODAY)
+  })
+
   it('downgrades an incomplete batch to partial and lets today win', () => {
     expect(cacheControlForBatch([PAST], true)).toBe(CACHE_CONTROL_HISTORICAL)
     expect(cacheControlForBatch([PAST], false)).toBe(CACHE_CONTROL_PARTIAL)

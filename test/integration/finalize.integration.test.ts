@@ -139,6 +139,18 @@ describe('finalization writes', () => {
     expect(Number(rows[0].price)).toBeCloseTo(2.5)
   })
 
+  it('replaces a hidden provisional same-source row and finalizes it', async () => {
+    await seedPrice('defillama', 2.5)
+    await pool.query('UPDATE token_prices SET finalized = FALSE')
+    const outcome = await finalizeBackfillTargets(backfillPool(), [target()])
+
+    expect(outcome.inserted).toBe(1)
+    const result = await pool.query('SELECT price, finalized FROM token_prices')
+    expect(result.rows).toHaveLength(1)
+    expect(Number(result.rows[0].price)).toBeCloseTo(1.0012)
+    expect(result.rows[0].finalized).toBe(true)
+  })
+
   it('reports a different-source row committed before the guard as skipped_concurrent_existing', async () => {
     await seedPrice('curve', 3.5)
     const outcome = await finalizeBackfillTargets(backfillPool(), [target()])

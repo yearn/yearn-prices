@@ -248,12 +248,21 @@ async function warmDirectPrices(
         }
       }
 
-      const responses = await Promise.all(
-        [...byFetchTimestamp].map(async ([fetchTimestamp, coins]) => ({
-          fetchTimestamp,
-          response: await defiLlama.getHistorical(fetchTimestamp, coins)
-        }))
+      const lookups = [...byFetchTimestamp].flatMap(([fetchTimestamp, coins]) =>
+        coins.map((coin) => ({ coin, result: defiLlama.getHistorical(fetchTimestamp, [coin]) }))
       )
+      const settled = await Promise.allSettled(lookups.map(({ result }) => result))
+      const failedTokens = new Set<string>()
+      const responses = []
+      for (const [index, outcome] of settled.entries()) {
+        if (outcome.status === 'fulfilled') {
+          responses.push({ response: outcome.value })
+          continue
+        }
+        failedTokens.add(lookups[index].coin)
+        stats.failures += 1
+        console.error('DeFiLlama lookup failed', lookups[index].coin, outcome.reason)
+      }
       const samplesByToken = new Map<string, Array<{ timestamp: number; price: number; confidence?: number | null }>>()
       const symbolByToken = new Map<string, string | null>()
       for (const { response } of responses) {
@@ -270,6 +279,7 @@ async function warmDirectPrices(
       }
 
       for (const [tokenKey, requestedTimestamps] of Object.entries(payload)) {
+        if (failedTokens.has(tokenKey)) continue
         const [chain, token] = tokenKey.split(':')
         const built = buildDefiLlamaWrites(chain, token, requestedTimestamps, {
           symbol: symbolByToken.get(tokenKey),
