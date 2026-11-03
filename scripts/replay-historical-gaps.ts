@@ -6,7 +6,12 @@ loadEnv()
 import { applicableAlias } from '../src/backfill/alias-eligibility'
 import { parseCliArgs } from '../src/backfill/args'
 import { readChartCoin } from '../src/backfill/chart-envelope'
-import { CHART_REQUEST_TIMEOUT_MS, EXACT_READ_CHUNK_SIZE, MAXIMUM_CHART_SPAN_DAYS } from '../src/backfill/constants'
+import {
+  CHART_REQUEST_TIMEOUT_MS,
+  CHART_RETRY_AFTER_CAP_MS,
+  EXACT_READ_CHUNK_SIZE,
+  MAXIMUM_CHART_SPAN_DAYS
+} from '../src/backfill/constants'
 import { httpAttempts, httpDiagnosticCodes } from '../src/backfill/diagnostics'
 import { manifestDigest, type NormalizedTarget, parseManifest } from '../src/backfill/manifest'
 import { type MatchResult, matchChartObservation, windowEligibleObservations } from '../src/backfill/matcher'
@@ -510,7 +515,7 @@ export function chartClient(rateLimiter: SharedCooldownRateLimiter, onRetry: () 
   return new DefiLlamaClient(rateLimiter, onRetry, {
     timeoutMs: CHART_REQUEST_TIMEOUT_MS,
     honorRetryAfter: true,
-    retryAfterCapMs: Number.MAX_SAFE_INTEGER,
+    retryAfterCapMs: CHART_RETRY_AFTER_CAP_MS,
     retryTransportErrors: true,
     retryInvalidJson: true,
     onRateLimit: (retryAfterMs) => rateLimiter.extendCooldown(retryAfterMs ?? 60_000)

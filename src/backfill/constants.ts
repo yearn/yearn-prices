@@ -20,4 +20,4 @@ export const EXACT_READ_CHUNK_SIZE = 5_000
 
 export const CHART_REQUEST_TIMEOUT_MS = 30_000
 
-export const CHART_RETRY_AFTER_CAP_MS = 60_000
+export const CHART_RETRY_AFTER_CAP_MS = 600_000

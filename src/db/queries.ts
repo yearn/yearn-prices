@@ -1,5 +1,5 @@
 import type { Pool } from '@neondatabase/serverless'
-import { ACCEPTED_PRICE_SQL, isRejectedPrice, NOT_REJECTED_PRICE_SQL } from '../prices/rejections'
+import { isRejectedPrice, NOT_REJECTED_PRICE_SQL, SERVED_PRICE_SQL } from '../prices/rejections'
 import type {
   DbPriceRow,
   ExactPriceRecord,
@@ -79,7 +79,7 @@ export async function getBatchHistoricalPrices(
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp = r.timestamp
-      WHERE tp.source = $${sourceIndex} AND ${ACCEPTED_PRICE_SQL}
+      WHERE tp.source = $${sourceIndex} AND ${SERVED_PRICE_SQL}
       ORDER BY tp.chain, tp.token, tp.timestamp
     `
   } else {
@@ -92,7 +92,7 @@ export async function getBatchHistoricalPrices(
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp = r.timestamp
-      WHERE ${ACCEPTED_PRICE_SQL}
+      WHERE ${SERVED_PRICE_SQL}
       ORDER BY tp.chain, tp.token, tp.timestamp, ${buildSourceCaseExpression()}
     `
   }
@@ -140,7 +140,7 @@ export async function getRangeHistoricalPrices(
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp BETWEEN r.start_timestamp AND r.end_timestamp
-      WHERE tp.source = $${sourceIndex} AND ${ACCEPTED_PRICE_SQL}
+      WHERE tp.source = $${sourceIndex} AND ${SERVED_PRICE_SQL}
       ORDER BY tp.chain, tp.token, tp.timestamp
     `
   } else {
@@ -153,7 +153,7 @@ export async function getRangeHistoricalPrices(
         ON tp.chain = r.chain
        AND tp.token = r.token
        AND tp.timestamp BETWEEN r.start_timestamp AND r.end_timestamp
-      WHERE ${ACCEPTED_PRICE_SQL}
+      WHERE ${SERVED_PRICE_SQL}
       ORDER BY tp.chain, tp.token, tp.timestamp, ${buildSourceCaseExpression()}
     `
   }

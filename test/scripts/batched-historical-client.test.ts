@@ -69,6 +69,24 @@ describe('offline historical batching', () => {
     }
   )
 
+  it('fails only the coin with a malformed sample and still resolves the rest of the batch', async () => {
+    const client = new BatchedHistoricalClient({
+      getBatchHistorical: vi.fn(async () => ({
+        coins: {
+          [a]: { symbol: 'A', prices: [{ price: 0, timestamp: day }] },
+          [b]: { symbol: 'B', prices: [{ price: 4, timestamp: day }] }
+        }
+      }))
+    })
+    await client.prefetch([
+      { coin: a, timestamp: day },
+      { coin: b, timestamp: day }
+    ])
+    await expect(client.getHistorical(day, [a])).rejects.toThrow('Malformed DeFiLlama batch observations')
+    expect((await client.getHistorical(day, [b])).coins[b].price).toBe(4)
+    expect(client.stats).toMatchObject({ failedBatches: 0, invalidObservations: 1 })
+  })
+
   it('rejects out-of-window observations and non-EOD input without normalizing dates', async () => {
     const getBatchHistorical = vi.fn(async () => ({
       coins: { [a]: { prices: [{ price: 2, timestamp: day + 21601 }] } }
@@ -83,7 +101,7 @@ describe('offline historical batching', () => {
 it.each([
   [1, 999],
   [999, 1]
-])('rejects conflicting prices in either order: %j', async (...prices) => {
+])('rejects conflicting prices for that coin only, in either order: %j', async (...prices) => {
   const getBatchHistorical = vi.fn(async () => ({
     coins: { [a]: { prices: prices.map((price) => ({ timestamp: day, price })) } }
   }))
@@ -93,7 +111,7 @@ it.each([
     { coin: b, timestamp: day }
   ])
   await expect(client.getHistorical(day, [a])).rejects.toThrow('Conflicting')
-  await expect(client.getHistorical(day, [b])).rejects.toThrow('Conflicting')
+  expect(await client.getHistorical(day, [b])).toEqual({ coins: {} })
   expect(getBatchHistorical).toHaveBeenCalledTimes(1)
 })
 

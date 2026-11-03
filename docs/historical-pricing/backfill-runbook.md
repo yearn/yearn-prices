@@ -23,7 +23,7 @@ the manifest contains token addresses and dates, not wallet data.
 - Finalization rechecks the exact read under the existing bounded transaction
   lock, uses insert-only conflict handling, and clears resolved gap entries.
 - `token_prices.finalized = false` marks a provisional close that warmup can
-  refresh once its UTC day has closed. Migration `20261103000100` only marks
+  refresh once its UTC day has closed. Migration `drizzle/0001_finalize_token_prices.sql` (applied by `bun run migrate`) only marks
   rows for the current UTC day provisional; older rows remain finalized because
   their original provisional status cannot be reconstructed from stored data.
   Audit evidence before any targeted historical correction.

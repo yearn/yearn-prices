@@ -18,7 +18,7 @@ Implementation was coordinated across Luna agents and is kept together on the si
 
 ### Deployment and residual limits
 
-Apply migration `20261103000100-finalize-token-prices.js` before deploying the worker or running updated jobs. It adds finalization/provenance columns and a finite-positive price constraint, quarantining pre-existing invalid prices first. Its rollback is deliberately forward-only. The migration was exercised only against disposable test databases.
+Apply migration `drizzle/0001_finalize_token_prices.sql` (`bun run migrate`) before deploying the worker or running updated jobs. It adds finalization/provenance columns and a finite-positive price constraint, quarantining pre-existing invalid prices first. Its rollback is deliberately forward-only. The migration was exercised only against disposable test databases.
 
 Pre-migration closed-day rows have unknown original observation times. The migration preserves those rows as finalized; it cannot determine which were originally provisional. Existing affected history therefore still needs an evidence-backed repair. Current-day rows are marked provisional at migration time. No production history was repaired as part of this work.
 

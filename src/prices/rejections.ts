@@ -22,6 +22,11 @@ export const NOT_REJECTED_PRICE_SQL = `NOT EXISTS (
     AND rejected.timestamp = tp.timestamp AND rejected.source = tp.source
 )`
 
+export const SERVED_PRICE_SQL = `${NOT_REJECTED_PRICE_SQL} AND (
+  tp.finalized = TRUE
+  OR tp.timestamp >= to_timestamp(floor(extract(epoch from now()) / 86400)::bigint * 86400 - 1)
+)`
+
 export const ACCEPTED_PRICE_SQL = `${NOT_REJECTED_PRICE_SQL} AND (
   tp.finalized = TRUE
   OR tp.timestamp = to_timestamp(floor(extract(epoch from now()) / 86400)::bigint * 86400 + 86399)

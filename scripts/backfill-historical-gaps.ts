@@ -8,6 +8,7 @@ import { parseCliArgs } from '../src/backfill/args'
 import { readChartCoin } from '../src/backfill/chart-envelope'
 import {
   CHART_REQUEST_TIMEOUT_MS,
+  CHART_RETRY_AFTER_CAP_MS,
   EXACT_READ_CHUNK_SIZE,
   FINALIZATION_BATCH_SIZE,
   MAXIMUM_ACCEPTED_OFFSET_SECONDS,
@@ -653,7 +654,7 @@ export function createChartFetcher(searchWidth: string): ChartFetch {
       {
         timeoutMs: CHART_REQUEST_TIMEOUT_MS,
         honorRetryAfter: true,
-        retryAfterCapMs: Number.MAX_SAFE_INTEGER,
+        retryAfterCapMs: CHART_RETRY_AFTER_CAP_MS,
         retryRateLimits: true,
         retryTransportErrors: true,
         retryInvalidJson: true,

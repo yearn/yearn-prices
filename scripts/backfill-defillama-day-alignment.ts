@@ -96,9 +96,10 @@ const report: { startedAt: string; missing: MissingDay[]; failed: FailedToken[] 
 }
 
 async function writeReport(quiet = false): Promise<void> {
-  await writeFile(REPORT_PATH, JSON.stringify({ ...report, finishedAt: new Date().toISOString() }, null, 2))
+  const path = phase === 'verify' ? REPORT_PATH.replace(/(\.json)?$/, '.verify.json') : REPORT_PATH
+  await writeFile(path, JSON.stringify({ ...report, finishedAt: new Date().toISOString() }, null, 2))
   if (!quiet) {
-    console.log(`report ${REPORT_PATH} missing=${report.missing.length} failed=${report.failed.length}`)
+    console.log(`report ${path} missing=${report.missing.length} failed=${report.failed.length}`)
   }
 }
 

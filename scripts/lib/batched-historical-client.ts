@@ -31,7 +31,14 @@ export interface BatchedHistoricalClientOptions {
  * but every HTTP call uses batchHistorical. Caches belong to this run only. */
 export class BatchedHistoricalClient extends DefiLlamaClient {
   readonly endpoint = '/batchHistorical' as const
-  readonly stats = { lookups: 0, uniqueLookups: 0, cacheHits: 0, batchRequests: 0, failedBatches: 0 }
+  readonly stats = {
+    lookups: 0,
+    uniqueLookups: 0,
+    cacheHits: 0,
+    batchRequests: 0,
+    failedBatches: 0,
+    invalidObservations: 0
+  }
   private readonly cache = new Map<string, Promise<DefiLlamaHistoricalCoin | null>>()
   private readonly observationMetadata = new Map<string, HistoricalObservationMetadata>()
   private readonly pending = new Map<string, Pending>()
@@ -158,6 +165,7 @@ export class BatchedHistoricalClient extends DefiLlamaClient {
               throw new ApiError('UNAVAILABLE', 'Malformed DeFiLlama batch envelope')
             }
             const resolved = new Map<string, DefiLlamaHistoricalCoin | null>()
+            const failedCoins = new Map<string, ApiError>()
             for (const [coin, timestamps] of Object.entries(payload)) {
               const entry = response.coins[coin]
               if (
@@ -172,14 +180,20 @@ export class BatchedHistoricalClient extends DefiLlamaClient {
                       sample.price <= 0
                   ))
               ) {
-                throw new ApiError('UNAVAILABLE', 'Malformed DeFiLlama batch observations')
+                this.stats.invalidObservations += 1
+                console.warn(`skipping malformed DeFiLlama observations for ${coin}`)
+                failedCoins.set(coin, new ApiError('UNAVAILABLE', 'Malformed DeFiLlama batch observations'))
+                continue
               }
               const observations = new Map<number, number>()
-              for (const sample of entry?.prices ?? []) {
+              const conflicting = (entry?.prices ?? []).some((sample) => {
                 const previous = observations.get(sample.timestamp)
-                if (previous !== undefined && previous !== sample.price)
-                  throw new ApiError('UNAVAILABLE', 'Conflicting DeFiLlama batch observations')
                 observations.set(sample.timestamp, sample.price)
+                return previous !== undefined && previous !== sample.price
+              })
+              if (conflicting) {
+                failedCoins.set(coin, new ApiError('UNAVAILABLE', 'Conflicting DeFiLlama batch observations'))
+                continue
               }
               const matched = matchPricesToRequests(timestamps, entry?.prices ?? [])
               for (const timestamp of timestamps) {
@@ -188,6 +202,11 @@ export class BatchedHistoricalClient extends DefiLlamaClient {
               }
             }
             for (const member of members) {
+              const failure = failedCoins.get(member.coin)
+              if (failure) {
+                member.reject(failure)
+                continue
+              }
               const sample = resolved.get(`${member.coin}:${member.requestTimestamp}`) ?? null
               this.observationMetadata.set(`${member.coin}:${member.timestamp}`, {
                 endpoint: this.endpoint,

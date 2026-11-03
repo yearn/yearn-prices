@@ -144,6 +144,23 @@ describe('current-day historical lookups (incident regression)', () => {
     }
   })
 
+  it('keeps serving the day that just closed before warmup finalizes it', async () => {
+    const timestamp = currentUtcDayEnd() - 86_400
+    const write: TokenPriceWrite = {
+      chain: 'ethereum',
+      token: getAddress(RAW_ADDR),
+      timestamp,
+      price: 10,
+      symbol: 'WETH',
+      confidence: null,
+      source: 'defillama',
+      finalizationIntent: 'provisional'
+    }
+    await insertProvisionalTokenPrices(pool as unknown as NeonPool, [write])
+    const target = { chain: write.chain, token: write.token, timestamp }
+    expect(await getBatchHistoricalPrices(neonPool(), [target], 'defillama')).toMatchObject([{ price: 10 }])
+  })
+
   it('does not count an unfinalized closed row as source-filtered historical coverage', async () => {
     const timestamp = 1_755_388_799
     const write: TokenPriceWrite = {
