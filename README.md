@@ -39,9 +39,8 @@ bun run dev
 | `bun run deploy` | Deploy the worker with `wrangler deploy` |
 | `bun run typecheck` | Type-check with `tsc --noEmit` |
 | `bun run test` | Run the Vitest suite |
-| `bun run migrate` | Run pending Postgres migrations (`db-migrate up`) |
-| `bun run migrate:create` | Scaffold a new SQL migration file |
-| `bun run migrate:down` | Roll back the last migration |
+| `bun run migrate` | Apply pending Drizzle migrations (`drizzle-kit migrate`) |
+| `bun run db:generate` | Generate a migration from `src/db/schema.ts` diff |
 | `bun run warmup` | Pre-populate today's prices for known vaults/tokens |
 | `bun run audit:prices` | Read-only: report Kong vault/underlying `(chain, token, day, source)` gaps in `token_prices` for the last 7 days; exits 1 on any gap or chain without `RPC_URL_<id>` |
 | `bun run audit:prices:backfill` | Audit, run warmup if gaps exist, re-audit |
