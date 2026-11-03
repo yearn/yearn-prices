@@ -4,7 +4,6 @@ import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { Client } from 'pg'
 import type { TestProject } from 'vitest/node'
-import observations from '../../src/prices/rejected-observations-2026-10.json'
 
 declare module 'vitest' {
   interface ProvidedContext {
@@ -36,14 +35,6 @@ async function applyMigrations(databaseUrl: string): Promise<void> {
   await client.connect()
   try {
     await migrate(drizzle(client), { migrationsFolder: join(process.cwd(), 'drizzle') })
-    await client.query(
-      `INSERT INTO rejected_price_observations (chain, token, timestamp, source, reason)
-       SELECT item->>'chain', item->>'token', to_timestamp((item->>'timestamp')::bigint),
-         source, 'Confirmed invalid provider observation; issue #' || (item->>'issue')
-       FROM jsonb_array_elements($1::jsonb) item
-       CROSS JOIN (VALUES ('defillama'), ('defillama-alias')) sources(source)`,
-      [JSON.stringify(observations)]
-    )
   } finally {
     await client.end()
   }
