@@ -6,14 +6,26 @@
       "includes": ["migrations/**"],
       "linter": {
         "rules": {
-          "complexity": { "useArrowFunction": "off" },
-          "correctness": { "noUnusedVariables": "off" }
+          "complexity": {
+            "useArrowFunction": "off"
+          },
+          "correctness": {
+            "noUnusedVariables": "off"
+          }
         }
       }
     },
     {
       "includes": ["test/fixtures/defillama-chart/**"],
-      "formatter": { "enabled": false }
+      "formatter": {
+        "enabled": false
+      }
+    },
+    {
+      "includes": ["drizzle/**"],
+      "formatter": {
+        "enabled": false
+      }
     }
   ]
 }
