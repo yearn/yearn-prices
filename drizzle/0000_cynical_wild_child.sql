@@ -1,6 +1,3 @@
--- Current sql file was generated after introspecting the database
--- If you want to run this migration please uncomment this code before executing migrations
-/*
 CREATE TABLE "backfill_progress" (
 	"token_key" text PRIMARY KEY NOT NULL,
 	"done_at" timestamp with time zone DEFAULT now()
@@ -63,5 +60,19 @@ CREATE TABLE "token_prices" (
 	CONSTRAINT "token_prices_pkey" PRIMARY KEY("token","timestamp","source","chain")
 );
 --> statement-breakpoint
-CREATE INDEX "idx_token_prices_range" ON "token_prices" USING btree ("chain" timestamptz_ops,"token" timestamptz_ops,"timestamp" timestamptz_ops);--> statement-breakpoint
-*/
+CREATE INDEX "idx_token_prices_range" ON "token_prices" USING btree ("chain","token","timestamp");--> statement-breakpoint
+CREATE FUNCTION quarantine_rejected_price() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE rejection_reason TEXT;
+BEGIN
+  SELECT reason INTO rejection_reason FROM rejected_price_observations
+  WHERE chain = NEW.chain AND token = lower(NEW.token)
+    AND timestamp = NEW.timestamp AND source = NEW.source;
+  IF FOUND THEN
+    INSERT INTO quarantined_token_prices (original_row, reason)
+    VALUES (to_jsonb(NEW), rejection_reason);
+    RETURN NULL;
+  END IF;
+  RETURN NEW;
+END;
+$$;--> statement-breakpoint
+CREATE TRIGGER quarantine_rejected_price BEFORE INSERT OR UPDATE ON token_prices FOR EACH ROW EXECUTE FUNCTION quarantine_rejected_price();

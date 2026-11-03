@@ -97,15 +97,19 @@ export const tokenPrices = pgTable(
     confidence: numeric(),
     source: varchar({ length: 50 }).notNull(),
     createdAt: timestamp('created_at', { mode: 'string' }).defaultNow(),
-    updatedAt: timestamp('updated_at', { mode: 'string' }).defaultNow()
+    updatedAt: timestamp('updated_at', { mode: 'string' }).defaultNow(),
+    finalized: boolean().default(true).notNull(),
+    observedAt: timestamp('observed_at', { withTimezone: true, mode: 'string' }),
+    observationEndpoint: text('observation_endpoint')
   },
   (table) => [
     index('idx_token_prices_range').using(
       'btree',
-      table.chain.asc().nullsLast().op('timestamptz_ops'),
-      table.token.asc().nullsLast().op('timestamptz_ops'),
-      table.timestamp.asc().nullsLast().op('timestamptz_ops')
+      table.chain.asc().nullsLast(),
+      table.token.asc().nullsLast(),
+      table.timestamp.asc().nullsLast()
     ),
-    primaryKey({ columns: [table.token, table.timestamp, table.source, table.chain], name: 'token_prices_pkey' })
+    primaryKey({ columns: [table.token, table.timestamp, table.source, table.chain], name: 'token_prices_pkey' }),
+    check('token_prices_price_finite_positive', sql`price > 0 AND price::text NOT IN ('NaN', 'Infinity', '-Infinity')`)
   ]
 )

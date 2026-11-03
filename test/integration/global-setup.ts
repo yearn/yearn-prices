@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process'
-import { readdirSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { join } from 'node:path'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { Client } from 'pg'
 import type { TestProject } from 'vitest/node'
+import observations from '../../src/prices/rejected-observations-2026-10.json'
 
 declare module 'vitest' {
   interface ProvidedContext {
@@ -12,7 +13,6 @@ declare module 'vitest' {
 }
 
 const IMAGE = 'postgres:16-alpine'
-const MIGRATIONS_DIRECTORY = join(process.cwd(), 'migrations')
 const READINESS_ATTEMPTS = 60
 
 function docker(args: string[]): string {
@@ -34,18 +34,16 @@ function waitForReadiness(containerId: string): void {
 async function applyMigrations(databaseUrl: string): Promise<void> {
   const client = new Client({ connectionString: databaseUrl })
   await client.connect()
-  const require = createRequire(join(MIGRATIONS_DIRECTORY, 'index.cjs'))
-  const db = { runSql: (sql: string) => client.query(sql) }
-
-  const files = readdirSync(MIGRATIONS_DIRECTORY)
-    .filter((file) => file.endsWith('.js'))
-    .sort()
-
   try {
-    for (const file of files) {
-      const migration = require(join(MIGRATIONS_DIRECTORY, file)) as { up: (db: unknown) => Promise<unknown> }
-      await migration.up(db)
-    }
+    await migrate(drizzle(client), { migrationsFolder: join(process.cwd(), 'drizzle') })
+    await client.query(
+      `INSERT INTO rejected_price_observations (chain, token, timestamp, source, reason)
+       SELECT item->>'chain', item->>'token', to_timestamp((item->>'timestamp')::bigint),
+         source, 'Confirmed invalid provider observation; issue #' || (item->>'issue')
+       FROM jsonb_array_elements($1::jsonb) item
+       CROSS JOIN (VALUES ('defillama'), ('defillama-alias')) sources(source)`,
+      [JSON.stringify(observations)]
+    )
   } finally {
     await client.end()
   }

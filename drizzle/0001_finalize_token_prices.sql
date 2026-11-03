@@ -1,0 +1,7 @@
+ALTER TABLE "token_prices" ADD COLUMN "finalized" boolean DEFAULT true NOT NULL;--> statement-breakpoint
+ALTER TABLE "token_prices" ADD COLUMN "observed_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "token_prices" ADD COLUMN "observation_endpoint" text;--> statement-breakpoint
+UPDATE "token_prices" SET "finalized" = false WHERE "timestamp" = to_timestamp(floor(extract(epoch from now()) / 86400)::bigint * 86400 + 86399);--> statement-breakpoint
+INSERT INTO "quarantined_token_prices" ("original_row", "reason") SELECT jsonb_build_object('chain', tp.chain, 'token', tp.token, 'timestamp', tp.timestamp, 'price', tp.price::text, 'symbol', tp.symbol, 'confidence', CASE WHEN tp.confidence IS NULL THEN NULL ELSE tp.confidence::text END, 'source', tp.source, 'created_at', tp.created_at, 'updated_at', tp.updated_at), 'Invalid token price: expected a finite positive value' FROM "token_prices" tp WHERE tp.price <= 0 OR tp.price::text IN ('NaN', 'Infinity', '-Infinity');--> statement-breakpoint
+DELETE FROM "token_prices" tp WHERE tp.price <= 0 OR tp.price::text IN ('NaN', 'Infinity', '-Infinity');--> statement-breakpoint
+ALTER TABLE "token_prices" ADD CONSTRAINT "token_prices_price_finite_positive" CHECK (price > 0 AND price::text NOT IN ('NaN', 'Infinity', '-Infinity'));

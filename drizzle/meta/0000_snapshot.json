@@ -344,21 +344,18 @@
               "expression": "chain",
               "asc": true,
               "nulls": "last",
-              "opclass": "timestamptz_ops",
               "isExpression": false
             },
             {
               "expression": "token",
               "asc": true,
               "nulls": "last",
-              "opclass": "timestamptz_ops",
               "isExpression": false
             },
             {
               "expression": "timestamp",
               "asc": true,
               "nulls": "last",
-              "opclass": "timestamptz_ops",
               "isExpression": false
             }
           ],

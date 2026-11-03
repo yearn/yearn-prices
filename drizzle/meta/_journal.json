@@ -8,6 +8,13 @@
       "when": 1793724995701,
       "tag": "0000_cynical_wild_child",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793725360480,
+      "tag": "0001_finalize_token_prices",
+      "breakpoints": true
     }
   ]
 }
