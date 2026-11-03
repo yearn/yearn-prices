@@ -26,10 +26,11 @@ interface MarketSource {
  */
 export function createMarketPriceResolver(
   marketSources: MarketSource[],
-  resolve: (chainId: number, token: string, timestamp: number | null) => Promise<MarketQuote>,
+  resolve: (chainId: number, token: string, timestamp: number | null, signal?: AbortSignal) => Promise<MarketQuote>,
   options?: { requireTimestamp?: boolean }
 ): MarketPriceResolver {
-  return async (target) => {
+  return async (target, signal) => {
+    signal?.throwIfAborted()
     if (options?.requireTimestamp && target.timestamp == null) {
       return null
     }
@@ -38,7 +39,8 @@ export function createMarketPriceResolver(
     }
 
     try {
-      const price = await resolve(target.chainId, target.token, target.timestamp)
+      const price = await resolve(target.chainId, target.token, target.timestamp, signal)
+      signal?.throwIfAborted()
       const path: ResolvedPricePath = {
         chainId: target.chainId,
         token: target.token,

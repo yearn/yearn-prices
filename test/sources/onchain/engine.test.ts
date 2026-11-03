@@ -93,6 +93,27 @@ describe('RecursivePriceEngine', () => {
     expect(result.failure?.reason).toBe('retryable')
   })
 
+  it('stops a recursive child market lookup after cancellation', async () => {
+    const controller = new AbortController()
+    const market = vi.fn(marketFor({ [UNDERLYING]: 2 }))
+    const cancelBeforeChild: RecursivePriceAdapter = {
+      name: 'cancel-before-child',
+      async resolve(target, context) {
+        controller.abort()
+        const input = await context.require({ ...target, token: UNDERLYING }, 'underlying')
+        return { priceUsd: input.priceUsd, inputs: [{ path: input }], metadata: {} }
+      }
+    }
+    const engine = new RecursivePriceEngine(market, [cancelBeforeChild])
+
+    await expect(
+      engine.resolve({ chainId: 1, token: SHARE, timestamp: null }, controller.signal)
+    ).rejects.toMatchObject({
+      name: 'AbortError'
+    })
+    expect(market).not.toHaveBeenCalled()
+  })
+
   it('prefers retryable over unsupported when adapters disagree', async () => {
     const flaky: RecursivePriceAdapter = {
       name: 'flaky',

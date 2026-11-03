@@ -90,5 +90,14 @@ export function validateGraphResolution(
   }
   visit(root)
   const path = root.path!
-  return { price: path.priceUsd, symbol: path.symbol, confidence: path.confidence, source: path.source }
+  const fromStoredRow = path.metadata.provenance === 'existing-token_prices-row'
+  const hasProviderObservation = !fromStoredRow && (path.source === 'defillama' || path.source === 'defillama-alias')
+  return {
+    price: path.priceUsd,
+    symbol: path.symbol,
+    confidence: path.confidence,
+    source: path.source,
+    observedTimestamp: hasProviderObservation ? path.observedTimestamp : null,
+    observationEndpoint: hasProviderObservation ? '/batchHistorical' : null
+  }
 }

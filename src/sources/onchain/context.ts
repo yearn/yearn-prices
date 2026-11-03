@@ -10,6 +10,7 @@ import {
   RetryablePricingError
 } from './errors'
 import type { PriceDependency } from './plan'
+import { signalKey, throwIfAborted } from './signal'
 import type { RecursivePriceContext, RecursivePriceInput, RecursivePriceTarget, ResolvedPricePath } from './types'
 
 export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000'
@@ -43,6 +44,42 @@ export interface ContractContext {
   numericBlockNumber: number
   blockTimestamp: number
   address: Address
+}
+
+const abortAwareClients = new WeakMap<PublicClient, WeakMap<AbortSignal, PublicClient>>()
+
+function clientForSignal(client: PublicClient, signal?: AbortSignal): PublicClient {
+  if (!signal) {
+    return client
+  }
+
+  let bySignal = abortAwareClients.get(client)
+  if (!bySignal) {
+    bySignal = new WeakMap()
+    abortAwareClients.set(client, bySignal)
+  }
+  const cached = bySignal.get(signal)
+  if (cached) {
+    return cached
+  }
+
+  // viem's public action API has no per-call AbortSignal parameter. This guard
+  // stops adapters from starting subsequent RPC reads after cancellation; an
+  // RPC already dispatched remains bounded by viem's transport timeout.
+  const guarded = new Proxy(client, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver)
+      if (typeof value !== 'function') {
+        return value
+      }
+      return (...args: unknown[]) => {
+        throwIfAborted(signal)
+        return Reflect.apply(value, target, args)
+      }
+    }
+  })
+  bySignal.set(signal, guarded)
+  return guarded
 }
 
 /**
@@ -119,8 +156,9 @@ export function normalizedAddress(address: string): `0x${string}` | null {
 }
 
 function blockContextKey(target: RecursivePriceTarget): string {
-  return [target.chainId, target.token.toLowerCase(), target.timestamp ?? 'latest', target.blockNumber ?? 'none'].join(
-    ':'
+  return (
+    [target.chainId, target.token.toLowerCase(), target.timestamp ?? 'latest', target.blockNumber ?? 'none'].join(':') +
+    `:signal:${signalKey(target.signal)}`
   )
 }
 
@@ -142,13 +180,16 @@ async function loadContractContext(
   target: RecursivePriceTarget,
   options: OnchainAdapterOptions
 ): Promise<ContractContext> {
-  const client = options.clientForChain(target.chainId)
-  if (!client) {
+  throwIfAborted(target.signal)
+  const unguardedClient = options.clientForChain(target.chainId)
+  if (!unguardedClient) {
     // A missing RPC is a deployment gap, not a transient fault: report it as
     // "this adapter does not apply" so it never masks a working source.
     throw new Error(`RPC_URL_${target.chainId} is not configured`)
   }
+  const client = clientForSignal(unguardedClient, target.signal)
   const blockNumber = await (options.blockForTarget ?? defaultBlockForTarget)(client, target.chainId, target)
+  throwIfAborted(target.signal)
   const numericBlockNumber = Number(blockNumber)
   if (!Number.isSafeInteger(numericBlockNumber) || numericBlockNumber < 0) {
     throw new Error(`Block ${blockNumber} is outside the supported numeric range`)
@@ -156,6 +197,7 @@ async function loadContractContext(
   const blockTimestamp = options.blockTimestampForTarget
     ? await options.blockTimestampForTarget(client, blockNumber, target)
     : Number((await client.getBlock({ blockNumber })).timestamp)
+  throwIfAborted(target.signal)
   if (!Number.isSafeInteger(blockTimestamp) || blockTimestamp < 0) {
     throw new InvalidPricingError('Block has an invalid timestamp')
   }
@@ -176,6 +218,7 @@ export async function contractContext(
   target: RecursivePriceTarget,
   options: OnchainAdapterOptions
 ): Promise<ContractContext> {
+  throwIfAborted(target.signal)
   const cache = options.blockContextCache
   if (!cache) {
     return loadContractContext(target, options)

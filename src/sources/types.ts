@@ -29,7 +29,7 @@ export interface SpotPriceSource {
    * is surfaced as retryable if no other source succeeds.
    * The registry guarantees `source` is stamped.
    */
-  getSpotPrice(chainId: number, token: string): Promise<SpotPriceResult | null>
+  getSpotPrice(chainId: number, token: string, signal?: AbortSignal): Promise<SpotPriceResult | null>
 }
 
 export interface HistoricalPrice {

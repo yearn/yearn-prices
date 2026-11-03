@@ -12,6 +12,7 @@ import {
   type DefiLlamaClient
 } from '../src/clients/defillama'
 import { createPool } from '../src/db'
+import { ACCEPTED_PRICE_SQL, isRejectedPrice } from '../src/prices/rejections'
 import { getDefiLlamaCoinGeckoAlias, isDefiLlamaAliasValidAt } from '../src/sources/defillama/aliases'
 import { type DefiLlamaSample, matchPricesToRequests } from '../src/sources/defillama/match'
 import type { GraphNode } from '../src/sources/onchain/graph'
@@ -61,6 +62,8 @@ const state = new Map<
     provider: number[]
     failed: number[]
     alias: number[]
+    quarantinedDirect: number[]
+    quarantinedAlias: number[]
     symbol?: string
   }
 >()
@@ -72,7 +75,9 @@ for (const asset of assets) {
     storedAny: { first: null, last: null, rows: 0 },
     provider: [],
     failed: [],
-    alias: []
+    alias: [],
+    quarantinedDirect: [],
+    quarantinedAlias: []
   })
 }
 try {
@@ -80,12 +85,13 @@ try {
   for (const item of state.values()) {
     const result = await pool.query(
       `
-      SELECT min(extract(epoch from timestamp)) AS first,
-             max(extract(epoch from timestamp)) AS last, count(*) AS rows,
-             array_agg(DISTINCT extract(epoch from timestamp)::bigint)
-               FILTER (WHERE mod(extract(epoch from timestamp)::bigint, 86400) = 86399) AS days
-      FROM token_prices WHERE chain = $1 AND lower(token) = $2
-        AND price > 0 AND timestamp <= to_timestamp($3)
+      SELECT min(extract(epoch from tp.timestamp)) AS first,
+             max(extract(epoch from tp.timestamp)) AS last, count(*) AS rows,
+             array_agg(DISTINCT extract(epoch from tp.timestamp)::bigint)
+               FILTER (WHERE mod(extract(epoch from tp.timestamp)::bigint, 86400) = 86399) AS days
+      FROM token_prices tp WHERE tp.chain = $1 AND lower(tp.token) = $2
+        AND tp.price > 0 AND tp.timestamp <= to_timestamp($3)
+        AND ${ACCEPTED_PRICE_SQL}
     `,
       [chainIdToName(item.asset.chainId), item.asset.token.toLowerCase(), end]
     )
@@ -269,12 +275,17 @@ if (values.graph) {
 const results = [...state.values()].map((item) => {
   const chain = chainIdToName(item.asset.chainId)!
   const direct = chain + ':' + item.asset.token.toLowerCase()
-  item.provider = [...(matchedByCoin.get(direct)?.keys() ?? [])]
+  for (const day of matchedByCoin.get(direct)?.keys() ?? []) {
+    if (isRejectedPrice(chain, item.asset.token, day, 'defillama')) item.quarantinedDirect.push(day)
+    else item.provider.push(day)
+  }
   item.failed = [...(failedByCoin.get(direct) ?? [])]
   const alias = getDefiLlamaCoinGeckoAlias(chain, item.asset.token)
   if (alias) {
     for (const [day, sample] of matchedByCoin.get(alias.identifier) ?? []) {
-      if (isDefiLlamaAliasValidAt(alias, day) && isDefiLlamaAliasValidAt(alias, sample.timestamp)) item.alias.push(day)
+      if (!isDefiLlamaAliasValidAt(alias, day) || !isDefiLlamaAliasValidAt(alias, sample.timestamp)) continue
+      if (isRejectedPrice(chain, item.asset.token, day, 'defillama-alias')) item.quarantinedAlias.push(day)
+      else item.alias.push(day)
     }
     item.failed.push(
       ...[...(failedByCoin.get(alias.identifier) ?? [])].filter((day) => isDefiLlamaAliasValidAt(alias, day))
@@ -288,6 +299,9 @@ const results = [...state.values()].map((item) => {
     (a, b) => a - b
   )
   const coveredSet = new Set(covered)
+  const quarantinedDirect = [...new Set(item.quarantinedDirect)].sort((a, b) => a - b)
+  const quarantinedAlias = [...new Set(item.quarantinedAlias)].sort((a, b) => a - b)
+  const quarantinedProvider = [...new Set([...quarantinedDirect, ...quarantinedAlias])].sort((a, b) => a - b)
   const invalid = [
     ...new Set([...(invalidByCoin.get(direct) ?? []), ...(alias ? (invalidByCoin.get(alias.identifier) ?? []) : [])])
   ].filter((day) => !coveredSet.has(day))
@@ -305,6 +319,9 @@ const results = [...state.values()].map((item) => {
     graphCandidateDays: [...new Set(reconstructed)].length,
     providerDays: item.provider.length,
     aliasDays: item.alias.length,
+    quarantinedProviderDays: quarantinedProvider.length,
+    quarantinedDirectProviderRanges: ranges(quarantinedDirect),
+    quarantinedAliasProviderRanges: ranges(quarantinedAlias),
     retryableRanges: ranges(unknown),
     invalidObservationRanges: ranges(invalid),
     usableRanges: ranges(covered),

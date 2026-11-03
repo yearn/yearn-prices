@@ -8,7 +8,6 @@ import { parseCliArgs } from '../src/backfill/args'
 import { readChartCoin } from '../src/backfill/chart-envelope'
 import {
   CHART_REQUEST_TIMEOUT_MS,
-  CHART_RETRY_AFTER_CAP_MS,
   EXACT_READ_CHUNK_SIZE,
   FINALIZATION_BATCH_SIZE,
   MAXIMUM_ACCEPTED_OFFSET_SECONDS,
@@ -30,8 +29,8 @@ import { matchChartObservation } from '../src/backfill/matcher'
 import { priceKey, readPricedKeys } from '../src/backfill/priced-keys'
 import { gitRevision, toolVersion } from '../src/backfill/provenance'
 import { type ContiguousRange, groupContiguousRanges, rangeSpanDays } from '../src/backfill/ranges'
-import { DefiLlamaClient, SlidingWindowRateLimiter } from '../src/clients'
-import { HttpRequestError } from '../src/clients/http-client'
+import { DefiLlamaClient } from '../src/clients'
+import { SharedCooldownRateLimiter } from '../src/clients/http-client'
 import { createPool } from '../src/db'
 import { listDefiLlamaCoinGeckoAliases } from '../src/sources/defillama/aliases'
 import { chunk } from '../src/utils'
@@ -641,26 +640,27 @@ function applyReportState(
 }
 
 export function createChartFetcher(searchWidth: string): ChartFetch {
-  const rateLimiter = new SlidingWindowRateLimiter(10, 1000)
+  const rateLimiter = new SharedCooldownRateLimiter(10, 1000)
 
   return async (identifier, rangeStart, spanDays) => {
     let retries = 0
     let rateLimited = 0
     const client = new DefiLlamaClient(
       rateLimiter,
-      (_attempt, _delayMs, _url, status) => {
+      () => {
         retries += 1
-        if (status === 429) {
-          rateLimited += 1
-        }
       },
       {
         timeoutMs: CHART_REQUEST_TIMEOUT_MS,
         honorRetryAfter: true,
-        retryAfterCapMs: CHART_RETRY_AFTER_CAP_MS,
+        retryAfterCapMs: Number.MAX_SAFE_INTEGER,
         retryRateLimits: true,
         retryTransportErrors: true,
-        retryInvalidJson: true
+        retryInvalidJson: true,
+        onRateLimit: (retryAfterMs) => {
+          rateLimited += 1
+          rateLimiter.extendCooldown(retryAfterMs ?? 60_000)
+        }
       }
     )
 
@@ -679,8 +679,7 @@ export function createChartFetcher(searchWidth: string): ChartFetch {
         rateLimited
       }
     } catch (error) {
-      const terminalRateLimit = error instanceof HttpRequestError && error.responseStatus === 429 ? 1 : 0
-      throw new ChartRequestError(1 + retries, chartDiagnosticCodes(error), error, rateLimited + terminalRateLimit)
+      throw new ChartRequestError(1 + retries, chartDiagnosticCodes(error), error, rateLimited)
     }
   }
 }

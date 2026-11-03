@@ -22,10 +22,9 @@ import { config as loadEnv } from 'dotenv'
 
 loadEnv()
 
-import { DefiLlamaClient } from '../src/clients'
 import { createPool, insertTokenPrices, type Queryable } from '../src/db'
 import { DEFI_LLAMA_TIMESTAMP_BATCH } from '../src/sources/defillama/batch'
-import { buildDefiLlamaWrites } from '../src/sources/defillama/match'
+import { buildDefiLlamaWrites, matchPricesToRequests } from '../src/sources/defillama/match'
 import { computeRepairRatios } from '../src/sources/defillama/repair-ratio'
 import type { TokenPriceWrite } from '../src/types'
 import {
@@ -39,7 +38,9 @@ import {
   unixToIsoTimestamp
 } from '../src/utils'
 import { plausibleWrites, storedCurveLpGuard } from './lib/curve-lp-guard'
+import { runDayAlignmentPhase } from './lib/day-alignment-runner'
 import { KONG_URL } from './lib/kong-vaults'
+import { createOfflineDefiLlamaClient } from './lib/offline-provider'
 
 const databaseUrl = process.env.DATABASE_URL
 if (!databaseUrl) {
@@ -111,7 +112,7 @@ const TOKEN_CONCURRENCY =
 
 console.log(`starting phase=${phase} concurrency=${TOKEN_CONCURRENCY} retry=${RETRY_PATH || 'none'} out=${REPORT_PATH}`)
 
-const defiLlama = new DefiLlamaClient()
+const defiLlama = createOfflineDefiLlamaClient(4)
 
 interface TokenRow {
   chain: string
@@ -236,7 +237,7 @@ async function recordMissing(client: Queryable, missing: MissingDay[]): Promise<
   )
 }
 
-async function repairPrices(): Promise<void> {
+async function repairPrices(): Promise<boolean> {
   await ensureTables()
   await stampRepairedAt()
 
@@ -348,6 +349,7 @@ async function repairPrices(): Promise<void> {
   if (failedTokens.length > 0) {
     console.log(`retry: bun run scripts/backfill-defillama-day-alignment.ts prices --retry=${REPORT_PATH}`)
   }
+  return failedTokens.length === 0
 }
 
 function describeMissing(chain: string, token: string, fetchTimestamp: number, kind: MissingDay['kind']): MissingDay {
@@ -562,7 +564,7 @@ async function rescaleDerived(): Promise<void> {
   )
 }
 
-async function verify(): Promise<void> {
+async function verify(): Promise<boolean> {
   const { rows } = await pool.query<{ chain: string; token: string; timestamp: string; price: string }>(`
     SELECT chain, token, timestamp, price
     FROM token_prices
@@ -577,37 +579,48 @@ async function verify(): Promise<void> {
     ORDER BY token, timestamp
   `)
 
+  const grouped: Record<string, number[]> = {}
+  for (const row of rows) {
+    const coinKey = `ethereum:${row.token.toLowerCase()}`
+    grouped[coinKey] ??= []
+    grouped[coinKey].push(pgTimestampToUnix(row.timestamp))
+  }
+  const response = rows.length > 0 ? await defiLlama.getBatchHistorical(grouped) : { coins: {} }
+  let mismatches = 0
+
   for (const row of rows) {
     const timestamp = pgTimestampToUnix(row.timestamp)
     const coinKey = `ethereum:${row.token.toLowerCase()}`
-    const response = await defiLlama.getHistorical(timestamp, [coinKey])
-    const remote = response.coins[coinKey]?.price
+    const remote = matchPricesToRequests([timestamp], response.coins[coinKey]?.prices ?? []).get(timestamp)?.price
     const stored = Number(row.price)
     const ok = remote != null && Math.abs(stored - remote) / remote < 0.0001
+    if (!ok) {
+      mismatches += 1
+      report.failed.push({ chain: row.chain, token: row.token, reason: `verification mismatch at ${row.timestamp}` })
+    }
     console.log(
       `${row.token.slice(0, 8)} ${new Date(timestamp * 1000).toISOString().slice(0, 10)} stored=${stored} llama=${remote} ${ok ? 'ok' : 'MISMATCH'}`
     )
   }
+  return mismatches === 0
 }
 
 try {
-  if (phase === 'prices' || phase === 'all') {
-    await repairPrices()
+  const result = await runDayAlignmentPhase(phase, {
+    repairPrices,
+    rescaleDerived,
+    verify,
+    cleanup: dropScratchTables
+  })
+  if (phase === 'all' && !result.pricesSucceeded) {
+    console.error('skipping derived repair because prices phase had failed tokens')
   }
-  if (phase === 'derived' || phase === 'all') {
-    await rescaleDerived()
-  }
-  if (phase === 'verify') {
-    await verify()
-  }
-  if (phase === 'cleanup') {
-    await dropScratchTables()
-  }
+  process.exitCode = result.exitCode
 } catch (error) {
   console.error(`phase ${phase} failed: ${String(error)}`)
   process.exitCode = 1
 } finally {
-  if (phase === 'prices' || phase === 'all') {
+  if (phase === 'prices' || phase === 'all' || phase === 'verify') {
     await writeReport()
   }
   await pool.end()

@@ -1,9 +1,9 @@
 import * as Sentry from '@sentry/cloudflare'
 import type { Env } from '../types'
 
-// Deploying this revision makes all pre-quarantine historical cache entries
-// unreachable, including arbitrary batch/range combinations and source filters.
-export const HISTORICAL_CACHE_REVISION = '2026-11-susd-quarantine-v1'
+// Bumping this revision invalidates prior historical cache entries, including
+// arbitrary batch/range combinations and source filters.
+export const HISTORICAL_CACHE_REVISION = '2026-11-cache-integrity-v2'
 
 // Cloudflare edge caching via the Cache API.
 //
@@ -113,17 +113,88 @@ function cacheKey(request: Request): Request {
 }
 
 export async function readEdgeCache(request: Request): Promise<Response | undefined> {
-  return edgeCache().match(cacheKey(request))
+  const response = await edgeCache().match(cacheKey(request))
+  if (!response) {
+    return undefined
+  }
+
+  // The key deliberately shares entries across address casing. Restore the exact
+  // response keys requested by this caller so a warm hit has the same shape as a
+  // cold route execution.
+  return rekeyCoinsForRequest(response, request)
 }
 
-export function writeEdgeCache(ctx: ExecutionContext, env: Env, request: Request, response: Response): void {
-  // Trust the Cache API for the store/TTL decision: put() honors the response's
-  // Cache-Control — it refuses no-store/private and derives the edge TTL from
-  // s-maxage → max-age → Expires. Only success responses reach this function (the
-  // request handler returns errors straight from its catch block), so the edge stores
-  // successes and nothing else; put() honoring Cache-Control is the backstop.
+async function rekeyCoinsForRequest(response: Response, request: Request): Promise<Response> {
+  const url = new URL(request.url)
+  if (
+    url.pathname !== '/api/prices/spot' &&
+    url.pathname !== '/api/prices/batchHistorical' &&
+    url.pathname !== '/api/prices/rangeHistorical'
+  ) {
+    return response
+  }
+
+  const coinsRaw = url.searchParams.get('coins')
+  if (coinsRaw === null) {
+    return response
+  }
+
+  let parsedRequest: unknown
+  let parsedResponse: unknown
+  try {
+    parsedRequest = JSON.parse(coinsRaw)
+    parsedResponse = await response.clone().json()
+  } catch {
+    return response
+  }
+
+  const requestedKeys = new Map<string, string>()
+  if (Array.isArray(parsedRequest)) {
+    for (const key of parsedRequest) {
+      if (typeof key === 'string' && !requestedKeys.has(key.toLowerCase())) {
+        requestedKeys.set(key.toLowerCase(), key)
+      }
+    }
+  } else if (parsedRequest && typeof parsedRequest === 'object') {
+    for (const key of Object.keys(parsedRequest)) {
+      if (!requestedKeys.has(key.toLowerCase())) {
+        requestedKeys.set(key.toLowerCase(), key)
+      }
+    }
+  }
+
+  if (!parsedResponse || typeof parsedResponse !== 'object' || !('coins' in parsedResponse)) {
+    return response
+  }
+  const body = parsedResponse as { coins?: unknown; [key: string]: unknown }
+  if (!body.coins || typeof body.coins !== 'object' || Array.isArray(body.coins)) {
+    return response
+  }
+
+  const coins: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(body.coins)) {
+    coins[requestedKeys.get(key.toLowerCase()) ?? key] = value
+  }
+  const headers = new Headers(response.headers)
+  headers.delete('content-length')
+  headers.delete('content-encoding')
+  return new Response(JSON.stringify({ ...body, coins }), {
+    status: response.status,
+    statusText: response.statusText,
+    headers
+  })
+}
+
+export function writeEdgeCache(ctx: ExecutionContext, _env: Env, request: Request, response: Response): void {
+  // Cache.put() derives edge TTL from s-maxage → max-age → Expires. Spot can return
+  // HTTP 200 with a per-token transient error, so explicitly skip no-store responses
+  // before handing them to Cache API.
   //
   // Non-blocking: storing the response must not delay returning it to the client.
+  if (/(^|,)\s*no-store\b/i.test(response.headers.get('cache-control') ?? '')) {
+    return
+  }
+
   ctx.waitUntil(
     edgeCache()
       .put(cacheKey(request), response.clone())

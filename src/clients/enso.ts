@@ -2,6 +2,7 @@ import type { EnsoPriceResponse } from '../types'
 import { fetchJsonWithRetry, SlidingWindowRateLimiter } from './http-client'
 
 const BASE_URL = 'https://api.enso.build'
+const ENSO_ATTEMPT_TIMEOUT_MS = 4_000
 
 // Module-level so the limit is shared across per-request EnsoClient instances within an isolate.
 const sharedRateLimiter = new SlidingWindowRateLimiter(10, 1000)
@@ -13,14 +14,16 @@ export class EnsoClient {
     private readonly onRetry?: (attempt: number, delayMs: number, url: string, status: number) => void
   ) {}
 
-  getPrice(chainId: number, address: string): Promise<EnsoPriceResponse> {
+  getPrice(chainId: number, address: string, options: { signal?: AbortSignal } = {}): Promise<EnsoPriceResponse> {
     const url = `${BASE_URL}/api/v1/prices/${chainId}/${address}`
     return fetchJsonWithRetry<EnsoPriceResponse>(url, {
       service: 'Enso',
       rateLimiter: this.rateLimiter,
       headers: { authorization: `Bearer ${this.apiKey}` },
       notFoundAsError: true,
-      onRetry: this.onRetry
+      onRetry: this.onRetry,
+      signal: options.signal,
+      timeoutMs: ENSO_ATTEMPT_TIMEOUT_MS
     })
   }
 }

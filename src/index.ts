@@ -9,7 +9,14 @@ import { handleHistorical } from './routes/historical/exact'
 import { handleRangeHistorical } from './routes/historical/range'
 import { handleSpot } from './routes/spot'
 import type { Env } from './types'
-import { parseBatchCoins } from './utils'
+import {
+  parseBatchCoins,
+  parseOptionalSource,
+  parseRangeCoins,
+  parseSpotCoins,
+  parseTimestampSegment,
+  parseTokenKey
+} from './utils'
 
 function logRequest(request: Request, clientId: string | null, extra?: Record<string, unknown>): void {
   console.info(
@@ -82,11 +89,25 @@ const handler = {
       ;({ clientId } = authenticateRequest(request, env))
       logRequest(request, clientId)
 
-      // The batch cache key normalizes timestamps by UTC day and dedupes them, so an
-      // over-limit payload shares a key with its valid twin. Reject it before the
-      // lookup, otherwise the limit holds only while the edge is cold.
+      // Validate request shapes before cache lookup. Canonical cache keys intentionally
+      // collapse equivalent historical spellings, so malformed or ambiguous inputs
+      // must not inherit a valid response from their normalized key.
+      if (pathname === '/api/prices/spot' && request.method === 'GET') {
+        parseSpotCoins(url.searchParams.get('coins'))
+      }
       if (pathname === '/api/prices/batchHistorical' && request.method === 'GET') {
         parseBatchCoins(url.searchParams.get('coins'))
+        parseOptionalSource(url.searchParams.get('source'))
+      }
+      if (pathname === '/api/prices/rangeHistorical' && request.method === 'GET') {
+        parseRangeCoins(url.searchParams.get('coins'))
+        parseOptionalSource(url.searchParams.get('source'))
+      }
+      const historicalMatch = pathname.match(/^\/api\/prices\/historical\/([^/]+)\/([^/]+)$/)
+      if (historicalMatch && request.method === 'GET') {
+        parseTimestampSegment(historicalMatch[1])
+        parseTokenKey(historicalMatch[2])
+        parseOptionalSource(url.searchParams.get('source'))
       }
 
       // Serve from Cloudflare's edge cache before doing any work (Enso fetch / DB query).

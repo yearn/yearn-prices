@@ -1,6 +1,7 @@
 import { getAddress } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { errorEnvelope } from '../src/http'
+import type { SpotSourceRegistry } from '../src/registries/spot'
 import { handleSpot } from '../src/routes/spot'
 import type { Env, SpotResponseCoin } from '../src/types'
 import { toUnixSeconds } from '../src/utils'
@@ -51,6 +52,7 @@ describe('handleSpot', () => {
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
@@ -128,6 +130,37 @@ describe('handleSpot', () => {
     expect(body.coins).toEqual({
       [ETH_KEY]: SPOT_UNAVAILABLE
     })
+    expect(response.headers.get('cache-control')).toBe('no-store')
+  })
+
+  it('returns settled spot results when another token reaches the overall deadline', async () => {
+    vi.useFakeTimers()
+    const signals = new Map<string, AbortSignal | undefined>()
+    const registry = {
+      resolve: vi.fn((chainId: number, token: string, signal?: AbortSignal) => {
+        signals.set(`${chainId}:${token}`, signal)
+        if (chainId === 8453) {
+          return new Promise(() => {})
+        }
+        return Promise.resolve({
+          source: 'enso',
+          price: 100,
+          timestamp: 1695197412,
+          symbol: 'WETH',
+          confidence: 0.99
+        })
+      })
+    } as unknown as SpotSourceRegistry
+
+    const responsePromise = handleSpot(spotRequest([ETH_KEY, BASE_KEY]), ENV, registry)
+    await vi.advanceTimersByTimeAsync(15_000)
+    const response = await responsePromise
+    const body = (await response.json()) as SpotBody
+
+    expect(body.coins[ETH_KEY]).toMatchObject({ prices: [{ price: 100 }] })
+    expect(body.coins[BASE_KEY]).toEqual(SPOT_UNAVAILABLE)
+    expect(signals.get(`8453:${RAW_ADDR}`)?.aborted).toBe(true)
+    expect(response.headers.get('cache-control')).toBe('no-store')
   })
 
   it('dedupes token keys that normalize to the same value', async () => {

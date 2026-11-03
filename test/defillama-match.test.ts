@@ -58,6 +58,12 @@ describe('matchPricesToRequests', () => {
     expect(matched.size).toBe(0)
   })
 
+  it.each([0, -1])('skips non-positive provider prices (%s)', (price) => {
+    const matched = matchPricesToRequests([D16], [{ timestamp: D16 + 1, price }])
+
+    expect(matched.size).toBe(0)
+  })
+
   it('falls back to a sample within the upstream six-hour fetch width', () => {
     const matched = matchPricesToRequests([D16], [{ timestamp: D16 + 2 * 3600, price: 1 }])
 
@@ -115,7 +121,9 @@ describe('buildDefiLlamaWrites', () => {
         price: 5649.51,
         symbol: 'YFI',
         confidence: 0.99,
-        source: 'defillama'
+        source: 'defillama',
+        observedTimestamp: D16 + 2,
+        observationEndpoint: '/batchHistorical'
       },
       {
         chain: 'ethereum',
@@ -124,7 +132,9 @@ describe('buildDefiLlamaWrites', () => {
         price: 5680.28,
         symbol: 'YFI',
         confidence: null,
-        source: 'defillama'
+        source: 'defillama',
+        observedTimestamp: D17 - 10,
+        observationEndpoint: '/batchHistorical'
       }
     ])
   })

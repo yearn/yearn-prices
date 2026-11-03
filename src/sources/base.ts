@@ -26,7 +26,7 @@ abstract class PriceSourceBase {
 }
 
 export abstract class SpotPriceSourceBase extends PriceSourceBase implements SpotPriceSource {
-  abstract getSpotPrice(chainId: number, token: string): Promise<SpotPriceResult | null>
+  abstract getSpotPrice(chainId: number, token: string, signal?: AbortSignal): Promise<SpotPriceResult | null>
 }
 
 export abstract class HistoricalPriceSourceBase extends PriceSourceBase implements HistoricalPriceSource {

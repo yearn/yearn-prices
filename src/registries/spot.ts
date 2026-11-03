@@ -14,7 +14,9 @@ import { SourceRegistry } from './source-registry'
  */
 function marketPriceResolver(marketSources: SpotPriceSource[]) {
   const registry = new SpotSourceRegistry(marketSources)
-  return createMarketPriceResolver(marketSources, (chainId, token) => registry.resolve(chainId, token))
+  return createMarketPriceResolver(marketSources, (chainId, token, _timestamp, signal) =>
+    registry.resolve(chainId, token, signal)
+  )
 }
 
 export function createSpotSources(env: Env): SpotPriceSource[] {
@@ -34,17 +36,17 @@ export function createSpotSources(env: Env): SpotPriceSource[] {
   ]
 }
 
-export class SpotSourceRegistry extends SourceRegistry<SpotPriceSource> {
+export class SpotSourceRegistry extends SourceRegistry<SpotPriceSource, [signal?: AbortSignal]> {
   constructor(sources: SpotPriceSource[]) {
     super(
       sources,
       'spot',
-      (source, chainId, token) => source.getSpotPrice(chainId, token),
+      (source, chainId, token, signal) => source.getSpotPrice(chainId, token, signal),
       'No price available for this token'
     )
   }
 
-  override resolve(chainId: number, token: string): Promise<SpotPrice> {
-    return super.resolve(chainId, token)
+  override resolve(chainId: number, token: string, signal?: AbortSignal): Promise<SpotPrice> {
+    return super.resolve(chainId, token, signal)
   }
 }

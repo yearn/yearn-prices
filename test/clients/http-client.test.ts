@@ -411,6 +411,67 @@ describe('fetchJsonWithRetry opt-in hardening', () => {
     expect(onRetry.mock.calls[0][1]).toBe(1000)
   })
 
+  it('reports every 429 Retry-After, including the exhausted attempt', async () => {
+    vi.useFakeTimers()
+    stubFetch(
+      Response.json({}, { status: 429, headers: { 'retry-after': '1' } }),
+      Response.json({}, { status: 429, headers: { 'retry-after': '2' } }),
+      Response.json({}, { status: 429, headers: { 'retry-after': '90000' } })
+    )
+    const onRetry = vi.fn()
+    const onRateLimit = vi.fn()
+
+    await drain(
+      fetchJsonWithRetry(URL_UNDER_TEST, {
+        service: 'Test',
+        rateLimiter: limiter(),
+        onRetry,
+        onRateLimit,
+        honorRetryAfter: true,
+        retryAfterCapMs: Number.MAX_SAFE_INTEGER
+      }).catch((error) => error)
+    )
+
+    expect(onRetry).toHaveBeenCalledTimes(2)
+    expect(onRateLimit.mock.calls.map(([delay]) => delay)).toEqual([1000, 2000, 90_000_000])
+  })
+
+  it('cancels while waiting for a rate limiter turn without making another request', async () => {
+    vi.useFakeTimers()
+    const fetchMock = stubFetch(Response.json({ ok: true }), Response.json({ ok: true }))
+    const rateLimiter = new SlidingWindowRateLimiter(1, 1000)
+    await fetchJsonWithRetry(URL_UNDER_TEST, { service: 'Test', rateLimiter })
+
+    const controller = new AbortController()
+    const reason = new Error('caller stopped waiting')
+    const pending = fetchJsonWithRetry(URL_UNDER_TEST, { service: 'Test', rateLimiter, signal: controller.signal })
+    controller.abort(reason)
+
+    await expect(pending).rejects.toBe(reason)
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancels retry backoff and preserves caller cancellation alongside timeout', async () => {
+    vi.useFakeTimers()
+    const fetchMock = stubFetch(Response.json({}, { status: 429, headers: { 'retry-after': '30' } }))
+    const controller = new AbortController()
+    const reason = new Error('request no longer needed')
+    const pending = fetchJsonWithRetry(URL_UNDER_TEST, {
+      service: 'Test',
+      rateLimiter: limiter(),
+      honorRetryAfter: true,
+      timeoutMs: 60_000,
+      signal: controller.signal
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+    controller.abort(reason)
+
+    await expect(pending).rejects.toBe(reason)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('reports a failed provider response with the provider diagnostic code', async () => {
     stubFetch(Response.json({}, { status: 400 }))
 

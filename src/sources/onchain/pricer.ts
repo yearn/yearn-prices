@@ -80,8 +80,8 @@ export class OnchainPricer {
     return chainIdToName(chainId) !== undefined && this.clientForChain(chainId) !== null
   }
 
-  async price(target: RecursivePriceTarget): Promise<SpotPriceResult | null> {
-    return this.toResult(await this.engine.resolve(target))
+  async price(target: RecursivePriceTarget, signal?: AbortSignal): Promise<SpotPriceResult | null> {
+    return this.toResult(await this.engine.resolve(target, signal))
   }
 
   private toResult(result: RecursivePriceResult): SpotPriceResult | null {

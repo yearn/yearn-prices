@@ -1,7 +1,44 @@
 import { ApiError, type ErrorCode } from '../http/errors'
 
-function sleep(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds))
+const MAX_TIMER_DELAY_MS = 2_147_483_647
+
+function throwIfAborted(signal?: AbortSignal): void {
+  signal?.throwIfAborted()
+}
+
+function sleepWithSignal(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(signal.reason)
+  }
+
+  const waitMs = Math.max(0, milliseconds)
+  if (waitMs === 0) return Promise.resolve()
+
+  return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const finish = (error?: unknown) => {
+      if (timer !== undefined) clearTimeout(timer)
+      signal?.removeEventListener('abort', onAbort)
+      if (error !== undefined) reject(error)
+      else resolve()
+    }
+    const onAbort = () => finish(signal?.reason ?? new DOMException('The operation was aborted', 'AbortError'))
+    const schedule = (remaining: number) => {
+      timer = setTimeout(
+        () => {
+          if (remaining <= MAX_TIMER_DELAY_MS) {
+            finish()
+          } else {
+            schedule(remaining - MAX_TIMER_DELAY_MS)
+          }
+        },
+        Math.min(remaining, MAX_TIMER_DELAY_MS)
+      )
+    }
+
+    signal?.addEventListener('abort', onAbort, { once: true })
+    schedule(waitMs)
+  })
 }
 
 export class SlidingWindowRateLimiter {
@@ -12,8 +49,9 @@ export class SlidingWindowRateLimiter {
     private readonly intervalMs: number
   ) {}
 
-  async waitTurn(): Promise<void> {
+  async waitTurn(signal?: AbortSignal): Promise<void> {
     while (true) {
+      throwIfAborted(signal)
       const now = Date.now()
       while (this.timestamps.length > 0 && now - this.timestamps[0] >= this.intervalMs) {
         this.timestamps.shift()
@@ -25,7 +63,29 @@ export class SlidingWindowRateLimiter {
       }
 
       const waitMs = this.intervalMs - (now - this.timestamps[0])
-      await sleep(Math.max(waitMs, 25))
+      await sleepWithSignal(Math.max(waitMs, 25), signal)
+    }
+  }
+}
+
+/** A sliding-window limiter with a provider-wide gate shared by all its callers. */
+export class SharedCooldownRateLimiter extends SlidingWindowRateLimiter {
+  private cooldownUntil = 0
+
+  extendCooldown(delayMs: number): void {
+    if (!Number.isFinite(delayMs) || delayMs <= 0) return
+    this.cooldownUntil = Math.max(this.cooldownUntil, Date.now() + delayMs)
+  }
+
+  override async waitTurn(signal?: AbortSignal): Promise<void> {
+    while (true) {
+      throwIfAborted(signal)
+      const cooldownWait = this.cooldownUntil - Date.now()
+      if (cooldownWait > 0) {
+        await sleepWithSignal(cooldownWait, signal)
+      }
+      await super.waitTurn(signal)
+      if (this.cooldownUntil <= Date.now()) return
     }
   }
 }
@@ -57,6 +117,8 @@ export interface FetchJsonConfig {
   rateLimiter: SlidingWindowRateLimiter
   headers?: Record<string, string>
   onRetry?: (attempt: number, delayMs: number, url: string, status: number) => void
+  // Called for every 429 response, including a terminal response that will not be retried.
+  onRateLimit?: (retryAfterMs: number | null, url: string, status: number) => void
   // When true, a 404 becomes a typed NOT_FOUND ApiError instead of a retryable/internal error.
   notFoundAsError?: boolean
   // Opt-in hardening. Every field below is off by default so existing callers keep identical behavior.
@@ -69,6 +131,8 @@ export interface FetchJsonConfig {
   retryTransportErrors?: boolean
   // Retry a 2xx response whose body fails JSON parsing (e.g. a truncated payload).
   retryInvalidJson?: boolean
+  // Cancels queueing, backoff, active fetch, and response-body reads.
+  signal?: AbortSignal
 }
 
 const RETRY_DELAYS = [1000, 2000, 4000]
@@ -98,12 +162,14 @@ export function parseRetryAfter(value: string | null, capMs: number, now = Date.
 }
 
 function requestInit(config: FetchJsonConfig): RequestInit | undefined {
-  if (config.timeoutMs === undefined) {
-    return config.headers ? { headers: config.headers } : undefined
+  const timeoutSignal = config.timeoutMs === undefined ? undefined : AbortSignal.timeout(config.timeoutMs)
+  const signal =
+    timeoutSignal && config.signal ? AbortSignal.any([timeoutSignal, config.signal]) : (timeoutSignal ?? config.signal)
+  if (signal === undefined && config.headers === undefined) return undefined
+  return {
+    ...(config.headers ? { headers: config.headers } : {}),
+    ...(signal ? { signal } : {})
   }
-
-  const signal = AbortSignal.timeout(config.timeoutMs)
-  return config.headers ? { headers: config.headers, signal } : { signal }
 }
 
 function isAbortError(error: unknown): boolean {
@@ -119,12 +185,13 @@ export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig
   const lastAttempt = RETRY_DELAYS.length - 1
 
   for (let attempt = 0; attempt < RETRY_DELAYS.length; attempt += 1) {
-    await config.rateLimiter.waitTurn()
+    throwIfAborted(config.signal)
+    await config.rateLimiter.waitTurn(config.signal)
 
     const scheduleRetry = async (delayMs: number, status: number): Promise<void> => {
       config.onRetry?.(attempt + 1, delayMs, url, status)
       console.warn(`${config.service} request failed (${status}), retrying in ${delayMs}ms: ${url}`)
-      await sleep(delayMs)
+      await sleepWithSignal(delayMs, config.signal)
     }
 
     // Returns normally when the caller should retry; throws otherwise.
@@ -149,6 +216,7 @@ export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig
 
     let response: Response
     try {
+      throwIfAborted(config.signal)
       response = await fetch(url, requestInit(config))
     } catch (error) {
       await failOrRetryTransport(error)
@@ -157,7 +225,9 @@ export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig
 
     if (response.ok) {
       try {
-        return (await response.json()) as T
+        const value = (await response.json()) as T
+        throwIfAborted(config.signal)
+        return value
       } catch (error) {
         // A timeout or reset while the body streams rejects here, not at fetch.
         if (!isJsonParseError(error)) {
@@ -188,6 +258,13 @@ export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig
       throw new ApiError('NOT_FOUND', `${config.service} has no price for ${url}`)
     }
 
+    const retryAfter = config.honorRetryAfter
+      ? parseRetryAfter(response.headers.get('retry-after'), config.retryAfterCapMs ?? DEFAULT_RETRY_AFTER_CAP_MS)
+      : null
+    if (response.status === 429) {
+      config.onRateLimit?.(retryAfter, url, response.status)
+    }
+
     const shouldRetry = (response.status === 429 && config.retryRateLimits !== false) || response.status >= 500
     if (!shouldRetry || attempt === lastAttempt) {
       throw new HttpRequestError(
@@ -198,10 +275,6 @@ export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig
         response.status
       )
     }
-
-    const retryAfter = config.honorRetryAfter
-      ? parseRetryAfter(response.headers.get('retry-after'), config.retryAfterCapMs ?? DEFAULT_RETRY_AFTER_CAP_MS)
-      : null
 
     await scheduleRetry(Math.max(retryAfter ?? 0, RETRY_DELAYS[attempt]), response.status)
   }

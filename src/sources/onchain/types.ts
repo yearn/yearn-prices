@@ -10,6 +10,8 @@ export interface RecursivePriceTarget {
   token: string
   timestamp: number | null
   blockNumber?: number | null
+  /** Internal cancellation context propagated through spot dependency resolution. */
+  signal?: AbortSignal
 }
 
 export interface ResolvedPricePath {
@@ -91,4 +93,7 @@ export interface RecursivePriceAdapter {
  * engine never reaches back into it, and so recursion always terminates at a
  * market price.
  */
-export type MarketPriceResolver = (target: RecursivePriceTarget) => Promise<ResolvedPricePath | null>
+export type MarketPriceResolver = (
+  target: RecursivePriceTarget,
+  signal?: AbortSignal
+) => Promise<ResolvedPricePath | null>

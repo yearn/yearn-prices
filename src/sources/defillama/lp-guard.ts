@@ -25,7 +25,9 @@ export function createCurveLpGuard(options: CurveLpGuardOptions): PlausibleQuote
   const waiting: (() => void)[] = []
 
   const poolFor = (chainId: number, token: string, timestamp: number) => {
-    const key = `${chainId}:${token.toLowerCase()}`
+    // Pool discovery is historical state: absence and coin membership can vary
+    // by block, so a token-level cache can leak one day's answer into another.
+    const key = `${chainId}:${token.toLowerCase()}:${timestamp}`
     let pending = pools.get(key)
     if (!pending) {
       pending = resolveCurvePoolCoins(

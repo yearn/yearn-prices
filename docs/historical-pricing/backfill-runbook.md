@@ -22,6 +22,11 @@ the manifest contains token addresses and dates, not wallet data.
   the evidence. Persisting every child/intermediate in issue #43 is separate work.
 - Finalization rechecks the exact read under the existing bounded transaction
   lock, uses insert-only conflict handling, and clears resolved gap entries.
+- `token_prices.finalized = false` marks a provisional close that warmup can
+  refresh once its UTC day has closed. Migration `20261103000100` only marks
+  rows for the current UTC day provisional; older rows remain finalized because
+  their original provisional status cannot be reconstructed from stored data.
+  Audit evidence before any targeted historical correction.
 - Unresolved, rejected and retryable outcomes stay in the report and tracked
   inventory. This writer does not add failures to the database gap inventory.
 

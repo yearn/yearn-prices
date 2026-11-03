@@ -25,7 +25,12 @@ function assignNearestSamples<T extends DefiLlamaSample>(
       continue
     }
     for (const [sampleIndex, sample] of samples.entries()) {
-      if (usedSamples.has(sampleIndex) || !Number.isFinite(sample.timestamp) || !Number.isFinite(sample.price)) {
+      if (
+        usedSamples.has(sampleIndex) ||
+        !Number.isFinite(sample.timestamp) ||
+        !Number.isFinite(sample.price) ||
+        sample.price <= 0
+      ) {
         continue
       }
       const delta = Math.abs(sample.timestamp - requested)
@@ -92,7 +97,9 @@ export function buildDefiLlamaWrites(
       price: sample.price,
       symbol: coin?.symbol ?? null,
       confidence: sample.confidence ?? null,
-      source: 'defillama'
+      source: 'defillama',
+      observedTimestamp: sample.timestamp,
+      observationEndpoint: '/batchHistorical'
     })
   }
 

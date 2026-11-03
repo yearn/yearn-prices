@@ -2,9 +2,10 @@ import type { Pool as NeonPool } from '@neondatabase/serverless'
 import { Pool as PgPool } from 'pg'
 import { getAddress } from 'viem'
 import { afterAll, afterEach, beforeEach, describe, expect, inject, it, vi } from 'vitest'
+import { finalizeTokenPrices, getBatchHistoricalPrices, insertProvisionalTokenPrices } from '../../src/db/queries'
 import { handleHistorical } from '../../src/routes/historical/exact'
-import type { Env } from '../../src/types'
-import { normalizeToEndOfDay, nowUnix } from '../../src/utils/time'
+import type { Env, TokenPriceWrite } from '../../src/types'
+import { currentUtcDayEnd, normalizeToEndOfDay, nowUnix } from '../../src/utils/time'
 
 const RAW_ADDR = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
 const TOKEN_KEY = `ethereum:${RAW_ADDR}`
@@ -45,6 +46,16 @@ afterAll(async () => {
 })
 
 describe('current-day historical lookups (incident regression)', () => {
+  it.each(['0', '-1', 'NaN', 'Infinity', '-Infinity'])('rejects invalid stored price %s', async (price) => {
+    await expect(
+      pool.query(
+        `INSERT INTO token_prices (chain, token, timestamp, price, symbol, confidence, source)
+         VALUES ($1, $2, to_timestamp($3), $4, $5, $6, $7)`,
+        ['ethereum', getAddress(RAW_ADDR), nowUnix(), price, 'WETH', null, 'defillama']
+      )
+    ).rejects.toMatchObject({ code: '23514' })
+  })
+
   it('returns NOT_FOUND for a current-day block with no stored row, without any upstream call', async () => {
     const blockTime = nowUnix() - 600
 
@@ -79,5 +90,78 @@ describe('current-day historical lookups (incident regression)', () => {
     await expect(response.json()).resolves.toMatchObject({
       coins: { [TOKEN_KEY]: { price: 3419.75 } }
     })
+  })
+
+  it('finalizes a provisional close on a later run after midnight and keeps it immutable', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-11-03T23:59:00.000Z'))
+    const closingTimestamp = currentUtcDayEnd()
+    const provisional: TokenPriceWrite = {
+      chain: 'ethereum',
+      token: getAddress(RAW_ADDR),
+      timestamp: closingTimestamp,
+      price: 10,
+      symbol: 'WETH',
+      confidence: null,
+      source: 'defillama',
+      observedTimestamp: nowUnix(),
+      observationEndpoint: '/batchHistorical',
+      finalizationIntent: 'provisional'
+    }
+
+    try {
+      // The fetch was planned just before midnight but its queued write settles
+      // after midnight; preserve the request-time intent instead of finalizing it.
+      vi.setSystemTime(new Date('2026-11-04T00:01:00.000Z'))
+      await insertProvisionalTokenPrices(pool as unknown as NeonPool, [provisional])
+      const provisionalRow = await pool.query(
+        'SELECT finalized, price FROM token_prices WHERE timestamp = to_timestamp($1)',
+        [closingTimestamp]
+      )
+      expect(provisionalRow.rows[0]).toMatchObject({ finalized: false, price: '10' })
+
+      // Simulate a failed last hourly run: no close write happens before midnight.
+      vi.setSystemTime(new Date('2026-11-04T00:05:00.000Z'))
+      await finalizeTokenPrices(pool as unknown as NeonPool, [
+        { ...provisional, price: 12, observedTimestamp: closingTimestamp - 30 }
+      ])
+      await finalizeTokenPrices(pool as unknown as NeonPool, [
+        { ...provisional, price: 99, observedTimestamp: closingTimestamp }
+      ])
+
+      const finalized = await pool.query(
+        'SELECT finalized, price, observed_at, observation_endpoint FROM token_prices WHERE timestamp = to_timestamp($1)',
+        [closingTimestamp]
+      )
+      expect(finalized.rows[0]).toMatchObject({
+        finalized: true,
+        price: '12',
+        observation_endpoint: '/batchHistorical'
+      })
+      expect(Math.floor(new Date(finalized.rows[0].observed_at).getTime() / 1000)).toBe(closingTimestamp - 30)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not count an unfinalized closed row as source-filtered historical coverage', async () => {
+    const timestamp = 1_755_388_799
+    const write: TokenPriceWrite = {
+      chain: 'ethereum',
+      token: getAddress(RAW_ADDR),
+      timestamp,
+      price: 10,
+      symbol: 'WETH',
+      confidence: null,
+      source: 'defillama',
+      finalizationIntent: 'provisional'
+    }
+    const target = { chain: write.chain, token: write.token, timestamp }
+
+    await insertProvisionalTokenPrices(pool as unknown as NeonPool, [write])
+    expect(await getBatchHistoricalPrices(neonPool(), [target], 'defillama')).toEqual([])
+
+    await finalizeTokenPrices(pool as unknown as NeonPool, [{ ...write, price: 11 }])
+    expect(await getBatchHistoricalPrices(neonPool(), [target], 'defillama')).toMatchObject([{ price: 11 }])
   })
 })

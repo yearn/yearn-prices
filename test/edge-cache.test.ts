@@ -160,14 +160,57 @@ describe('readEdgeCache / writeEdgeCache', () => {
     const ctx = { waitUntil } as unknown as ExecutionContext
     const written = new Request(spotUrl(['Ethereum:0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2']))
 
-    writeEdgeCache(ctx, ENV, written, new Response('{"coins":{}}'))
+    writeEdgeCache(
+      ctx,
+      ENV,
+      written,
+      Response.json({ coins: { 'Ethereum:0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2': { price: 1 } } })
+    )
     await waitUntil.mock.calls[0][0]
 
     expect([...store.keys()]).toEqual([canonicalCacheKey(written.url)])
     const hit = await readEdgeCache(new Request(spotUrl([TOKEN])))
     expect(hit).toBeDefined()
-    await expect(hit!.text()).resolves.toBe('{"coins":{}}')
+    await expect(hit!.json()).resolves.toEqual({ coins: { [TOKEN]: { price: 1 } } })
     expect(cache.match).toHaveBeenCalledOnce()
+  })
+
+  it('restores the requesting key casing for a cached batch response', async () => {
+    stubEdgeCache()
+    const originalKey = 'Ethereum:0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'
+    const written = new Request(batchUrl('batchHistorical', { [originalKey]: [PAST] }))
+    const waitUntil = vi.fn()
+    writeEdgeCache(
+      { waitUntil } as unknown as ExecutionContext,
+      ENV,
+      written,
+      Response.json({ coins: { [originalKey]: { symbol: 'WETH', prices: [{ timestamp: PAST, price: 1 }] } } })
+    )
+    await waitUntil.mock.calls[0][0]
+
+    const requestedKey = `ethereum:${TOKEN.split(':')[1]}`
+    const hit = await readEdgeCache(new Request(batchUrl('batchHistorical', { [requestedKey]: [PAST] })))
+    await expect(hit!.json()).resolves.toEqual({
+      coins: { [requestedKey]: { symbol: 'WETH', prices: [{ timestamp: PAST, price: 1 }] } }
+    })
+  })
+
+  it('does not offer no-store responses to the edge cache', async () => {
+    const { cache } = stubEdgeCache()
+    const waitUntil = vi.fn()
+
+    writeEdgeCache(
+      { waitUntil } as unknown as ExecutionContext,
+      ENV,
+      new Request(spotUrl([TOKEN])),
+      Response.json(
+        { coins: { [TOKEN]: { error: { code: 'UNAVAILABLE' } } } },
+        { headers: { 'cache-control': 'no-store' } }
+      )
+    )
+
+    expect(waitUntil).not.toHaveBeenCalled()
+    expect(cache.put).not.toHaveBeenCalled()
   })
 
   it('misses for a different request', async () => {
@@ -238,6 +281,72 @@ describe('validation before the edge-cache read', () => {
 
     expect(response.status).toBe(400)
     expect(cache.match).not.toHaveBeenCalled()
+  })
+
+  it('rejects duplicate normalized range keys before consulting the cache', async () => {
+    const { cache } = stubEdgeCache()
+    const raw = {
+      [TOKEN]: [PAST, PAST],
+      'Ethereum:0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2': [PAST + 86400, PAST + 86400]
+    }
+    const request = new Request(batchUrl('rangeHistorical', raw), {
+      headers: { authorization: 'Bearer k' }
+    })
+
+    const response = await worker.fetch(
+      request,
+      { API_KEY_TEST: 'k', DATABASE_URL: 'postgres://x' } as unknown as Env,
+      { waitUntil: vi.fn() } as unknown as ExecutionContext
+    )
+
+    expect(response.status).toBe(400)
+    expect(cache.match).not.toHaveBeenCalled()
+  })
+
+  it('rejects an invalid duplicate range alias before cache lookup', async () => {
+    const { cache } = stubEdgeCache()
+    const raw = {
+      [TOKEN]: [PAST, PAST],
+      'Ethereum:0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2': [PAST + 86400, PAST]
+    }
+    const request = new Request(batchUrl('rangeHistorical', raw), {
+      headers: { authorization: 'Bearer k' }
+    })
+
+    const response = await worker.fetch(
+      request,
+      { API_KEY_TEST: 'k', DATABASE_URL: 'postgres://x' } as unknown as Env,
+      { waitUntil: vi.fn() } as unknown as ExecutionContext
+    )
+
+    expect(response.status).toBe(400)
+    expect(cache.match).not.toHaveBeenCalled()
+  })
+})
+
+describe('spot transient cache policy', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  it('retries a transiently failed token on the next request instead of reading a cached error', async () => {
+    const { cache } = stubEdgeCache()
+    const fetchMock = vi.fn().mockRejectedValue(new Error('network down'))
+    vi.stubGlobal('fetch', fetchMock)
+    const request = new Request(spotUrl([TOKEN]), { headers: { authorization: 'Bearer k' } })
+    const env = { API_KEY_TEST: 'k', DATABASE_URL: 'postgres://x', ENSO_API_KEY: 'enso-key' } as unknown as Env
+    const ctx = { waitUntil: vi.fn() } as unknown as ExecutionContext
+
+    const first = await worker.fetch(request, env, ctx)
+    expect(first.headers.get('cache-control')).toBe('no-store')
+    await expect(first.json()).resolves.toMatchObject({ coins: { [TOKEN]: { error: { code: 'UNAVAILABLE' } } } })
+
+    const second = await worker.fetch(request, env, ctx)
+    expect(second.headers.get('cache-control')).toBe('no-store')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(cache.match).toHaveBeenCalledTimes(2)
+    expect(cache.put).not.toHaveBeenCalled()
   })
 })
 

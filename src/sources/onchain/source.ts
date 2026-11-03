@@ -1,7 +1,37 @@
+import { ApiError } from '../../http/errors'
 import { HistoricalPriceSourceBase, SpotPriceSourceBase } from '../base'
 import type { HistoricalPriceResult, SpotPriceResult } from '../types'
 import { DEFAULT_PRIORITY, ONCHAIN_SOURCE_NAME, type OnchainSourceOptions } from './options'
 import { OnchainPricer } from './pricer'
+
+function withAbortSignal<T>(start: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) {
+    return start()
+  }
+  if (signal.aborted) {
+    return Promise.reject(new ApiError('UNAVAILABLE', 'Spot resolution deadline exceeded'))
+  }
+
+  const promise = start()
+  return new Promise<T>((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener('abort', onAbort)
+    const onAbort = () => {
+      cleanup()
+      reject(new ApiError('UNAVAILABLE', 'Spot resolution deadline exceeded'))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    promise.then(
+      (value) => {
+        cleanup()
+        resolve(value)
+      },
+      (error: unknown) => {
+        cleanup()
+        reject(error)
+      }
+    )
+  })
+}
 
 export type { OnchainSourceOptions } from './options'
 export { ONCHAIN_SOURCE_NAME } from './options'
@@ -22,8 +52,8 @@ export class OnchainSpotSource extends SpotPriceSourceBase {
     return this.pricer.supports(chainId)
   }
 
-  getSpotPrice(chainId: number, token: string): Promise<SpotPriceResult | null> {
-    return this.pricer.price({ chainId, token, timestamp: null })
+  getSpotPrice(chainId: number, token: string, signal?: AbortSignal): Promise<SpotPriceResult | null> {
+    return withAbortSignal(() => this.pricer.price({ chainId, token, timestamp: null }, signal), signal)
   }
 }
 
