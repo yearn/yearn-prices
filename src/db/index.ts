@@ -28,21 +28,7 @@ export function createPool(connectionString: string): Pool {
     configureLocalNeon(host)
   }
 
-  const pool = new Pool({ connectionString })
-  const query = pool.query.bind(pool) as (...args: unknown[]) => Promise<unknown>
-  pool.query = (async (...args: unknown[]) => {
-    try {
-      return await query(...args)
-    } catch (error) {
-      if (!isTransientHttpError(error)) throw error
-      return query(...args)
-    }
-  }) as Pool['query']
-  return pool
-}
-
-export function isTransientHttpError(error: unknown): boolean {
-  return error instanceof Error && /HTTP status 5\d\d/.test(error.message)
+  return new Pool({ connectionString })
 }
 
 export * from './queries'
