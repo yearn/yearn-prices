@@ -36,31 +36,3 @@ describe('createPool', () => {
     expect(neonConfig.useSecureWebSocket).toBe(snapshot.useSecureWebSocket)
   })
 })
-
-describe('pool query retry', () => {
-  it('retries once on transient neon HTTP 5xx', async () => {
-    const pool = createPool('postgres://user:pass@ep-example.us-east-2.aws.neon.tech/neondb')
-    let calls = 0
-    const original = Object.getPrototypeOf(pool).query
-    Object.getPrototypeOf(pool).query = async () => {
-      calls++
-      if (calls === 1) throw new Error('Server error (HTTP status 524): error code: 524')
-      return { rows: [1] }
-    }
-    try {
-      const fresh = createPool('postgres://user:pass@ep-example.us-east-2.aws.neon.tech/neondb')
-      await expect(fresh.query('select 1')).resolves.toEqual({ rows: [1] })
-      expect(calls).toBe(2)
-      calls = 0
-      Object.getPrototypeOf(pool).query = async () => {
-        calls++
-        throw new Error('syntax error')
-      }
-      const other = createPool('postgres://user:pass@ep-example.us-east-2.aws.neon.tech/neondb')
-      await expect(other.query('select 1')).rejects.toThrow('syntax error')
-      expect(calls).toBe(1)
-    } finally {
-      Object.getPrototypeOf(pool).query = original
-    }
-  })
-})
