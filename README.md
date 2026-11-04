@@ -114,7 +114,7 @@ Historical rows are written by `scripts/warmup-prices.ts` (hourly: DefiLlama, Ch
 
 ### Adding a new price source
 
-Sources are pluggable adapters under `src/sources/`. Spot sources register in `src/registries/spot.ts` and are served live. Historical sources register in `src/registries/historical.ts` but have no request-path consumer — extend a warmup or backfill job so rows reach the table. See [`src/sources/README.md`](src/sources/README.md).
+Sources are pluggable adapters under `src/sources/`. Spot sources register in `src/registries/spot.ts` and are served live. Historical sources register in `src/registries/historical.ts` and are filled by the warmup and backfill jobs; the exact route alone falls back to one DeFiLlama call for the current day on a table miss. See [`src/sources/README.md`](src/sources/README.md).
 
 ## Authentication
 

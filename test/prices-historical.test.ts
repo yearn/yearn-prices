@@ -3,8 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CACHE_CONTROL_HISTORICAL, CACHE_CONTROL_TODAY } from '../src/cache'
 import { ApiError } from '../src/http'
 import worker from '../src/index'
-import type { SpotSourceRegistry } from '../src/registries'
 import { handleHistorical } from '../src/routes/historical/exact'
+import type { HistoricalPriceSource } from '../src/sources/types'
 import type { Env } from '../src/types'
 import { normalizeToEndOfDay } from '../src/utils'
 
@@ -122,37 +122,41 @@ describe('handleHistorical', () => {
 
   describe('current day', () => {
     const today = normalizeToEndOfDay(Math.floor(Date.now() / 1000))
-    const spot = { price: 2425.5, timestamp: today - 100, symbol: 'WETH', confidence: null, source: 'enso' }
-    const registry = (resolve: () => Promise<typeof spot>) => () => ({ resolve }) as unknown as SpotSourceRegistry
-    const envWithEnso: Env = { ...ENV, ENSO_API_KEY: 'enso-key' }
+    const upstream = { price: 2425.5, timestamp: today - 100, symbol: 'WETH', confidence: null }
+    const fallback = (getHistoricalPrice: () => Promise<typeof upstream | null>) => () =>
+      ({ name: 'defillama', supports: () => true, getHistoricalPrice }) as unknown as HistoricalPriceSource
     const todayRequest = (source?: string) =>
       new Request(`https://svc/api/prices/historical/${today}/${TOKEN_KEY}${source ? `?source=${source}` : ''}`)
 
-    it('serves a table miss live from spot without persisting', async () => {
-      const resolve = vi.fn(async () => spot)
+    it('serves a table miss from one DeFiLlama call at now without persisting', async () => {
+      const getHistoricalPrice = vi.fn(async () => upstream)
       const db = pool([])
       const response = await handleHistorical(
         todayRequest(),
-        envWithEnso,
+        ENV,
         db,
         String(today),
         TOKEN_KEY,
-        registry(resolve)
+        fallback(getHistoricalPrice)
       )
 
       expect(response.status).toBe(200)
       expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_TODAY)
-      expect(resolve).toHaveBeenCalledWith(1, RAW_ADDR, expect.any(AbortSignal))
+      expect(getHistoricalPrice).toHaveBeenCalledTimes(1)
+      const [chainId, token, fetchTimestamp] = getHistoricalPrice.mock.calls[0] as unknown as [number, string, number]
+      expect([chainId, token]).toEqual([1, RAW_ADDR])
+      expect(fetchTimestamp).toBeLessThan(today)
+      expect(fetchTimestamp).toBeGreaterThan(today - 86_400)
       expect(db.query).toHaveBeenCalledTimes(1)
       await expect(response.json()).resolves.toEqual({
         coins: {
-          [TOKEN_KEY]: { price: 2425.5, symbol: 'WETH', timestamp: today - 100, confidence: null, source: 'enso' }
+          [TOKEN_KEY]: { price: 2425.5, symbol: 'WETH', timestamp: today - 100, confidence: null, source: 'defillama' }
         }
       })
     })
 
-    it('prefers the table row over spot', async () => {
-      const resolve = vi.fn(async () => spot)
+    it('prefers the table row over upstream', async () => {
+      const getHistoricalPrice = vi.fn(async () => upstream)
       const row = {
         chain: 'ethereum',
         token: RAW_ADDR,
@@ -164,44 +168,47 @@ describe('handleHistorical', () => {
       }
       const response = await handleHistorical(
         todayRequest(),
-        envWithEnso,
+        ENV,
         pool([row]),
         String(today),
         TOKEN_KEY,
-        registry(resolve)
+        fallback(getHistoricalPrice)
       )
 
-      expect(resolve).not.toHaveBeenCalled()
-      await expect(response.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { source: 'defillama' } } })
+      expect(getHistoricalPrice).not.toHaveBeenCalled()
+      await expect(response.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 1 } } })
     })
 
-    it('stays table-only for closed days, explicit sources and without an Enso key', async () => {
-      const resolve = vi.fn(async () => spot)
-      const miss = (req: Request, env: Env, ts: number) =>
-        expect(handleHistorical(req, env, pool([]), String(ts), TOKEN_KEY, registry(resolve))).rejects.toMatchObject({
-          code: 'NOT_FOUND'
-        })
+    it('stays table-only for closed days and explicit sources', async () => {
+      const getHistoricalPrice = vi.fn(async () => upstream)
+      const miss = (req: Request, ts: number) =>
+        expect(
+          handleHistorical(req, ENV, pool([]), String(ts), TOKEN_KEY, fallback(getHistoricalPrice))
+        ).rejects.toMatchObject({ code: 'NOT_FOUND' })
 
-      await miss(request(), envWithEnso, TIMESTAMP)
-      await miss(todayRequest('defillama'), envWithEnso, today)
-      await miss(todayRequest(), ENV, today)
-      expect(resolve).not.toHaveBeenCalled()
+      await miss(request(), TIMESTAMP)
+      await miss(todayRequest('defillama'), today)
+      expect(getHistoricalPrice).not.toHaveBeenCalled()
     })
 
-    it('returns NOT_FOUND when spot has no price and propagates other spot failures', async () => {
-      const notFound = registry(async () => {
-        throw new ApiError('NOT_FOUND', 'none')
-      })
+    it('returns NOT_FOUND when upstream has no price and propagates upstream failures', async () => {
       await expect(
-        handleHistorical(todayRequest(), envWithEnso, pool([]), String(today), TOKEN_KEY, notFound)
+        handleHistorical(
+          todayRequest(),
+          ENV,
+          pool([]),
+          String(today),
+          TOKEN_KEY,
+          fallback(async () => null)
+        )
       ).rejects.toMatchObject({ code: 'NOT_FOUND' })
 
-      const unavailable = registry(async () => {
-        throw new ApiError('UNAVAILABLE', 'enso down')
+      const failing = fallback(async () => {
+        throw new ApiError('INTERNAL_ERROR', 'DeFiLlama request failed with status 429')
       })
       await expect(
-        handleHistorical(todayRequest(), envWithEnso, pool([]), String(today), TOKEN_KEY, unavailable)
-      ).rejects.toMatchObject({ code: 'UNAVAILABLE' })
+        handleHistorical(todayRequest(), ENV, pool([]), String(today), TOKEN_KEY, failing)
+      ).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
     })
   })
 

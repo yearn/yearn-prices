@@ -634,6 +634,10 @@ async function warmDerivedVaultPrices(
       )
 
       const derivedPrice = underlying.price * sharePrice
+      if (!Number.isFinite(derivedPrice) || derivedPrice <= 0) {
+        gap(`gap:derived-invalid-price ${vault.chain}:${vault.vaultToken} ${timestamp} sharePrice=${sharePrice}`)
+        return
+      }
       await persistWarmupWrites([
         {
           chain: vault.chain,

@@ -86,7 +86,7 @@ export function createMySpotSource(): MySpotSource {
 
 Export your source factory from `src/sources/<name>/index.ts` and from `src/sources/index.ts`, then register it by adding one line in `src/registries/spot.ts` (`createSpotSources`) or `src/registries/historical.ts` (`createHistoricalSources`). Specify the priority explicitly.
 
-> **Historical sources have no request-path consumer.** The historical routes read `token_prices` only, and nothing in the worker instantiates `createHistoricalSources`. Registering a historical source changes production behavior only once an offline job uses it — extend `scripts/warmup-prices.ts` (hourly) or `scripts/backfill-historical-gaps.ts` so its rows reach the table. Spot sources are still served live through `createSpotSources`.
+> **Historical sources have one request-path consumer.** The historical routes read `token_prices`; only the exact route falls back to a single bounded DeFiLlama call for the current day (`src/routes/historical/exact.ts`). Nothing in the worker instantiates `createHistoricalSources`. Registering a historical source changes production behavior only once an offline job uses it — extend `scripts/warmup-prices.ts` (hourly) or `scripts/backfill-historical-gaps.ts` so its rows reach the table. Spot sources are still served live through `createSpotSources`.
 
 ```ts
 // src/registries/spot.ts

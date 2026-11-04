@@ -1,26 +1,35 @@
 import type { Pool } from '@neondatabase/serverless'
 import { cacheControlForHistorical } from '../../cache'
+import { DefiLlamaClient } from '../../clients/defillama'
 import { getExactHistoricalPrice } from '../../db'
 import { ApiError, jsonResponse } from '../../http'
-import { type SpotSourceRegistry, spotSourceRegistry } from '../../registries'
+import { createDefiLlamaHistoricalSource } from '../../sources'
+import type { HistoricalPriceSource } from '../../sources/types'
 import type { Env, ExactPriceRecord, PriceSource } from '../../types'
 import {
   chainNameToId,
   isTodayNormalized,
   parseOptionalSource,
   parseTimestampSegment,
-  parseTokenKey
+  parseTokenKey,
+  toFetchTimestamp
 } from '../../utils'
 
-const SPOT_DEADLINE_MS = 15_000
+const FALLBACK_TIMEOUT_MS = 2_500
+
+function defiLlamaFallback(): HistoricalPriceSource {
+  return createDefiLlamaHistoricalSource(
+    new DefiLlamaClient(undefined, undefined, { timeoutMs: FALLBACK_TIMEOUT_MS, retryRateLimits: false })
+  )
+}
 
 export async function handleHistorical(
   request: Request,
-  env: Env,
+  _env: Env,
   pool: Pool,
   timestampSegment: string,
   tokenKeySegment: string,
-  registry: (env: Env) => SpotSourceRegistry = spotSourceRegistry
+  fallback: () => HistoricalPriceSource = defiLlamaFallback
 ): Promise<Response> {
   const timestamp = parseTimestampSegment(timestampSegment)
   const { chain, token, tokenKey } = parseTokenKey(tokenKeySegment)
@@ -28,7 +37,7 @@ export async function handleHistorical(
 
   const record =
     (await getExactHistoricalPrice(pool, { chain, token, timestamp }, source)) ??
-    (await spotForToday(env, registry, chain, token, timestamp, source))
+    (await upstreamForToday(fallback, chain, token, timestamp, source))
   if (!record) {
     throw new ApiError('NOT_FOUND', `No historical price found for ${tokenKey} at ${timestamp}`)
   }
@@ -54,34 +63,31 @@ export async function handleHistorical(
 }
 
 // Today's row only exists once the hourly warmup has written it. Until then the current
-// day is served live from the spot sources, never persisted: a mid-day spot price is not
-// the day's close. Explicit-source requests stay table-only. A spot NOT_FOUND falls through
-// to the historical 404; any other spot failure propagates so it is not cached as a miss.
-async function spotForToday(
-  env: Env,
-  registry: (env: Env) => SpotSourceRegistry,
+// day is answered by one bounded DeFiLlama call, never persisted. Explicit-source requests
+// stay table-only. No price falls through to the historical 404; any other failure
+// propagates so it is not cached as a miss.
+async function upstreamForToday(
+  fallback: () => HistoricalPriceSource,
   chain: string,
   token: string,
   timestamp: number,
   source?: PriceSource
 ): Promise<ExactPriceRecord | null> {
-  if (source || !isTodayNormalized(timestamp) || !env.ENSO_API_KEY) return null
+  if (source || !isTodayNormalized(timestamp)) return null
   const chainId = chainNameToId(chain)
   if (chainId === undefined) return null
 
-  try {
-    const spot = await registry(env).resolve(chainId, token.toLowerCase(), AbortSignal.timeout(SPOT_DEADLINE_MS))
-    return {
-      chain,
-      token,
-      timestamp: spot.timestamp,
-      price: spot.price,
-      symbol: spot.symbol,
-      confidence: spot.confidence,
-      source: spot.source as PriceSource
-    }
-  } catch (error) {
-    if (error instanceof ApiError && error.code === 'NOT_FOUND') return null
-    throw error
+  const upstream = fallback()
+  if (!upstream.supports(chainId)) return null
+  const price = await upstream.getHistoricalPrice(chainId, token.toLowerCase(), toFetchTimestamp(timestamp))
+  if (!price) return null
+  return {
+    chain,
+    token,
+    timestamp: price.timestamp,
+    price: price.price,
+    symbol: price.symbol,
+    confidence: price.confidence,
+    source: upstream.name as PriceSource
   }
 }
