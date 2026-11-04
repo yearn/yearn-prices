@@ -120,6 +120,8 @@ Query parameters:
 
 - `source`: optional price source filter.
 
+A table miss for the current UTC day is answered by one bounded DeFiLlama call (2.5s, no retries) and is not persisted. Closed days, explicit `source` filters, and chains DeFiLlama does not cover stay table-only and return 404.
+
 Example:
 
 ```bash
