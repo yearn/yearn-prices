@@ -56,14 +56,16 @@ describe('current-day historical lookups (incident regression)', () => {
     ).rejects.toMatchObject({ code: '23514' })
   })
 
-  it('returns NOT_FOUND for a current-day block with no stored row, without any upstream call', async () => {
+  it('returns NOT_FOUND for a current-day block with no stored row after one empty DeFiLlama call', async () => {
     const blockTime = nowUnix() - 600
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ coins: {} }), { status: 200 }))
 
     await expect(handleHistorical(request(), ENV, neonPool(), String(blockTime), TOKEN_KEY)).rejects.toMatchObject({
       code: 'NOT_FOUND'
     })
 
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(String(fetchMock.mock.calls[0][0])).toContain('https://coins.llama.fi/prices/historical/')
   })
 
   it('serves a past-day block from the end-of-day keyed row without any upstream call', async () => {
