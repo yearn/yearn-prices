@@ -18,7 +18,7 @@ function url(path: string, coins: unknown, extra = '') {
   return new Request(`https://svc/api/prices/${path}?coins=${encodeURIComponent(JSON.stringify(coins))}${extra}`)
 }
 
-function row(timestamp: number, price: string, source = 'defillama') {
+function row(timestamp: number, price: string, source = 'defillama', updatedAgo = 0) {
   return {
     chain: 'ethereum',
     token: CHECKSUM_ADDR,
@@ -26,8 +26,27 @@ function row(timestamp: number, price: string, source = 'defillama') {
     price,
     symbol: 'WETH',
     confidence: '0.9',
-    source
+    source,
+    updated_at: new Date(Date.now() - updatedAgo * 1000)
   }
+}
+
+const CURRENT_KEY = `ethereum:${RAW_ADDR}`
+
+function current() {
+  return vi.fn(
+    async () =>
+      new Map([
+        [
+          CURRENT_KEY,
+          { price: 2425.5, timestamp: Math.floor(Date.now() / 1000) - 20, symbol: 'WETH', confidence: 0.99 }
+        ]
+      ])
+  )
+}
+
+function inserts(queryPool: Pool) {
+  return vi.mocked(queryPool.query).mock.calls.filter(([sql]) => String(sql).includes('INSERT INTO token_prices'))
 }
 
 function pool(rows: unknown[]): Pool {
@@ -134,6 +153,68 @@ describe('handleBatchHistorical', () => {
     expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_TODAY)
   })
 
+  it('refreshes a stale today row and appends a missing one, leaving closed days alone', async () => {
+    const fetchCurrent = current()
+    const stalePool = pool([row(DAY_ONE, '1'), row(TODAY, '5', 'defillama', 600)])
+    const stale = await handleBatchHistorical(
+      url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE, TODAY] }),
+      ENV,
+      stalePool,
+      fetchCurrent
+    )
+
+    expect(fetchCurrent).toHaveBeenCalledTimes(1)
+    expect(fetchCurrent.mock.calls[0][0]).toHaveLength(1)
+    expect(inserts(stalePool)).toHaveLength(1)
+    await expect(stale.json()).resolves.toMatchObject({
+      coins: {
+        [`ethereum:${RAW_ADDR}`]: {
+          prices: [
+            { timestamp: DAY_ONE, price: 1 },
+            { timestamp: TODAY, price: 2425.5, source: 'defillama' }
+          ]
+        }
+      }
+    })
+
+    const missPool = pool([row(DAY_ONE, '1')])
+    const miss = await handleBatchHistorical(
+      url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE, TODAY] }),
+      ENV,
+      missPool,
+      fetchCurrent
+    )
+
+    expect(inserts(missPool)).toHaveLength(1)
+    await expect(miss.json()).resolves.toMatchObject({
+      coins: { [`ethereum:${RAW_ADDR}`]: { prices: [{ timestamp: DAY_ONE }, { timestamp: TODAY, price: 2425.5 }] } }
+    })
+  })
+
+  it('does not call upstream for a fresh today row, closed days or an explicit source', async () => {
+    const fetchCurrent = current()
+    await handleBatchHistorical(
+      url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [TODAY] }),
+      ENV,
+      pool([row(TODAY, '1', 'defillama', 10)]),
+      fetchCurrent
+    )
+    await handleBatchHistorical(
+      url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE] }),
+      ENV,
+      pool([row(DAY_ONE, '1', 'defillama', 600)]),
+      fetchCurrent
+    )
+    await handleBatchHistorical(
+      url('batchHistorical', { [`ethereum:${RAW_ADDR}`]: [TODAY] }, '&source=defillama'),
+      ENV,
+      pool([row(TODAY, '1', 'defillama', 600)]),
+      fetchCurrent
+    )
+
+    expect(fetchCurrent).not.toHaveBeenCalled()
+  })
+
   it('passes an explicit source through to the query', async () => {
     const queryPool = pool([row(DAY_ONE, '1', 'enso')])
     await handleBatchHistorical(
@@ -208,6 +289,54 @@ describe('handleRangeHistorical', () => {
     )
 
     expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_TODAY)
+  })
+
+  it('refreshes a stale today row in a range and appends a missing one', async () => {
+    const fetchCurrent = current()
+    const stalePool = pool([row(TODAY, '5', 'defillama', 600)])
+    const stale = await handleRangeHistorical(
+      url('rangeHistorical', { [`ethereum:${RAW_ADDR}`]: [TODAY, TODAY] }),
+      ENV,
+      stalePool,
+      fetchCurrent
+    )
+
+    expect(fetchCurrent).toHaveBeenCalledTimes(1)
+    expect(inserts(stalePool)).toHaveLength(1)
+    await expect(stale.json()).resolves.toMatchObject({
+      coins: { [`ethereum:${RAW_ADDR}`]: { prices: [{ timestamp: TODAY, price: 2425.5 }] } }
+    })
+
+    const missPool = pool([])
+    const miss = await handleRangeHistorical(
+      url('rangeHistorical', { [`ethereum:${RAW_ADDR}`]: [TODAY - 86_400, TODAY] }),
+      ENV,
+      missPool,
+      fetchCurrent
+    )
+
+    expect(inserts(missPool)).toHaveLength(1)
+    await expect(miss.json()).resolves.toMatchObject({
+      coins: { [`ethereum:${RAW_ADDR}`]: { prices: [{ timestamp: TODAY, price: 2425.5 }] } }
+    })
+  })
+
+  it('does not call upstream for a fresh today row or a range of closed days', async () => {
+    const fetchCurrent = current()
+    await handleRangeHistorical(
+      url('rangeHistorical', { [`ethereum:${RAW_ADDR}`]: [TODAY, TODAY] }),
+      ENV,
+      pool([row(TODAY, '1', 'defillama', 10)]),
+      fetchCurrent
+    )
+    await handleRangeHistorical(
+      url('rangeHistorical', { [`ethereum:${RAW_ADDR}`]: [DAY_ONE, DAY_TWO] }),
+      ENV,
+      pool([row(DAY_ONE, '1', 'defillama', 600), row(DAY_TWO, '2', 'defillama', 600)]),
+      fetchCurrent
+    )
+
+    expect(fetchCurrent).not.toHaveBeenCalled()
   })
 
   it('rejects a reversed range', async () => {

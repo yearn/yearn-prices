@@ -3,16 +3,36 @@ import { cacheControlForRange } from '../../cache'
 import { getRangeHistoricalPrices } from '../../db'
 import { jsonResponse } from '../../http'
 import type { Env } from '../../types'
-import { normalizedDaysInRange, parseOptionalSource, parseRangeCoins } from '../../utils'
+import {
+  currentUtcDayEnd,
+  isTodayNormalized,
+  normalizedDaysInRange,
+  parseOptionalSource,
+  parseRangeCoins
+} from '../../utils'
 import { buildOriginalKeyMap, groupRowsByToken, toExactKey } from './shared'
+import { type FetchCurrent, refreshStaleToday } from './today'
 
-export async function handleRangeHistorical(request: Request, _env: Env, pool: Pool): Promise<Response> {
+export async function handleRangeHistorical(
+  request: Request,
+  _env: Env,
+  pool: Pool,
+  fetchCurrent?: FetchCurrent
+): Promise<Response> {
   const url = new URL(request.url)
   const source = parseOptionalSource(url.searchParams.get('source'))
   const rawCoins = url.searchParams.get('coins')
   const requests = parseRangeCoins(rawCoins)
   const originalKeyMap = buildOriginalKeyMap(rawCoins!)
-  const rows = await getRangeHistoricalPrices(pool, requests, source)
+  const rows = await refreshStaleToday(
+    pool,
+    requests
+      .filter((entry) => isTodayNormalized(entry.endTimestamp))
+      .map(({ chain, token }) => ({ chain, token, timestamp: currentUtcDayEnd() })),
+    await getRangeHistoricalPrices(pool, requests, source),
+    source,
+    fetchCurrent
+  )
 
   const grouped = groupRowsByToken(rows, originalKeyMap)
 

@@ -4,7 +4,6 @@ import { CACHE_CONTROL_HISTORICAL, CACHE_CONTROL_TODAY } from '../src/cache'
 import { ApiError } from '../src/http'
 import worker from '../src/index'
 import { handleHistorical } from '../src/routes/historical/exact'
-import type { HistoricalPriceSource } from '../src/sources/types'
 import type { Env } from '../src/types'
 import { normalizeToEndOfDay } from '../src/utils'
 
@@ -54,7 +53,8 @@ describe('handleHistorical', () => {
             price: '1',
             symbol: 'WETH',
             confidence: '0.9',
-            source: 'defillama'
+            source: 'defillama',
+            updated_at: new Date()
           }
         ]),
         String(timestamp),
@@ -122,93 +122,127 @@ describe('handleHistorical', () => {
 
   describe('current day', () => {
     const today = normalizeToEndOfDay(Math.floor(Date.now() / 1000))
-    const upstream = { price: 2425.5, timestamp: today - 100, symbol: 'WETH', confidence: null }
-    const fallback = (getHistoricalPrice: () => Promise<typeof upstream | null>) => () =>
-      ({ name: 'defillama', supports: () => true, getHistoricalPrice }) as unknown as HistoricalPriceSource
+    const nowSeconds = () => Math.floor(Date.now() / 1000)
+    const upstream = { price: 2425.5, timestamp: nowSeconds() - 20, symbol: 'WETH', confidence: 0.99 }
+    const current = (price: typeof upstream | null = upstream) =>
+      vi.fn(async () => new Map(price ? [[TOKEN_KEY, price]] : []))
     const todayRequest = (source?: string) =>
       new Request(`https://svc/api/prices/historical/${today}/${TOKEN_KEY}${source ? `?source=${source}` : ''}`)
+    const todayRow = (updatedAgo: number) => ({
+      chain: 'ethereum',
+      token: RAW_ADDR,
+      timestamp: new Date(today * 1000),
+      price: '1',
+      symbol: 'WETH',
+      confidence: '0.9',
+      source: 'defillama',
+      observed_at: new Date((nowSeconds() - 10) * 1000),
+      updated_at: new Date((nowSeconds() - updatedAgo) * 1000)
+    })
+    const insertCalls = (db: Pool) =>
+      vi.mocked(db.query).mock.calls.filter(([sql]) => String(sql).includes('INSERT INTO token_prices'))
 
-    it('serves a table miss from one DeFiLlama call at now without persisting', async () => {
-      const getHistoricalPrice = vi.fn(async () => upstream)
+    it('serves a table miss from one current call and persists it as provisional', async () => {
+      const fetchCurrent = current()
       const db = pool([])
-      const response = await handleHistorical(
-        todayRequest(),
-        ENV,
-        db,
-        String(today),
-        TOKEN_KEY,
-        fallback(getHistoricalPrice)
-      )
+      const response = await handleHistorical(todayRequest(), ENV, db, String(today), TOKEN_KEY, fetchCurrent)
 
       expect(response.status).toBe(200)
       expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_TODAY)
-      expect(getHistoricalPrice).toHaveBeenCalledTimes(1)
-      const [chainId, token, fetchTimestamp] = getHistoricalPrice.mock.calls[0] as unknown as [number, string, number]
-      expect([chainId, token]).toEqual([1, RAW_ADDR])
-      expect(fetchTimestamp).toBeLessThan(today)
-      expect(fetchTimestamp).toBeGreaterThan(today - 86_400)
-      expect(db.query).toHaveBeenCalledTimes(1)
+      expect(fetchCurrent).toHaveBeenCalledTimes(1)
+      expect(fetchCurrent).toHaveBeenCalledWith([
+        { chain: 'ethereum', token: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2' }
+      ])
+      expect(db.query).toHaveBeenCalledTimes(2)
+      const [insertSql, params] = insertCalls(db)[0] as unknown as [string, unknown[]]
+      expect(insertSql).toContain('INSERT INTO token_prices')
+      expect(params).toContain('/prices/current')
+      expect(params).toContain(2425.5)
+      expect(params).toContain(false)
       await expect(response.json()).resolves.toEqual({
         coins: {
-          [TOKEN_KEY]: { price: 2425.5, symbol: 'WETH', timestamp: today - 100, confidence: null, source: 'defillama' }
+          [TOKEN_KEY]: { price: 2425.5, symbol: 'WETH', timestamp: today, confidence: 0.99, source: 'defillama' }
         }
       })
     })
 
-    it('prefers the table row over upstream', async () => {
-      const getHistoricalPrice = vi.fn(async () => upstream)
-      const row = {
-        chain: 'ethereum',
-        token: RAW_ADDR,
-        timestamp: new Date(today * 1000),
-        price: '1',
-        symbol: 'WETH',
-        confidence: '0.9',
-        source: 'defillama'
-      }
-      const response = await handleHistorical(
-        todayRequest(),
-        ENV,
-        pool([row]),
-        String(today),
-        TOKEN_KEY,
-        fallback(getHistoricalPrice)
-      )
+    it('serves a fresh row without calling upstream', async () => {
+      const fetchCurrent = current()
+      const db = pool([todayRow(10)])
+      const response = await handleHistorical(todayRequest(), ENV, db, String(today), TOKEN_KEY, fetchCurrent)
 
-      expect(getHistoricalPrice).not.toHaveBeenCalled()
+      expect(fetchCurrent).not.toHaveBeenCalled()
+      expect(insertCalls(db)).toHaveLength(0)
       await expect(response.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 1 } } })
     })
 
-    it('stays table-only for closed days and explicit sources', async () => {
-      const getHistoricalPrice = vi.fn(async () => upstream)
-      const miss = (req: Request, ts: number) =>
-        expect(
-          handleHistorical(req, ENV, pool([]), String(ts), TOKEN_KEY, fallback(getHistoricalPrice))
-        ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    it('refetches, persists and serves the new price for a row written over 5 minutes ago', async () => {
+      const fetchCurrent = current()
+      const db = pool([todayRow(600)])
+      const response = await handleHistorical(todayRequest(), ENV, db, String(today), TOKEN_KEY, fetchCurrent)
 
-      await miss(request(), TIMESTAMP)
-      await miss(todayRequest('defillama'), today)
-      expect(getHistoricalPrice).not.toHaveBeenCalled()
+      expect(fetchCurrent).toHaveBeenCalledTimes(1)
+      expect(insertCalls(db)).toHaveLength(1)
+      await expect(response.json()).resolves.toMatchObject({
+        coins: { [TOKEN_KEY]: { price: 2425.5, timestamp: today } }
+      })
     })
 
-    it('returns NOT_FOUND when upstream has no price and propagates upstream failures', async () => {
-      await expect(
-        handleHistorical(
-          todayRequest(),
-          ENV,
-          pool([]),
-          String(today),
-          TOKEN_KEY,
-          fallback(async () => null)
-        )
-      ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    it('treats a row without updated_at as stale', async () => {
+      const fetchCurrent = current()
+      const { updated_at: _omitted, ...row } = todayRow(0)
+      await handleHistorical(todayRequest(), ENV, pool([row]), String(today), TOKEN_KEY, fetchCurrent)
 
-      const failing = fallback(async () => {
+      expect(fetchCurrent).toHaveBeenCalledTimes(1)
+    })
+
+    it('serves the old row with a 200 when upstream fails and a row exists', async () => {
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const failing = vi.fn(async () => {
+        throw new ApiError('INTERNAL_ERROR', 'DeFiLlama request failed with status 429')
+      })
+      const db = pool([todayRow(600)])
+      const response = await handleHistorical(todayRequest(), ENV, db, String(today), TOKEN_KEY, failing)
+
+      expect(response.status).toBe(200)
+      expect(insertCalls(db)).toHaveLength(0)
+      await expect(response.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 1 } } })
+      expect(String(error.mock.calls[0][0])).toContain('today-refresh-failed')
+    })
+
+    it('serves the old row when upstream has no price for it', async () => {
+      const db = pool([todayRow(600)])
+      const response = await handleHistorical(todayRequest(), ENV, db, String(today), TOKEN_KEY, current(null))
+
+      expect(insertCalls(db)).toHaveLength(0)
+      await expect(response.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 1 } } })
+    })
+
+    it('propagates an upstream failure on a miss and returns NOT_FOUND when upstream has no price', async () => {
+      const failing = vi.fn(async () => {
         throw new ApiError('INTERNAL_ERROR', 'DeFiLlama request failed with status 429')
       })
       await expect(
         handleHistorical(todayRequest(), ENV, pool([]), String(today), TOKEN_KEY, failing)
       ).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
+
+      const db = pool([])
+      await expect(
+        handleHistorical(todayRequest(), ENV, db, String(today), TOKEN_KEY, current(null))
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+      expect(insertCalls(db)).toHaveLength(0)
+    })
+
+    it('stays table-only for closed days and explicit sources', async () => {
+      const fetchCurrent = current()
+      const miss = (req: Request, ts: number) =>
+        expect(handleHistorical(req, ENV, pool([]), String(ts), TOKEN_KEY, fetchCurrent)).rejects.toMatchObject({
+          code: 'NOT_FOUND'
+        })
+
+      await miss(request(), TIMESTAMP)
+      await miss(todayRequest('defillama'), today)
+      expect(fetchCurrent).not.toHaveBeenCalled()
     })
   })
 

@@ -65,7 +65,26 @@ describe('current-day historical lookups (incident regression)', () => {
     })
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(String(fetchMock.mock.calls[0][0])).toContain('https://coins.llama.fi/prices/historical/')
+    expect(String(fetchMock.mock.calls[0][0])).toContain('https://coins.llama.fi/prices/current/')
+  })
+
+  it('persists a read-through current price and serves the next read within 5 minutes from the table', async () => {
+    const blockTime = nowUnix() - 60
+    const coinKey = `ethereum:${RAW_ADDR}`
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        coins: { [coinKey]: { price: 2391.41, symbol: 'WETH', timestamp: nowUnix() - 15, confidence: 0.99 } }
+      })
+    )
+
+    const first = await handleHistorical(request(), ENV, neonPool(), String(blockTime), TOKEN_KEY)
+    const second = await handleHistorical(request(), ENV, neonPool(), String(blockTime), TOKEN_KEY)
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    await expect(first.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 2391.41 } } })
+    await expect(second.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 2391.41 } } })
+    const stored = await pool.query('SELECT finalized, price, observation_endpoint FROM token_prices')
+    expect(stored.rows).toEqual([{ finalized: false, price: '2391.41', observation_endpoint: '/prices/current' }])
   })
 
   it('serves a past-day block from the end-of-day keyed row without any upstream call', async () => {

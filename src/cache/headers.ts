@@ -3,10 +3,9 @@ import { currentUtcDayEnd, normalizeToEndOfDay } from '../utils/time'
 // Historical rows can be repaired, but repairs invalidate the edge by bumping
 // HISTORICAL_CACHE_REVISION. Keep closed days at the edge for 30 days.
 export const CACHE_CONTROL_HISTORICAL = 'public, s-maxage=2592000, max-age=3600'
-// Today's value changes intraday as warmup (hourly) backfills it. s-maxage=300 lets the
-// shared edge refresh every ~5min — far tighter than the warmup cadence — while browsers
-// keep the gentler 1h max-age.
-export const CACHE_CONTROL_TODAY = 'public, s-maxage=300, max-age=3600, stale-while-revalidate=14400'
+// Today's row is refreshed read-through when older than 5 minutes (refreshStaleToday), so
+// the DB lags at most ~5min; a 60s edge and browser TTL keeps the served price within that.
+export const CACHE_CONTROL_TODAY = 'public, s-maxage=60, max-age=60, stale-while-revalidate=300'
 // A historical miss (a 404, or a pair omitted from a batch/range) means the row is not
 // in the table yet, not that no price exists: the hourly warmup (Kong origin=yearn vaults
 // and underlyings, trailing 7 days) or a manually run backfill can fill it. Keep both
