@@ -54,6 +54,10 @@ export class DefiLlamaClient {
     return this.fetchJson<DefiLlamaBatchResponse>(url.toString())
   }
 
+  getCurrent(coins: string[]): Promise<DefiLlamaHistoricalResponse> {
+    return this.fetchJson<DefiLlamaHistoricalResponse>(`${BASE_URL}/prices/current/${coins.join(',')}`)
+  }
+
   getFirst(coins: string[]): Promise<DefiLlamaHistoricalResponse> {
     return this.fetchJson<DefiLlamaHistoricalResponse>(`${BASE_URL}/prices/first/${coins.join(',')}`)
   }
