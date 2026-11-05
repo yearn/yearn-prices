@@ -5,7 +5,7 @@ import type { Env } from '../../types'
 import { HistoricalPriceSourceBase } from '../base'
 import { type ClientForChain, maybe } from '../onchain/context'
 import type { HistoricalPriceResult } from '../types'
-import { getChainlinkFeed, hasChainlinkFeeds } from './feeds'
+import { getChainlinkEthQuotedFeed, getChainlinkFeed, hasChainlinkFeeds } from './feeds'
 
 // 2x the longest heartbeat among the feeds in feeds.ts (86,400s daily USD
 // feeds): a healthy feed reaches its heartbeat age before the next update.
@@ -142,14 +142,31 @@ export class ChainlinkHistoricalSource extends HistoricalPriceSourceBase {
     }
 
     const feed = getChainlinkFeed(chainId, token)
-    if (!feed) {
+    const ethQuoted = feed ? null : getChainlinkEthQuotedFeed(chainId, token)
+    if (!feed && !ethQuoted) {
       return null
     }
 
     // A transport failure must not escape raw: its message embeds the RPC url,
     // api key included, and the worker logs it and answers 500 instead of 503.
     try {
-      return await this.readFeed(client, chainId, feed, timestamp)
+      if (feed) {
+        return await this.readFeed(client, chainId, feed, timestamp)
+      }
+      const quoted = ethQuoted as NonNullable<typeof ethQuoted>
+      const [base, ethUsd] = await Promise.all([
+        this.readFeed(client, chainId, quoted.feed, timestamp),
+        this.readFeed(client, chainId, quoted.ethUsdFeed, timestamp)
+      ])
+      if (!base || !ethUsd) {
+        return null
+      }
+      const observed = Math.min(base.timestamp, ethUsd.timestamp)
+      const price = base.price * ethUsd.price
+      if (!this.isUsablePrice(price, observed)) {
+        return null
+      }
+      return { price, timestamp: observed, symbol: null, confidence: null }
     } catch (error) {
       throw new ApiError('UNAVAILABLE', `Chainlink read failed on chain ${chainId} (${errorName(error)})`)
     }

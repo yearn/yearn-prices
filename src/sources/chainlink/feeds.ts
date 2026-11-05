@@ -77,7 +77,8 @@ export const CHAINLINK_FEEDS: Readonly<Record<number, Readonly<Record<string, Ad
     '0xaf88d065e77c8cc2239327c5edb3a432268e5831': ARBITRUM_USDC,
     '0xff970a61a04b1ca14834a43f5de4533ebddb5cc8': ARBITRUM_USDC,
     '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9': '0x3f3f5dF88dC9F13eac63DF89EC16ef6e7E25DdE7',
-    '0xda10009cbd5d07dd0cecc66161fc93d7c9000da1': '0xc5C8E77B397E531B8EC06BFb0048328B30E9eCfB'
+    '0xda10009cbd5d07dd0cecc66161fc93d7c9000da1': '0xc5C8E77B397E531B8EC06BFb0048328B30E9eCfB',
+    '0xfa247d0d55a324ca19985577a2cdcfc383d87953': '0xfF82AAF635645fD0bcc7b619C3F28004cDb58574'
   },
   747474: {
     '0x4200000000000000000000000000000000000006': KATANA_ETH,
@@ -94,10 +95,34 @@ export const CHAINLINK_FEEDS: Readonly<Record<number, Readonly<Record<string, Ad
   }
 }
 
+export interface EthQuotedFeed {
+  feed: Address
+  ethUsdFeed: Address
+}
+
+export const CHAINLINK_ETH_QUOTED_FEEDS: Readonly<Record<number, Readonly<Record<string, EthQuotedFeed>>>> = {
+  1: {
+    '0x57ab1ec28d129707052df4df418d58a2d46d5f51': {
+      feed: '0x8e0b7e6062272B5eF4524250bFFF8e5Bd3497757',
+      ethUsdFeed: '0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419'
+    }
+  },
+  747474: {
+    '0x7fb4d0f51544f24f385a421db6e7d4fc71ad8e5c': {
+      feed: '0xCB568C33EA2B0B81852655d722E3a52d9D44e7De',
+      ethUsdFeed: KATANA_ETH
+    }
+  }
+}
+
 export function getChainlinkFeed(chainId: number, token: string): Address | null {
   return CHAINLINK_FEEDS[chainId]?.[token.toLowerCase()] ?? null
 }
 
+export function getChainlinkEthQuotedFeed(chainId: number, token: string): EthQuotedFeed | null {
+  return CHAINLINK_ETH_QUOTED_FEEDS[chainId]?.[token.toLowerCase()] ?? null
+}
+
 export function hasChainlinkFeeds(chainId: number): boolean {
-  return CHAINLINK_FEEDS[chainId] !== undefined
+  return CHAINLINK_FEEDS[chainId] !== undefined || CHAINLINK_ETH_QUOTED_FEEDS[chainId] !== undefined
 }

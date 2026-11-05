@@ -1,7 +1,12 @@
 import type { PublicClient } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { ApiError } from '../../../src/http/errors'
-import { CHAINLINK_FEEDS, getChainlinkFeed } from '../../../src/sources/chainlink/feeds'
+import {
+  CHAINLINK_ETH_QUOTED_FEEDS,
+  CHAINLINK_FEEDS,
+  getChainlinkEthQuotedFeed,
+  getChainlinkFeed
+} from '../../../src/sources/chainlink/feeds'
 import { createChainlinkHistoricalSource } from '../../../src/sources/chainlink/historical'
 import { fakeClient } from '../onchain/helpers'
 
@@ -490,7 +495,64 @@ describe('ChainlinkHistoricalSource', () => {
   })
 })
 
+describe('ETH-quoted feed composition', () => {
+  const MAINNET_SUSD = '0x57ab1ec28d129707052df4df418d58a2d46d5f51'
+  const QUOTED = getChainlinkEthQuotedFeed(1, MAINNET_SUSD)
+  if (!QUOTED) {
+    throw new Error('Mainnet sUSD ETH-quoted feed is not configured')
+  }
+
+  function quotedSource(baseUpdatedAt: bigint, ethUpdatedAt: bigint) {
+    return createChainlinkHistoricalSource({
+      clientForChain: () =>
+        fakeClient({
+          [QUOTED.feed.toLowerCase()]: {
+            latestRoundData: [1n, 50_000n, baseUpdatedAt, baseUpdatedAt, 1n],
+            decimals: 8n
+          },
+          [QUOTED.ethUsdFeed.toLowerCase()]: {
+            latestRoundData: [1n, 200_000_000_000n, ethUpdatedAt, ethUpdatedAt, 1n],
+            decimals: 8n
+          }
+        })
+    })
+  }
+
+  it('multiplies the ETH-quoted answer by ETH/USD and reports the older observation', async () => {
+    await expect(
+      quotedSource(1_700_000_000n, 1_699_999_000n).getHistoricalPrice(1, MAINNET_SUSD, 1_700_000_000)
+    ).resolves.toEqual({ price: 1, timestamp: 1_699_999_000, symbol: null, confidence: null })
+  })
+
+  it('returns null when one leg is stale', async () => {
+    await expect(
+      quotedSource(1_700_000_000n, 1_699_800_000n).getHistoricalPrice(1, MAINNET_SUSD, 1_700_000_000)
+    ).resolves.toBeNull()
+  })
+
+  it('prices katana wstETH through the wstETH/ETH and ETH/USD pair', () => {
+    expect(getChainlinkEthQuotedFeed(747474, '0x7Fb4D0f51544F24F385a421Db6e7D4fC71Ad8e5C')).toEqual({
+      feed: '0xCB568C33EA2B0B81852655d722E3a52d9D44e7De',
+      ethUsdFeed: '0x7BdBDB772f4a073BadD676A567C6ED82049a8eEE'
+    })
+  })
+
+  it('keys every ETH-quoted token by its lowercase address', () => {
+    for (const feeds of Object.values(CHAINLINK_ETH_QUOTED_FEEDS)) {
+      for (const token of Object.keys(feeds)) {
+        expect(token).toBe(token.toLowerCase())
+      }
+    }
+  })
+})
+
 describe('CHAINLINK_FEEDS', () => {
+  it('maps the arbitrum PHP token to the PHP/USD forex feed', () => {
+    expect(getChainlinkFeed(42161, '0xFa247d0D55a324ca19985577a2cDcFC383D87953')).toBe(
+      '0xfF82AAF635645fD0bcc7b619C3F28004cDb58574'
+    )
+  })
+
   it('keys every token by its lowercase address', () => {
     for (const feeds of Object.values(CHAINLINK_FEEDS)) {
       for (const token of Object.keys(feeds)) {
