@@ -68,23 +68,45 @@ describe('current-day historical lookups (incident regression)', () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain('https://coins.llama.fi/prices/current/')
   })
 
-  it('persists a read-through current price and serves the next read within 5 minutes from the table', async () => {
+  it('serves today live on every read and persists it as provisional', async () => {
     const blockTime = nowUnix() - 60
-    const coinKey = `ethereum:${RAW_ADDR}`
-    fetchMock.mockResolvedValueOnce(
+    const live = (price: number) =>
       Response.json({
-        coins: { [coinKey]: { price: 2391.41, symbol: 'WETH', timestamp: nowUnix() - 15, confidence: 0.99 } }
+        coins: { [TOKEN_KEY]: { price, symbol: 'WETH', timestamp: nowUnix() - 15, confidence: 0.99 } }
       })
-    )
+    fetchMock.mockResolvedValueOnce(live(2391.41)).mockResolvedValueOnce(live(2400.5))
 
     const first = await handleHistorical(request(), ENV, neonPool(), String(blockTime), TOKEN_KEY)
     const second = await handleHistorical(request(), ENV, neonPool(), String(blockTime), TOKEN_KEY)
 
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(String(fetchMock.mock.calls[0][0])).toContain('https://coins.llama.fi/prices/current/')
     await expect(first.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 2391.41 } } })
-    await expect(second.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 2391.41 } } })
+    await expect(second.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 2400.5 } } })
     const stored = await pool.query('SELECT finalized, price, observation_endpoint FROM token_prices')
-    expect(stored.rows).toEqual([{ finalized: false, price: '2391.41', observation_endpoint: '/prices/current' }])
+    expect(stored.rows).toEqual([{ finalized: false, price: '2400.5', observation_endpoint: '/prices/current' }])
+  })
+
+  it('fills a closed-day miss once, persists it finalized and serves the next read from the table', async () => {
+    const yesterdayNoon = nowUnix() - 86_400
+    const dayEnd = normalizeToEndOfDay(yesterdayNoon)
+    fetchMock.mockResolvedValueOnce(
+      Response.json({
+        coins: {
+          [TOKEN_KEY]: { symbol: 'WETH', prices: [{ timestamp: dayEnd - 600, price: 3300.5, confidence: 0.98 }] }
+        }
+      })
+    )
+
+    const first = await handleHistorical(request(), ENV, neonPool(), String(yesterdayNoon), TOKEN_KEY)
+    const second = await handleHistorical(request(), ENV, neonPool(), String(yesterdayNoon), TOKEN_KEY)
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(String(fetchMock.mock.calls[0][0])).toContain('https://coins.llama.fi/batchHistorical')
+    await expect(first.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 3300.5, timestamp: dayEnd } } })
+    await expect(second.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 3300.5, timestamp: dayEnd } } })
+    const stored = await pool.query('SELECT finalized, price, observation_endpoint FROM token_prices')
+    expect(stored.rows).toEqual([{ finalized: true, price: '3300.5', observation_endpoint: '/batchHistorical' }])
   })
 
   it('serves a past-day block from the end-of-day keyed row without any upstream call', async () => {
@@ -100,14 +122,15 @@ describe('current-day historical lookups (incident regression)', () => {
     })
   })
 
-  it('serves a current-day block from a warmed end-of-day row without any upstream call', async () => {
+  it('serves a warmed end-of-day row for today when the live call has no price', async () => {
     const blockTime = nowUnix() - 60
     await seedPrice(normalizeToEndOfDay(blockTime), 3419.75)
+    fetchMock.mockResolvedValueOnce(Response.json({ coins: {} }))
 
     const response = await handleHistorical(request(), ENV, neonPool(), String(blockTime), TOKEN_KEY)
 
     expect(response.status).toBe(200)
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
     await expect(response.json()).resolves.toMatchObject({
       coins: { [TOKEN_KEY]: { price: 3419.75 } }
     })

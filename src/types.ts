@@ -37,7 +37,6 @@ export interface DbPriceRow {
   finalized?: boolean
   observed_at?: string | Date | null
   observation_endpoint?: string | null
-  updated_at?: string | Date | null
 }
 
 export interface PricePoint {
@@ -53,7 +52,6 @@ export interface ExactPriceRecord extends PricePoint {
   symbol: string | null
   observedTimestamp?: number | null
   observationEndpoint?: string | null
-  updatedAt?: number | null
 }
 
 export interface HistoricalRequestTuple {

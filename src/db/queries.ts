@@ -73,8 +73,7 @@ export async function getBatchHistoricalPrices(
     const sourceIndex = params.length
     sql = `
       SELECT tp.chain, tp.token, tp.timestamp, tp.price, tp.symbol, tp.confidence, tp.source,
-        tp.observed_at, tp.observation_endpoint,
-        (tp.updated_at AT TIME ZONE 'UTC') AS updated_at
+        tp.observed_at, tp.observation_endpoint
       FROM token_prices tp
       INNER JOIN ${requestedSql}
         ON tp.chain = r.chain
@@ -87,8 +86,7 @@ export async function getBatchHistoricalPrices(
     sql = `
       SELECT DISTINCT ON (tp.chain, tp.token, tp.timestamp)
         tp.chain, tp.token, tp.timestamp, tp.price, tp.symbol, tp.confidence, tp.source,
-        tp.observed_at, tp.observation_endpoint,
-        (tp.updated_at AT TIME ZONE 'UTC') AS updated_at
+        tp.observed_at, tp.observation_endpoint
       FROM token_prices tp
       INNER JOIN ${requestedSql}
         ON tp.chain = r.chain
@@ -136,8 +134,7 @@ export async function getRangeHistoricalPrices(
     const sourceIndex = params.length
     sql += `
       SELECT tp.chain, tp.token, tp.timestamp, tp.price, tp.symbol, tp.confidence, tp.source,
-        tp.observed_at, tp.observation_endpoint,
-        (tp.updated_at AT TIME ZONE 'UTC') AS updated_at
+        tp.observed_at, tp.observation_endpoint
       FROM token_prices tp
       INNER JOIN requested r
         ON tp.chain = r.chain
@@ -150,8 +147,7 @@ export async function getRangeHistoricalPrices(
     sql += `
       SELECT DISTINCT ON (tp.chain, tp.token, tp.timestamp)
         tp.chain, tp.token, tp.timestamp, tp.price, tp.symbol, tp.confidence, tp.source,
-        tp.observed_at, tp.observation_endpoint,
-        (tp.updated_at AT TIME ZONE 'UTC') AS updated_at
+        tp.observed_at, tp.observation_endpoint
       FROM token_prices tp
       INNER JOIN requested r
         ON tp.chain = r.chain
@@ -207,8 +203,7 @@ export async function getUnfinalizedExactTimestamps(
   const result = await pool.query<DbPriceRow>(
     `
       SELECT tp.chain, tp.token, tp.timestamp, tp.price, tp.symbol, tp.confidence, tp.source,
-        tp.observed_at, tp.observation_endpoint,
-        (tp.updated_at AT TIME ZONE 'UTC') AS updated_at
+        tp.observed_at, tp.observation_endpoint
       FROM token_prices tp
       INNER JOIN (VALUES ${valuesSql.join(', ')}) AS r(chain, token, timestamp)
         ON tp.chain = r.chain AND tp.token = r.token AND tp.timestamp = r.timestamp
@@ -354,7 +349,6 @@ function mapDbRowToExactRecord(row: DbPriceRow): ExactPriceRecord {
     confidence: optionalResponseNumber(row.confidence),
     source: row.source,
     observedTimestamp: row.observed_at == null ? null : pgTimestampToUnix(row.observed_at),
-    observationEndpoint: row.observation_endpoint ?? null,
-    updatedAt: row.updated_at == null ? null : pgTimestampToUnix(row.updated_at)
+    observationEndpoint: row.observation_endpoint ?? null
   }
 }

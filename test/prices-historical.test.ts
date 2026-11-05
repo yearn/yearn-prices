@@ -1,9 +1,9 @@
 import type { Pool } from '@neondatabase/serverless'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CACHE_CONTROL_HISTORICAL, CACHE_CONTROL_TODAY } from '../src/cache'
-import { ApiError } from '../src/http'
 import worker from '../src/index'
 import { handleHistorical } from '../src/routes/historical/exact'
+import type { ReadThroughUpstream } from '../src/routes/historical/read-through'
 import type { Env } from '../src/types'
 import { normalizeToEndOfDay } from '../src/utils'
 
@@ -53,12 +53,12 @@ describe('handleHistorical', () => {
             price: '1',
             symbol: 'WETH',
             confidence: '0.9',
-            source: 'defillama',
-            updated_at: new Date()
+            source: 'defillama'
           }
         ]),
         String(timestamp),
-        TOKEN_KEY
+        TOKEN_KEY,
+        { current: vi.fn(async () => new Map()), historical: vi.fn(async () => ({ prices: [], failed: false })) }
       )
 
     expect((await hit(TIMESTAMP)).headers.get('cache-control')).toBe(CACHE_CONTROL_HISTORICAL)
@@ -113,52 +113,64 @@ describe('handleHistorical', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('returns NOT_FOUND on a DB miss without calling upstream', async () => {
-    await expect(handleHistorical(request(), ENV, pool([]), String(TIMESTAMP), TOKEN_KEY)).rejects.toMatchObject({
-      code: 'NOT_FOUND'
-    })
-    expect(fetchMock).not.toHaveBeenCalled()
-  })
-
-  describe('current day', () => {
+  describe('read-through', () => {
     const today = normalizeToEndOfDay(Math.floor(Date.now() / 1000))
     const nowSeconds = () => Math.floor(Date.now() / 1000)
-    const upstream = { price: 2425.5, timestamp: nowSeconds() - 20, symbol: 'WETH', confidence: 0.99 }
-    const current = (price: typeof upstream | null = upstream) =>
+    const live = { price: 2425.5, timestamp: nowSeconds() - 20, symbol: 'WETH', confidence: 0.99 }
+    const upstreamOf = (overrides: Partial<ReadThroughUpstream> = {}) =>
+      ({
+        current: vi.fn(async () => new Map()),
+        historical: vi.fn(async () => ({ prices: [], failed: false })),
+        ...overrides
+      }) as ReadThroughUpstream & { current: ReturnType<typeof vi.fn>; historical: ReturnType<typeof vi.fn> }
+    const currentWith = (price: typeof live | null = live) =>
       vi.fn(async () => new Map(price ? [[TOKEN_KEY, price]] : []))
+    const closedWith = (price = 1800.25) =>
+      vi.fn(async (targets: Array<{ chainId: number; token: string; timestamp: number }>) => ({
+        prices: targets.map((target) => ({
+          target,
+          price: { price, timestamp: target.timestamp - 3_600, symbol: 'WETH', confidence: 0.97 }
+        })),
+        failed: false
+      }))
+    const failing = () =>
+      vi.fn(async () => {
+        throw new Error('DeFiLlama request failed with status 429')
+      })
     const todayRequest = (source?: string) =>
       new Request(`https://svc/api/prices/historical/${today}/${TOKEN_KEY}${source ? `?source=${source}` : ''}`)
-    const todayRow = (updatedAgo: number) => ({
+    const tableRow = (timestamp: number, price: string) => ({
       chain: 'ethereum',
       token: RAW_ADDR,
-      timestamp: new Date(today * 1000),
-      price: '1',
+      timestamp: new Date(timestamp * 1000),
+      price,
       symbol: 'WETH',
       confidence: '0.9',
-      source: 'defillama',
-      observed_at: new Date((nowSeconds() - 10) * 1000),
-      updated_at: new Date((nowSeconds() - updatedAgo) * 1000)
+      source: 'defillama'
     })
     const insertCalls = (db: Pool) =>
-      vi.mocked(db.query).mock.calls.filter(([sql]) => String(sql).includes('INSERT INTO token_prices'))
+      vi
+        .mocked(db.query)
+        .mock.calls.filter(([sql]) => String(sql).includes('INSERT INTO token_prices')) as unknown as Array<
+        [string, unknown[]]
+      >
 
-    it('serves a table miss from one current call and persists it as provisional', async () => {
-      const fetchCurrent = current()
-      const db = pool([])
-      const response = await handleHistorical(todayRequest(), ENV, db, String(today), TOKEN_KEY, fetchCurrent)
+    it('serves today live even when a table row exists, and persists it as provisional', async () => {
+      const upstream = upstreamOf({ current: currentWith() })
+      const db = pool([tableRow(today, '1')])
+      const response = await handleHistorical(todayRequest(), ENV, db, String(today), TOKEN_KEY, upstream)
 
       expect(response.status).toBe(200)
       expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_TODAY)
-      expect(fetchCurrent).toHaveBeenCalledTimes(1)
-      expect(fetchCurrent).toHaveBeenCalledWith([
+      expect(upstream.current).toHaveBeenCalledTimes(1)
+      expect(upstream.current).toHaveBeenCalledWith([
         { chain: 'ethereum', token: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2' }
       ])
-      expect(db.query).toHaveBeenCalledTimes(2)
-      const [insertSql, params] = insertCalls(db)[0] as unknown as [string, unknown[]]
-      expect(insertSql).toContain('INSERT INTO token_prices')
-      expect(params).toContain('/prices/current')
-      expect(params).toContain(2425.5)
-      expect(params).toContain(false)
+      expect(upstream.historical).not.toHaveBeenCalled()
+      const [call] = insertCalls(db)
+      expect(call[1]).toContain('/prices/current')
+      expect(call[1]).toContain(2425.5)
+      expect(call[1]).toContain(false)
       await expect(response.json()).resolves.toEqual({
         coins: {
           [TOKEN_KEY]: { price: 2425.5, symbol: 'WETH', timestamp: today, confidence: 0.99, source: 'defillama' }
@@ -166,87 +178,172 @@ describe('handleHistorical', () => {
       })
     })
 
-    it('serves a fresh row without calling upstream', async () => {
-      const fetchCurrent = current()
-      const db = pool([todayRow(10)])
-      const response = await handleHistorical(todayRequest(), ENV, db, String(today), TOKEN_KEY, fetchCurrent)
+    it('serves today live on a table miss', async () => {
+      const db = pool([])
+      const response = await handleHistorical(
+        todayRequest(),
+        ENV,
+        db,
+        String(today),
+        TOKEN_KEY,
+        upstreamOf({ current: currentWith() })
+      )
 
-      expect(fetchCurrent).not.toHaveBeenCalled()
+      expect(insertCalls(db)).toHaveLength(1)
+      await expect(response.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 2425.5 } } })
+    })
+
+    it('serves the table row when live has no price for today', async () => {
+      const db = pool([tableRow(today, '1')])
+      const response = await handleHistorical(
+        todayRequest(),
+        ENV,
+        db,
+        String(today),
+        TOKEN_KEY,
+        upstreamOf({ current: currentWith(null) })
+      )
+
       expect(insertCalls(db)).toHaveLength(0)
       await expect(response.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 1 } } })
     })
 
-    it('refetches, persists and serves the new price for a row written over 5 minutes ago', async () => {
-      const fetchCurrent = current()
-      const db = pool([todayRow(600)])
-      const response = await handleHistorical(todayRequest(), ENV, db, String(today), TOKEN_KEY, fetchCurrent)
-
-      expect(fetchCurrent).toHaveBeenCalledTimes(1)
-      expect(insertCalls(db)).toHaveLength(1)
-      await expect(response.json()).resolves.toMatchObject({
-        coins: { [TOKEN_KEY]: { price: 2425.5, timestamp: today } }
-      })
-    })
-
-    it('treats a row without updated_at as stale', async () => {
-      const fetchCurrent = current()
-      const { updated_at: _omitted, ...row } = todayRow(0)
-      await handleHistorical(todayRequest(), ENV, pool([row]), String(today), TOKEN_KEY, fetchCurrent)
-
-      expect(fetchCurrent).toHaveBeenCalledTimes(1)
-    })
-
-    it('serves the old row with a 200 when upstream fails and a row exists', async () => {
+    it('serves the table row with a 200 when the live call throws', async () => {
       const error = vi.spyOn(console, 'error').mockImplementation(() => {})
-      const failing = vi.fn(async () => {
-        throw new ApiError('INTERNAL_ERROR', 'DeFiLlama request failed with status 429')
+      const upstream = upstreamOf({ current: failing() })
+      const response = await handleHistorical(
+        todayRequest(),
+        ENV,
+        pool([tableRow(today, '1')]),
+        String(today),
+        TOKEN_KEY,
+        upstream
+      )
+
+      expect(upstream.current).toHaveBeenCalledTimes(1)
+      expect(response.status).toBe(200)
+      await expect(response.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 1 } } })
+      expect(JSON.parse(String(error.mock.calls[0][0]))).toMatchObject({
+        message: 'read-through-failed',
+        stage: 'current'
       })
-      const db = pool([todayRow(600)])
-      const response = await handleHistorical(todayRequest(), ENV, db, String(today), TOKEN_KEY, failing)
+    })
+
+    it('returns UNAVAILABLE when the live call throws and there is no row, NOT_FOUND when live is empty', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      await expect(
+        handleHistorical(todayRequest(), ENV, pool([]), String(today), TOKEN_KEY, upstreamOf({ current: failing() }))
+      ).rejects.toMatchObject({ code: 'UNAVAILABLE', status: 503 })
+
+      const upstream = upstreamOf({ current: currentWith(null) })
+      await expect(
+        handleHistorical(todayRequest(), ENV, pool([]), String(today), TOKEN_KEY, upstream)
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+      expect(upstream.current).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not call upstream for a closed day that is in the table', async () => {
+      const upstream = upstreamOf({ current: currentWith(), historical: closedWith() })
+      const response = await handleHistorical(
+        request(),
+        ENV,
+        pool([tableRow(TIMESTAMP, '123.45')]),
+        String(TIMESTAMP),
+        TOKEN_KEY,
+        upstream
+      )
+
+      expect(upstream.current).not.toHaveBeenCalled()
+      expect(upstream.historical).not.toHaveBeenCalled()
+      await expect(response.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 123.45 } } })
+    })
+
+    it('fills a closed-day miss from one historical call, finalizes it and serves the requested day', async () => {
+      const upstream = upstreamOf({ historical: closedWith() })
+      const db = pool([])
+      const response = await handleHistorical(request(), ENV, db, String(TIMESTAMP), TOKEN_KEY, upstream)
+
+      expect(upstream.current).not.toHaveBeenCalled()
+      expect(upstream.historical).toHaveBeenCalledTimes(1)
+      expect(upstream.historical).toHaveBeenCalledWith([
+        { chainId: 1, token: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', timestamp: TIMESTAMP }
+      ])
+      const [call] = insertCalls(db)
+      expect(call[1]).toContain('/batchHistorical')
+      expect(call[1]).toContain(1800.25)
+      expect(call[1]).toContain(true)
+      expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_HISTORICAL)
+      await expect(response.json()).resolves.toEqual({
+        coins: {
+          [TOKEN_KEY]: { price: 1800.25, symbol: 'WETH', timestamp: TIMESTAMP, confidence: 0.97, source: 'defillama' }
+        }
+      })
+    })
+
+    it('still serves the price when persisting the read-through fails', async () => {
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const db = {
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('INSERT INTO token_prices')) throw new Error('db down')
+          return { rows: [] }
+        })
+      } as unknown as Pool
+      const response = await handleHistorical(
+        request(),
+        ENV,
+        db,
+        String(TIMESTAMP),
+        TOKEN_KEY,
+        upstreamOf({ historical: closedWith() })
+      )
 
       expect(response.status).toBe(200)
-      expect(insertCalls(db)).toHaveLength(0)
-      await expect(response.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 1 } } })
-      expect(String(error.mock.calls[0][0])).toContain('today-refresh-failed')
+      await expect(response.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 1800.25 } } })
+      expect(String(error.mock.calls[0][0])).toContain('read-through-persist-failed')
     })
 
-    it('serves the old row when upstream has no price for it', async () => {
-      const db = pool([todayRow(600)])
-      const response = await handleHistorical(todayRequest(), ENV, db, String(today), TOKEN_KEY, current(null))
-
-      expect(insertCalls(db)).toHaveLength(0)
-      await expect(response.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 1 } } })
-    })
-
-    it('propagates an upstream failure on a miss and returns NOT_FOUND when upstream has no price', async () => {
-      const failing = vi.fn(async () => {
-        throw new ApiError('INTERNAL_ERROR', 'DeFiLlama request failed with status 429')
-      })
-      await expect(
-        handleHistorical(todayRequest(), ENV, pool([]), String(today), TOKEN_KEY, failing)
-      ).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
-
+    it('returns NOT_FOUND for a closed-day miss when upstream has no price, UNAVAILABLE when it failed', async () => {
       const db = pool([])
       await expect(
-        handleHistorical(todayRequest(), ENV, db, String(today), TOKEN_KEY, current(null))
+        handleHistorical(request(), ENV, db, String(TIMESTAMP), TOKEN_KEY, upstreamOf())
       ).rejects.toMatchObject({ code: 'NOT_FOUND' })
       expect(insertCalls(db)).toHaveLength(0)
+
+      await expect(
+        handleHistorical(
+          request(),
+          ENV,
+          pool([]),
+          String(TIMESTAMP),
+          TOKEN_KEY,
+          upstreamOf({ historical: vi.fn(async () => ({ prices: [], failed: true })) })
+        )
+      ).rejects.toMatchObject({ code: 'UNAVAILABLE', status: 503 })
     })
 
-    it('stays table-only for closed days and explicit sources', async () => {
-      const fetchCurrent = current()
+    it('returns UNAVAILABLE when the historical call throws', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      await expect(
+        handleHistorical(request(), ENV, pool([]), String(TIMESTAMP), TOKEN_KEY, upstreamOf({ historical: failing() }))
+      ).rejects.toMatchObject({ code: 'UNAVAILABLE' })
+    })
+
+    it('makes no upstream call for an explicit source', async () => {
+      const upstream = upstreamOf({ current: currentWith(), historical: closedWith() })
       const miss = (req: Request, ts: number) =>
-        expect(handleHistorical(req, ENV, pool([]), String(ts), TOKEN_KEY, fetchCurrent)).rejects.toMatchObject({
+        expect(handleHistorical(req, ENV, pool([]), String(ts), TOKEN_KEY, upstream)).rejects.toMatchObject({
           code: 'NOT_FOUND'
         })
 
-      await miss(request(), TIMESTAMP)
+      await miss(request('defillama'), TIMESTAMP)
       await miss(todayRequest('defillama'), today)
-      expect(fetchCurrent).not.toHaveBeenCalled()
+      expect(upstream.current).not.toHaveBeenCalled()
+      expect(upstream.historical).not.toHaveBeenCalled()
     })
   })
 
   it('serves a table miss as a 404 whose negative TTL stays under the hourly warmup cadence', async () => {
+    fetchMock.mockResolvedValue(Response.json({ coins: {} }))
     vi.stubGlobal('caches', { default: { match: async () => undefined, put: async () => {} } })
     const response = await worker.fetch(
       new Request(request().url, { headers: { authorization: 'Bearer k' } }),
@@ -256,7 +353,7 @@ describe('handleHistorical', () => {
 
     expect(response.status).toBe(404)
     expect(response.headers.get('cache-control')).toBe('public, s-maxage=300, max-age=300')
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/batchHistorical')
   })
 
   describe('hyperliquid', () => {
@@ -300,9 +397,10 @@ describe('handleHistorical', () => {
     })
 
     it('returns NOT_FOUND instead of an invented price when nothing is stored', async () => {
-      await expect(handleHistorical(request(), ENV, pool([]), String(TIMESTAMP), HYPE_KEY)).rejects.toMatchObject({
-        code: 'NOT_FOUND'
-      })
+      const upstream = { current: vi.fn(), historical: vi.fn(async () => ({ prices: [], failed: false })) }
+      await expect(
+        handleHistorical(request(), ENV, pool([]), String(TIMESTAMP), HYPE_KEY, upstream)
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' })
     })
 
     it.each(['hyperevm', 'fakechain'])('maps unsupported namespace %s to a 400', async (chain) => {

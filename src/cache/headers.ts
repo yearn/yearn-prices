@@ -3,15 +3,14 @@ import { currentUtcDayEnd, normalizeToEndOfDay } from '../utils/time'
 // Historical rows can be repaired, but repairs invalidate the edge by bumping
 // HISTORICAL_CACHE_REVISION. Keep closed days at the edge for 30 days.
 export const CACHE_CONTROL_HISTORICAL = 'public, s-maxage=2592000, max-age=3600'
-// Today's row is refreshed read-through when older than 5 minutes (refreshStaleToday), so
-// the DB lags at most ~5min; a 60s edge and browser TTL keeps the served price within that.
+// Today is always read live from DeFiLlama /prices/current (readThrough), so the served price is
+// at most one edge TTL old; a 60s edge and browser TTL bounds that staleness.
 export const CACHE_CONTROL_TODAY = 'public, s-maxage=60, max-age=60, stale-while-revalidate=300'
-// A historical miss (a 404, or a pair omitted from a batch/range) means the row is not
-// in the table yet, not that no price exists: the hourly warmup (Kong origin=yearn vaults
-// and underlyings, trailing 7 days) or a manually run backfill can fill it. Keep both
-// negative TTLs under the warmup cadence so a client stops seeing the gap soon after the
-// row lands. CACHE_CONTROL_PARTIAL only reaches responses made entirely of closed days —
-// a batch/range touching today takes CACHE_CONTROL_TODAY before the partial check runs.
+// A closed-day miss is filled on read from DeFiLlama /batchHistorical and persisted (readThrough).
+// A remaining 404, or a pair omitted from a batch/range, means upstream had no price or the
+// per-request read-through cap was hit; warmup or a backfill can still fill it. Keep both negative
+// TTLs under the warmup cadence. CACHE_CONTROL_PARTIAL only reaches responses made entirely of
+// closed days: a batch/range touching today takes CACHE_CONTROL_TODAY before the partial check runs.
 export const CACHE_CONTROL_PARTIAL = 'public, s-maxage=300, max-age=300'
 export const CACHE_CONTROL_NOT_FOUND = 'public, s-maxage=300, max-age=300'
 // Spot is a live proxy with no upstream cache policy. Short shared-cache TTL so the

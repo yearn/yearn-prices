@@ -3,8 +3,8 @@ import { cacheControlForHistorical } from '../../cache'
 import { getExactHistoricalPrice } from '../../db'
 import { ApiError, jsonResponse } from '../../http'
 import type { Env } from '../../types'
-import { isTodayNormalized, parseOptionalSource, parseTimestampSegment, parseTokenKey } from '../../utils'
-import { type FetchCurrent, refreshStaleToday } from './today'
+import { parseOptionalSource, parseTimestampSegment, parseTokenKey } from '../../utils'
+import { type ReadThroughUpstream, readThrough } from './read-through'
 
 export async function handleHistorical(
   request: Request,
@@ -12,24 +12,22 @@ export async function handleHistorical(
   pool: Pool,
   timestampSegment: string,
   tokenKeySegment: string,
-  fetchCurrent?: FetchCurrent
+  upstream?: ReadThroughUpstream
 ): Promise<Response> {
   const timestamp = parseTimestampSegment(timestampSegment)
   const { chain, token, tokenKey } = parseTokenKey(tokenKeySegment)
   const source = parseOptionalSource(new URL(request.url).searchParams.get('source'))
 
   const row = await getExactHistoricalPrice(pool, { chain, token, timestamp }, source)
-  // Today's row missing or older than 5 minutes is refreshed from one bounded DeFiLlama
-  // /prices/current call and persisted as provisional. Explicit-source requests stay table-only.
-  // An upstream failure with no stored row propagates so it is not cached as a miss.
-  const [record] = await refreshStaleToday(
-    pool,
-    isTodayNormalized(timestamp) ? [{ chain, token, timestamp }] : [],
-    row ? [row] : [],
-    source,
-    fetchCurrent
-  )
+  // Today is always read live from DeFiLlama /prices/current; a closed-day table miss is filled once from
+  // /batchHistorical and persisted, so the next read is a table hit. Explicit-source requests stay table-only.
+  // A failed upstream with nothing to serve is a 503, never a cacheable 404.
+  const result = await readThrough(pool, [{ chain, token, timestamp }], row ? [row] : [], source, upstream)
+  const [record] = result.rows
   if (!record) {
+    if (result.upstreamFailed) {
+      throw new ApiError('UNAVAILABLE', `Upstream price lookup failed for ${tokenKey} at ${timestamp}`)
+    }
     throw new ApiError('NOT_FOUND', `No historical price found for ${tokenKey} at ${timestamp}`)
   }
 
