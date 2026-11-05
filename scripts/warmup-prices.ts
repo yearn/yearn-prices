@@ -19,7 +19,13 @@ import {
 import { plausibleWrites, storedCurveLpGuard } from '../src/prices/curve-lp-guard'
 import { isRejectedPrice } from '../src/prices/rejections'
 import { DEFILLAMA_UNSUPPORTED_CHAINS } from '../src/sources'
-import { CHAINLINK_FEEDS, createChainlinkHistoricalSource, getChainlinkFeed } from '../src/sources/chainlink'
+import {
+  CHAINLINK_ETH_QUOTED_FEEDS,
+  CHAINLINK_FEEDS,
+  createChainlinkHistoricalSource,
+  getChainlinkEthQuotedFeed,
+  getChainlinkFeed
+} from '../src/sources/chainlink'
 import { buildDefiLlamaPayloads } from '../src/sources/defillama/batch'
 import { buildDefiLlamaWrites, matchPricesToRequests } from '../src/sources/defillama/match'
 import type { HistoricalRequestTuple, TokenPriceWrite } from '../src/types'
@@ -152,7 +158,7 @@ function chainlinkFeedVaults(chainId: number): NormalizedVault[] {
   if (!chain) {
     throw new Error(`Unknown chain id: ${chainId}`)
   }
-  const feeds = CHAINLINK_FEEDS[chainId] ?? {}
+  const feeds = { ...CHAINLINK_FEEDS[chainId], ...CHAINLINK_ETH_QUOTED_FEEDS[chainId] }
   return Object.keys(feeds).map((token) => {
     const address = normalizeTokenAddress(token)
     return {
@@ -343,7 +349,11 @@ async function warmChainlinkPrices(
 
   const requests: HistoricalRequestTuple[] = []
   for (const underlying of underlyings.values()) {
-    if (!getChainlinkFeed(underlying.chainId, underlying.token)) continue
+    if (
+      !getChainlinkFeed(underlying.chainId, underlying.token) &&
+      !getChainlinkEthQuotedFeed(underlying.chainId, underlying.token)
+    )
+      continue
     for (const timestamp of timestamps) {
       requests.push({ chain: underlying.chain, token: underlying.token, timestamp })
     }

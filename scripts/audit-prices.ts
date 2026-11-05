@@ -5,12 +5,12 @@ import { config as loadEnv } from 'dotenv'
 loadEnv({ quiet: true })
 
 import { EXACT_READ_CHUNK_SIZE } from '../src/backfill/constants'
+import { readPricedKeys } from '../src/backfill/priced-keys'
 import { getChainClient } from '../src/clients'
-import { createPool, getExistingExactTimestamps } from '../src/db'
-import type { PriceSource } from '../src/types'
-import { chunk, normalizedDaysInRange, normalizeToEndOfDay, nowUnix } from '../src/utils'
+import { createPool } from '../src/db'
+import { normalizedDaysInRange, normalizeToEndOfDay, nowUnix } from '../src/utils'
 import { fetchYearnVaults, type NormalizedVault } from './lib/kong-vaults'
-import { AUDIT_SOURCES, auditCoverage, auditFailed, expectedTuples } from './lib/price-audit'
+import { auditCoverage, auditFailed, expectedTuples } from './lib/price-audit'
 
 const databaseUrl = process.env.DATABASE_URL
 if (!databaseUrl) {
@@ -25,18 +25,12 @@ const timestamps = normalizedDaysInRange(start, end)
 
 async function audit(vaults: NormalizedVault[]) {
   const expected = expectedTuples(vaults, timestamps)
-  const existing: Partial<Record<PriceSource, Set<string>>> = {}
-  for (const source of AUDIT_SOURCES) {
-    const keys = new Set<string>()
-    for (const batch of chunk(
-      expected.filter((tuple) => tuple.source === source),
-      EXACT_READ_CHUNK_SIZE
-    )) {
-      for (const key of await getExistingExactTimestamps(pool, batch, source)) keys.add(key)
-    }
-    existing[source] = keys
-  }
-  return auditCoverage(expected, existing)
+  const priced = await readPricedKeys(
+    pool,
+    expected.map((tuple) => ({ chain: tuple.chain, token: tuple.token, eodTimestamp: tuple.timestamp })),
+    EXACT_READ_CHUNK_SIZE
+  )
+  return auditCoverage(expected, priced)
 }
 
 try {
@@ -52,7 +46,7 @@ try {
     console.error(`audit: ${report.missing.length} gaps, running warmup`)
     const warmup = spawnSync(
       'bun',
-      ['run', 'scripts/warmup-prices.ts', '--start', String(start), '--end', String(end), '--quiet'],
+      ['run', 'scripts/warmup-prices.ts', '--start', String(start), '--end', String(end), '--graph', '--quiet'],
       {
         stdio: ['inherit', 2, 'inherit']
       }
@@ -69,7 +63,7 @@ try {
   if (auditFailed(report, missingRpc, warmupFailed)) {
     const byToken: Record<string, number> = {}
     for (const tuple of missing) {
-      const key = `${tuple.chain}:${tuple.token} ${tuple.kind}/${tuple.source}`
+      const key = `${tuple.chain}:${tuple.token} ${tuple.kind}`
       byToken[key] = (byToken[key] ?? 0) + 1
     }
     for (const [key, days] of Object.entries(byToken)) console.error(`audit: missing ${key} days=${days}`)
