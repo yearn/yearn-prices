@@ -23,6 +23,7 @@ import { config as loadEnv } from 'dotenv'
 loadEnv()
 
 import { createPool, insertTokenPrices, type Queryable } from '../src/db'
+import { plausibleWrites, storedCurveLpGuard } from '../src/prices/curve-lp-guard'
 import { DEFI_LLAMA_TIMESTAMP_BATCH } from '../src/sources/defillama/batch'
 import { buildDefiLlamaWrites, matchPricesToRequests } from '../src/sources/defillama/match'
 import { computeRepairRatios } from '../src/sources/defillama/repair-ratio'
@@ -37,7 +38,6 @@ import {
   runInGroups,
   unixToIsoTimestamp
 } from '../src/utils'
-import { plausibleWrites, storedCurveLpGuard } from './lib/curve-lp-guard'
 import { runDayAlignmentPhase } from './lib/day-alignment-runner'
 import { KONG_URL } from './lib/kong-vaults'
 import { createOfflineDefiLlamaClient } from './lib/offline-provider'

@@ -16,6 +16,7 @@ import {
   getUnfinalizedExactTimestamps,
   insertProvisionalTokenPrices
 } from '../src/db'
+import { plausibleWrites, storedCurveLpGuard } from '../src/prices/curve-lp-guard'
 import { isRejectedPrice } from '../src/prices/rejections'
 import { DEFILLAMA_UNSUPPORTED_CHAINS } from '../src/sources'
 import { CHAINLINK_FEEDS, createChainlinkHistoricalSource, getChainlinkFeed } from '../src/sources/chainlink'
@@ -35,7 +36,6 @@ import {
   runInGroups,
   toFetchTimestamp
 } from '../src/utils'
-import { plausibleWrites, storedCurveLpGuard } from './lib/curve-lp-guard'
 import { runGraphBackfill } from './lib/graph-backfill'
 import { fetchYearnVaults, type NormalizedVault } from './lib/kong-vaults'
 import { offlineProvider } from './lib/offline-provider'

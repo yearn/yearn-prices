@@ -8,7 +8,7 @@ import { type ReadThroughUpstream, readThrough } from './read-through'
 
 export async function handleHistorical(
   request: Request,
-  _env: Env,
+  env: Env,
   pool: Pool,
   timestampSegment: string,
   tokenKeySegment: string,
@@ -22,7 +22,7 @@ export async function handleHistorical(
   // Today is always read live from DeFiLlama /prices/current; a closed-day table miss is filled once from
   // /batchHistorical and persisted, so the next read is a table hit. Explicit-source requests stay table-only.
   // A failed upstream with nothing to serve is a 503, never a cacheable 404.
-  const result = await readThrough(pool, [{ chain, token, timestamp }], row ? [row] : [], source, upstream)
+  const result = await readThrough(pool, env, [{ chain, token, timestamp }], row ? [row] : [], source, upstream)
   const [record] = result.rows
   if (!record) {
     if (result.upstreamFailed) {

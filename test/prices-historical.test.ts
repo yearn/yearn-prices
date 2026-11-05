@@ -13,6 +13,7 @@ vi.mock('../src/db', async (importOriginal) => ({
 }))
 
 const RAW_ADDR = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
+const CHECKSUM_ADDR = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'
 const TOKEN_KEY = `ethereum:${RAW_ADDR}`
 const ENV: Env = { DATABASE_URL: 'postgres://x' }
 const TIMESTAMP = 1695254399
@@ -139,15 +140,23 @@ describe('handleHistorical', () => {
       })
     const todayRequest = (source?: string) =>
       new Request(`https://svc/api/prices/historical/${today}/${TOKEN_KEY}${source ? `?source=${source}` : ''}`)
-    const tableRow = (timestamp: number, price: string) => ({
+    const tableRow = (timestamp: number, price: string, source = 'defillama') => ({
       chain: 'ethereum',
       token: RAW_ADDR,
       timestamp: new Date(timestamp * 1000),
       price,
       symbol: 'WETH',
       confidence: '0.9',
-      source: 'defillama'
+      source
     })
+    const lpPool = (rows: unknown[], isCurveLp: boolean): Pool =>
+      ({
+        query: vi.fn(async (sql: string) =>
+          String(sql).includes("tp.source = 'curve'")
+            ? { rows: isCurveLp ? [{ chain: 'ethereum', token: CHECKSUM_ADDR }] : [] }
+            : { rows }
+        )
+      }) as unknown as Pool
     const insertCalls = (db: Pool) =>
       vi
         .mocked(db.query)
@@ -176,6 +185,76 @@ describe('handleHistorical', () => {
           [TOKEN_KEY]: { price: 2425.5, symbol: 'WETH', timestamp: today, confidence: 0.99, source: 'defillama' }
         }
       })
+    })
+
+    it('serves the curve row and writes nothing when the live quote for a known Curve LP is implausible', async () => {
+      const guard = vi.fn(async () => false)
+      const db = lpPool([tableRow(today, '1', 'curve')], true)
+      const response = await handleHistorical(
+        todayRequest(),
+        ENV,
+        db,
+        String(today),
+        TOKEN_KEY,
+        upstreamOf({ current: currentWith(), guard })
+      )
+
+      expect(response.status).toBe(200)
+      expect(guard).toHaveBeenCalledTimes(1)
+      expect(guard).toHaveBeenCalledWith(1, CHECKSUM_ADDR, today, 2425.5)
+      expect(insertCalls(db)).toHaveLength(0)
+      await expect(response.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 1, source: 'curve' } } })
+    })
+
+    it('serves and writes the live quote for a known Curve LP when the guard accepts it', async () => {
+      const guard = vi.fn(async () => true)
+      const db = lpPool([tableRow(today, '1', 'curve')], true)
+      const response = await handleHistorical(
+        todayRequest(),
+        ENV,
+        db,
+        String(today),
+        TOKEN_KEY,
+        upstreamOf({ current: currentWith(), guard })
+      )
+
+      expect(guard).toHaveBeenCalledTimes(1)
+      expect(insertCalls(db)).toHaveLength(1)
+      await expect(response.json()).resolves.toMatchObject({
+        coins: { [TOKEN_KEY]: { price: 2425.5, source: 'defillama' } }
+      })
+    })
+
+    it('never calls the guard when the token has no curve row', async () => {
+      const guard = vi.fn(async () => false)
+      const db = lpPool([tableRow(today, '1')], false)
+      const response = await handleHistorical(
+        todayRequest(),
+        ENV,
+        db,
+        String(today),
+        TOKEN_KEY,
+        upstreamOf({ current: currentWith(), guard })
+      )
+
+      expect(guard).not.toHaveBeenCalled()
+      expect(insertCalls(db)).toHaveLength(1)
+      await expect(response.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 2425.5 } } })
+    })
+
+    it('does not write or serve an implausible closed-day quote for a known Curve LP and returns NOT_FOUND', async () => {
+      const db = lpPool([], true)
+      await expect(
+        handleHistorical(
+          request(),
+          ENV,
+          db,
+          String(TIMESTAMP),
+          TOKEN_KEY,
+          upstreamOf({ historical: closedWith(), guard: vi.fn(async () => false) })
+        )
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' })
+      expect(insertCalls(db)).toHaveLength(0)
     })
 
     it('serves today live on a table miss', async () => {

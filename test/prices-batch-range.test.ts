@@ -24,10 +24,14 @@ function url(path: string, coins: unknown, extra = '') {
   return new Request(`https://svc/api/prices/${path}?coins=${encodeURIComponent(JSON.stringify(coins))}${extra}`)
 }
 
-function row(timestamp: number, price: string, source = 'defillama') {
+const OTHER_ADDR = '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599'
+const OTHER_KEY = `ethereum:${OTHER_ADDR}`
+const OTHER_CURRENT_KEY = `ethereum:${OTHER_ADDR.toLowerCase()}`
+
+function row(timestamp: number, price: string, source = 'defillama', token = CHECKSUM_ADDR) {
   return {
     chain: 'ethereum',
-    token: CHECKSUM_ADDR,
+    token,
     timestamp: new Date(timestamp * 1000),
     price,
     symbol: 'WETH',
@@ -71,6 +75,25 @@ function inserts(queryPool: Pool) {
 function pool(rows: unknown[]): Pool {
   return { query: vi.fn(async () => ({ rows, rowCount: rows.length })) } as unknown as Pool
 }
+
+function curveLpPool(rows: unknown[], lpTokens: string[]): Pool {
+  return {
+    query: vi.fn(async (sql: string) =>
+      String(sql).includes("tp.source = 'curve'")
+        ? { rows: lpTokens.map((token) => ({ chain: 'ethereum', token })) }
+        : { rows, rowCount: rows.length }
+    )
+  } as unknown as Pool
+}
+
+const bothLive = () =>
+  vi.fn(
+    async () =>
+      new Map([
+        [CURRENT_KEY, LIVE],
+        [OTHER_CURRENT_KEY, { ...LIVE, price: 60000, symbol: 'WBTC' }]
+      ])
+  )
 
 describe('handleBatchHistorical', () => {
   let fetchMock: ReturnType<typeof vi.fn>
@@ -249,6 +272,49 @@ describe('handleBatchHistorical', () => {
     })
   })
 
+  it('drops only the implausible Curve LP pair and still serves and writes the others', async () => {
+    const guard = vi.fn(async () => false)
+    const queryPool = curveLpPool([row(TODAY, '1', 'curve'), row(TODAY, '2', 'defillama', OTHER_ADDR)], [CHECKSUM_ADDR])
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [CHECKSUM_KEY]: [TODAY], [OTHER_KEY]: [TODAY] }),
+      ENV,
+      queryPool,
+      upstreamOf({ current: bothLive(), guard })
+    )
+
+    expect(guard).toHaveBeenCalledTimes(1)
+    expect(inserts(queryPool)).toHaveLength(1)
+    await expect(response.json()).resolves.toMatchObject({
+      coins: {
+        [CHECKSUM_KEY]: { prices: [{ timestamp: TODAY, price: 1, source: 'curve' }] },
+        [OTHER_KEY]: { prices: [{ timestamp: TODAY, price: 60000, source: 'defillama' }] }
+      }
+    })
+  })
+
+  it('serves every stored row with no-store when one today pair has no row and the live call throws', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const response = await handleBatchHistorical(
+      url('batchHistorical', { [CHECKSUM_KEY]: [DAY_ONE, TODAY], [OTHER_KEY]: [TODAY] }),
+      ENV,
+      pool([row(DAY_ONE, '1'), row(TODAY, '2', 'defillama', OTHER_ADDR)]),
+      upstreamOf({
+        current: vi.fn(async () => {
+          throw new Error('429')
+        })
+      })
+    )
+
+    expect(response.status).toBe(200)
+    expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_NO_STORE)
+    await expect(response.json()).resolves.toMatchObject({
+      coins: {
+        [CHECKSUM_KEY]: { prices: [{ timestamp: DAY_ONE, price: 1 }] },
+        [OTHER_KEY]: { prices: [{ timestamp: TODAY, price: 2 }] }
+      }
+    })
+  })
+
   it('does not call upstream for closed days in the table or an explicit source', async () => {
     const upstream = upstreamOf({ current: currentLive(), historical: closedAt() })
     await handleBatchHistorical(
@@ -409,6 +475,45 @@ describe('handleRangeHistorical', () => {
       upstreamOf({ historical: vi.fn(async () => ({ prices: [], failed: true })) })
     )
     expect(failed.headers.get('cache-control')).toBe(CACHE_CONTROL_NO_STORE)
+  })
+
+  it('drops only the implausible Curve LP pair in a range and still serves and writes the others', async () => {
+    const guard = vi.fn(async () => false)
+    const queryPool = curveLpPool([row(TODAY, '1', 'curve'), row(TODAY, '2', 'defillama', OTHER_ADDR)], [CHECKSUM_ADDR])
+    const response = await handleRangeHistorical(
+      url('rangeHistorical', { [CHECKSUM_KEY]: [TODAY, TODAY], [OTHER_KEY]: [TODAY, TODAY] }),
+      ENV,
+      queryPool,
+      upstreamOf({ current: bothLive(), guard })
+    )
+
+    expect(guard).toHaveBeenCalledTimes(1)
+    expect(inserts(queryPool)).toHaveLength(1)
+    await expect(response.json()).resolves.toMatchObject({
+      coins: {
+        [CHECKSUM_KEY]: { prices: [{ timestamp: TODAY, price: 1, source: 'curve' }] },
+        [OTHER_KEY]: { prices: [{ timestamp: TODAY, price: 60000, source: 'defillama' }] }
+      }
+    })
+  })
+
+  it('fetches today live for a range ending after today and never fetches the future days', async () => {
+    const upstream = upstreamOf({ current: currentLive(), historical: closedAt() })
+    const queryPool = pool([])
+    const response = await handleRangeHistorical(
+      url('rangeHistorical', { [`ethereum:${RAW_ADDR}`]: [TODAY, TODAY + 2 * 86_400] }),
+      ENV,
+      queryPool,
+      upstream
+    )
+
+    expect(upstream.current).toHaveBeenCalledTimes(1)
+    expect(upstream.current.mock.calls[0][0]).toEqual([{ chain: 'ethereum', token: CHECKSUM_ADDR }])
+    expect(upstream.historical).not.toHaveBeenCalled()
+    expect(inserts(queryPool)).toHaveLength(1)
+    await expect(response.json()).resolves.toMatchObject({
+      coins: { [`ethereum:${RAW_ADDR}`]: { prices: [{ timestamp: TODAY, price: 2425.5 }] } }
+    })
   })
 
   it('does not call upstream for a range of closed days in the table', async () => {

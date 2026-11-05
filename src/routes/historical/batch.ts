@@ -9,7 +9,7 @@ import { buildOriginalKeyMap, groupRowsByToken, toExactKey } from './shared'
 
 export async function handleBatchHistorical(
   request: Request,
-  _env: Env,
+  env: Env,
   pool: Pool,
   upstream?: ReadThroughUpstream
 ): Promise<Response> {
@@ -20,6 +20,7 @@ export async function handleBatchHistorical(
   const originalKeyMap = buildOriginalKeyMap(rawCoins!)
   const { rows, upstreamFailed } = await readThrough(
     pool,
+    env,
     requests,
     await getBatchHistoricalPrices(pool, requests, source),
     source,

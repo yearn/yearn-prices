@@ -9,7 +9,7 @@ import { buildOriginalKeyMap, groupRowsByToken, toExactKey } from './shared'
 
 export async function handleRangeHistorical(
   request: Request,
-  _env: Env,
+  env: Env,
   pool: Pool,
   upstream?: ReadThroughUpstream
 ): Promise<Response> {
@@ -23,6 +23,7 @@ export async function handleRangeHistorical(
   )
   const { rows, upstreamFailed } = await readThrough(
     pool,
+    env,
     expectedRequests,
     await getRangeHistoricalPrices(pool, requests, source),
     source,
