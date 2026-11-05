@@ -141,7 +141,7 @@ export async function readThrough(
     const price = live.get(key)
     if (!price) continue
     const observed = stored.get(exactKey(chain, token, todayEnd))?.observedTimestamp
-    if (observed != null && observed >= price.timestamp) continue
+    if (observed != null && observed > price.timestamp) continue
     todayRecords.push(toRecord(chain, token, todayEnd, price, '/prices/current'))
   }
 

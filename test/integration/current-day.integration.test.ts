@@ -87,10 +87,10 @@ describe('current-day historical lookups (incident regression)', () => {
     expect(stored.rows).toEqual([{ finalized: false, price: '2400.5', observation_endpoint: '/prices/current' }])
   })
 
-  it('fills a closed-day miss once, persists it finalized and serves the next read from the table', async () => {
-    const yesterdayNoon = nowUnix() - 86_400
-    const dayEnd = normalizeToEndOfDay(yesterdayNoon)
-    fetchMock.mockResolvedValueOnce(
+  it('stores an unguarded closed-day fill provisional, so the next read fetches again', async () => {
+    const closedDay = nowUnix() - 3 * 86_400
+    const dayEnd = normalizeToEndOfDay(closedDay)
+    fetchMock.mockImplementation(async () =>
       Response.json({
         coins: {
           [TOKEN_KEY]: { symbol: 'WETH', prices: [{ timestamp: dayEnd - 600, price: 3300.5, confidence: 0.98 }] }
@@ -98,15 +98,15 @@ describe('current-day historical lookups (incident regression)', () => {
       })
     )
 
-    const first = await handleHistorical(request(), ENV, neonPool(), String(yesterdayNoon), TOKEN_KEY)
-    const second = await handleHistorical(request(), ENV, neonPool(), String(yesterdayNoon), TOKEN_KEY)
+    const first = await handleHistorical(request(), ENV, neonPool(), String(closedDay), TOKEN_KEY)
+    const second = await handleHistorical(request(), ENV, neonPool(), String(closedDay), TOKEN_KEY)
 
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(String(fetchMock.mock.calls[0][0])).toContain('https://coins.llama.fi/batchHistorical')
     await expect(first.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 3300.5, timestamp: dayEnd } } })
     await expect(second.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 3300.5, timestamp: dayEnd } } })
     const stored = await pool.query('SELECT finalized, price, observation_endpoint FROM token_prices')
-    expect(stored.rows).toEqual([{ finalized: true, price: '3300.5', observation_endpoint: '/batchHistorical' }])
+    expect(stored.rows).toEqual([{ finalized: false, price: '3300.5', observation_endpoint: '/batchHistorical' }])
   })
 
   it('serves a past-day block from the end-of-day keyed row without any upstream call', async () => {
