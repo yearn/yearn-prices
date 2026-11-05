@@ -355,6 +355,7 @@ describe('cache-control policies', () => {
     expect(cacheControlForHistorical(PAST)).toBe(CACHE_CONTROL_HISTORICAL)
     expect(cacheControlForHistorical(PAST)).toBe('public, s-maxage=2592000, max-age=3600')
     expect(cacheControlForHistorical(TODAY)).toBe(CACHE_CONTROL_TODAY)
+    expect(CACHE_CONTROL_TODAY).toBe('public, s-maxage=60, max-age=60, stale-while-revalidate=300')
   })
 
   it('keeps the just-closed day short-lived while it may still be provisional', () => {
