@@ -18,6 +18,19 @@ import {
   parseTokenKey
 } from './utils'
 
+// ponytail: per-isolate throttle; an upstream outage still sends one event per isolate per minute.
+const TRANSIENT_REPORT_INTERVAL_MS = 60_000
+let lastTransientReport = Number.NEGATIVE_INFINITY
+
+function reportsToSentry(error: ApiError, historical: boolean): boolean {
+  if (error.status < 500) return false
+  if (error.code !== 'UNAVAILABLE' || !historical) return true
+  const now = Date.now()
+  if (now - lastTransientReport < TRANSIENT_REPORT_INTERVAL_MS) return false
+  lastTransientReport = now
+  return true
+}
+
 function logRequest(request: Request, clientId: string | null, extra?: Record<string, unknown>): void {
   console.info(
     JSON.stringify({
@@ -138,7 +151,7 @@ const handler = {
           error.code === 'NOT_FOUND' && notFoundCacheable
             ? withCors(notFoundErrorHeaders())
             : withCors({ 'cache-control': CACHE_CONTROL_NO_STORE })
-        if (error.status >= 500) Sentry.captureException(error)
+        if (reportsToSentry(error, notFoundCacheable)) Sentry.captureException(error)
         return jsonError(error, headers)
       }
 

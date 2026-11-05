@@ -15,6 +15,9 @@ const UPSTREAM_TIMEOUT_MS = 2_500
 // ponytail: 200 closed-day misses per request bounds subrequests and latency;
 // the rest stay missing until warmup or a later read fills them.
 export const MAX_READ_THROUGH_TARGETS = 200
+// ponytail: at most 8 guard checks (one lp-guard wave) per read, each a pool discovery, a block estimate,
+// a get_virtual_price read and one DB read; a known Curve LP's quotes past the cap stay missing for a later read.
+export const MAX_GUARDED_RECORDS = 8
 
 export interface ReadThroughUpstream {
   current: (targets: CurrentPriceTarget[]) => Promise<Map<string, HistoricalPriceResult>>
@@ -73,7 +76,7 @@ export async function readThrough(
   if (source) return { rows, upstreamFailed: false }
 
   const todayEnd = currentUtcDayEnd()
-  const stored = new Set(rows.map((row) => exactKey(row.chain, row.token, row.timestamp)))
+  const stored = new Map(rows.map((row) => [exactKey(row.chain, row.token, row.timestamp), row]))
   const todayTargets = new Map<string, CurrentPriceTarget>()
   const missing = new Map<string, HistoricalRequestTuple>()
   for (const request of requests) {
@@ -137,6 +140,8 @@ export async function readThrough(
   for (const [key, { chain, token }] of todayTargets) {
     const price = live.get(key)
     if (!price) continue
+    const observed = stored.get(exactKey(chain, token, todayEnd))?.observedTimestamp
+    if (observed != null && observed >= price.timestamp) continue
     todayRecords.push(toRecord(chain, token, todayEnd, price, '/prices/current'))
   }
 
@@ -147,22 +152,22 @@ export async function readThrough(
     closedRecords.push(toRecord(request.chain, request.token, request.timestamp, price, '/batchHistorical'))
   }
 
-  // ponytail: only known Curve LPs (an accepted `curve` row exists) are guarded, to avoid an RPC per fetched token;
-  // LPs never priced by the curve stage pass unguarded. Upgrade: guard every DeFiLlama write.
+  // ponytail: only known Curve LPs (an accepted `curve` row exists) are guarded, to avoid an RPC per fetched token.
+  // Unguarded closed days are stored provisional, so warmup/backfill re-resolve them through the guard.
   const lps = await knownCurveLps(pool, [...todayRecords, ...closedRecords])
-  const guarded = [...todayRecords, ...closedRecords].filter((record) => lps.has(lpKey(record.chain, record.token)))
-  const dropped = new Set<object>()
-  if (guarded.length > 0) {
-    const { rejected } = await plausibleWrites(guarded, upstream.guard ?? storedCurveLpGuard(pool, env))
+  const candidates = [...todayRecords, ...closedRecords].filter((record) => lps.has(lpKey(record.chain, record.token)))
+  const checked = candidates.slice(0, MAX_GUARDED_RECORDS)
+  const guarded = new Set<object>(checked)
+  const dropped = new Set<object>(candidates.slice(MAX_GUARDED_RECORDS))
+  if (checked.length > 0) {
+    const { rejected } = await plausibleWrites(checked, upstream.guard ?? storedCurveLpGuard(pool, env))
     for (const record of rejected) dropped.add(record)
   }
-  const kept = (records: ExactPriceRecord[]) => records.filter((record) => !dropped.has(record))
-  const fetched = [...kept(todayRecords), ...kept(closedRecords)]
-  const writes: TokenPriceWrite[] = kept(todayRecords).map((record) => ({
-    ...record,
-    finalizationIntent: 'provisional'
-  }))
-  const closedWrites = kept(closedRecords)
+  const fetched = [...todayRecords, ...closedRecords].filter((record) => !dropped.has(record))
+  const closedWrites = closedRecords.filter((record) => guarded.has(record) && !dropped.has(record))
+  const writes: TokenPriceWrite[] = fetched
+    .filter((record) => !closedWrites.includes(record))
+    .map((record) => ({ ...record, finalizationIntent: 'provisional' }))
   const replaced = new Set(fetched.map((record) => exactKey(record.chain, record.token, record.timestamp)))
 
   try {

@@ -1,11 +1,17 @@
 import type { Pool } from '@neondatabase/serverless'
+import * as Sentry from '@sentry/cloudflare'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CACHE_CONTROL_HISTORICAL, CACHE_CONTROL_TODAY } from '../src/cache'
 import worker from '../src/index'
 import { handleHistorical } from '../src/routes/historical/exact'
-import type { ReadThroughUpstream } from '../src/routes/historical/read-through'
+import { MAX_GUARDED_RECORDS, type ReadThroughUpstream, readThrough } from '../src/routes/historical/read-through'
 import type { Env } from '../src/types'
 import { normalizeToEndOfDay } from '../src/utils'
+
+vi.mock('@sentry/cloudflare', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@sentry/cloudflare')>()),
+  captureException: vi.fn()
+}))
 
 vi.mock('../src/db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/db')>()),
@@ -337,7 +343,7 @@ describe('handleHistorical', () => {
       await expect(response.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 123.45 } } })
     })
 
-    it('fills a closed-day miss from one historical call, finalizes it and serves the requested day', async () => {
+    it('fills a closed-day miss from one historical call, stores it provisional and serves the requested day', async () => {
       const upstream = upstreamOf({ historical: closedWith() })
       const db = pool([])
       const response = await handleHistorical(request(), ENV, db, String(TIMESTAMP), TOKEN_KEY, upstream)
@@ -350,13 +356,96 @@ describe('handleHistorical', () => {
       const [call] = insertCalls(db)
       expect(call[1]).toContain('/batchHistorical')
       expect(call[1]).toContain(1800.25)
-      expect(call[1]).toContain(true)
+      expect(call[1]).toContain(false)
+      expect(call[1]).not.toContain(true)
       expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_HISTORICAL)
       await expect(response.json()).resolves.toEqual({
         coins: {
           [TOKEN_KEY]: { price: 1800.25, symbol: 'WETH', timestamp: TIMESTAMP, confidence: 0.97, source: 'defillama' }
         }
       })
+    })
+
+    it('finalizes a closed-day quote for a known Curve LP only after the guard accepts it', async () => {
+      const guard = vi.fn(async () => true)
+      const db = lpPool([], true)
+      await handleHistorical(
+        request(),
+        ENV,
+        db,
+        String(TIMESTAMP),
+        TOKEN_KEY,
+        upstreamOf({ historical: closedWith(), guard })
+      )
+
+      expect(guard).toHaveBeenCalledTimes(1)
+      const [call] = insertCalls(db)
+      expect(call[1]).toContain(true)
+      expect(call[1]).not.toContain(false)
+    })
+
+    it('bounds guard checks per read and drops the unchecked Curve LP quotes', async () => {
+      const guard = vi.fn(async () => true)
+      const days = Array.from({ length: MAX_GUARDED_RECORDS + 5 }, (_, i) => TIMESTAMP + i * 86_400)
+      const result = await readThrough(
+        lpPool([], true),
+        ENV,
+        days.map((timestamp) => ({ chain: 'ethereum', token: CHECKSUM_ADDR, timestamp })),
+        [],
+        undefined,
+        upstreamOf({ historical: closedWith(), guard })
+      )
+
+      expect(guard).toHaveBeenCalledTimes(MAX_GUARDED_RECORDS)
+      expect(result.rows.map((row) => row.timestamp)).toEqual(days.slice(0, MAX_GUARDED_RECORDS))
+    })
+
+    it('keeps a stored today row observed after the live quote', async () => {
+      const db = pool([{ ...tableRow(today, '1'), observed_at: new Date((nowSeconds() - 5) * 1000) }])
+      const response = await handleHistorical(
+        todayRequest(),
+        ENV,
+        db,
+        String(today),
+        TOKEN_KEY,
+        upstreamOf({ current: currentWith() })
+      )
+
+      expect(insertCalls(db)).toHaveLength(0)
+      await expect(response.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 1 } } })
+    })
+
+    it.each([
+      ['today', () => today, () => todayRequest()],
+      ['a closed day', () => TIMESTAMP, () => request()]
+    ])(
+      'returns UNAVAILABLE, not NOT_FOUND, when DeFiLlama answers %s with a malformed envelope',
+      async (_, ts, req) => {
+        vi.spyOn(console, 'error').mockImplementation(() => {})
+        fetchMock.mockImplementation(async () => Response.json({}))
+        await expect(handleHistorical(req(), ENV, pool([]), String(ts()), TOKEN_KEY)).rejects.toMatchObject({
+          code: 'UNAVAILABLE'
+        })
+        expect(fetchMock).toHaveBeenCalled()
+      }
+    )
+
+    it('reports a sustained upstream failure to Sentry once, still uncached', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {})
+      vi.stubGlobal('caches', { default: { match: async () => undefined, put: async () => {} } })
+      fetchMock.mockImplementation(async () => new Response('slow down', { status: 429 }))
+      const capture = vi.mocked(Sentry.captureException)
+      capture.mockClear()
+      for (let i = 0; i < 3; i++) {
+        const response = await worker.fetch(
+          new Request(todayRequest().url, { headers: { authorization: 'Bearer k' } }),
+          { ...ENV, API_KEY_TEST: 'k' } as unknown as Env,
+          { waitUntil: vi.fn() } as unknown as ExecutionContext
+        )
+        expect(response.status).toBe(503)
+        expect(response.headers.get('cache-control')).toBe('no-store')
+      }
+      expect(capture).toHaveBeenCalledTimes(1)
     })
 
     it('still serves the price when persisting the read-through fails', async () => {

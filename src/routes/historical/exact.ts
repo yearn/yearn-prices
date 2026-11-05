@@ -19,8 +19,9 @@ export async function handleHistorical(
   const source = parseOptionalSource(new URL(request.url).searchParams.get('source'))
 
   const row = await getExactHistoricalPrice(pool, { chain, token, timestamp }, source)
-  // Today is always read live from DeFiLlama /prices/current; a closed-day table miss is filled once from
-  // /batchHistorical and persisted, so the next read is a table hit. Explicit-source requests stay table-only.
+  // Today is always read live from DeFiLlama /prices/current; a closed-day table miss is filled from
+  // /batchHistorical and persisted (finalized only once the Curve LP guard checked it, else provisional for
+  // warmup/backfill to finalize). Explicit-source requests stay table-only.
   // A failed upstream with nothing to serve is a 503, never a cacheable 404.
   const result = await readThrough(pool, env, [{ chain, token, timestamp }], row ? [row] : [], source, upstream)
   const [record] = result.rows

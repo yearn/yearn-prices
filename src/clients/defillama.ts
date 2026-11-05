@@ -41,7 +41,7 @@ export class DefiLlamaClient {
   ): Promise<DefiLlamaHistoricalResponse> {
     const joinedCoins = coins.join(',')
     const url = `${BASE_URL}/prices/historical/${timestamp}/${joinedCoins}?searchWidth=${encodeURIComponent(searchWidth)}`
-    return this.fetchJson<DefiLlamaHistoricalResponse>(url)
+    return this.fetchCoins<DefiLlamaHistoricalResponse>(url)
   }
 
   getBatchHistorical(
@@ -51,15 +51,15 @@ export class DefiLlamaClient {
     const url = new URL(`${BASE_URL}/batchHistorical`)
     url.searchParams.set('coins', JSON.stringify(coins))
     url.searchParams.set('searchWidth', searchWidth)
-    return this.fetchJson<DefiLlamaBatchResponse>(url.toString())
+    return this.fetchCoins<DefiLlamaBatchResponse>(url.toString())
   }
 
   getCurrent(coins: string[]): Promise<DefiLlamaHistoricalResponse> {
-    return this.fetchJson<DefiLlamaHistoricalResponse>(`${BASE_URL}/prices/current/${coins.join(',')}`)
+    return this.fetchCoins<DefiLlamaHistoricalResponse>(`${BASE_URL}/prices/current/${coins.join(',')}`)
   }
 
   getFirst(coins: string[]): Promise<DefiLlamaHistoricalResponse> {
-    return this.fetchJson<DefiLlamaHistoricalResponse>(`${BASE_URL}/prices/first/${coins.join(',')}`)
+    return this.fetchCoins<DefiLlamaHistoricalResponse>(`${BASE_URL}/prices/first/${coins.join(',')}`)
   }
 
   getChart(coins: string[], options: DefiLlamaChartOptions): Promise<DefiLlamaChartResponse> {
@@ -82,6 +82,15 @@ export class DefiLlamaClient {
     url.searchParams.set('period', options.period)
     url.searchParams.set('searchWidth', options.searchWidth ?? DEFI_LLAMA_SEARCH_WIDTH)
     return this.fetchJson<DefiLlamaChartResponse>(url.toString())
+  }
+
+  private async fetchCoins<T extends { coins: unknown }>(url: string): Promise<T> {
+    const body = await this.fetchJson<T | null>(url)
+    const coins = body?.coins
+    if (typeof coins !== 'object' || coins === null || Array.isArray(coins)) {
+      throw new ApiError('UNAVAILABLE', 'Malformed DeFiLlama response envelope')
+    }
+    return body as T
   }
 
   private fetchJson<T>(url: string): Promise<T> {

@@ -1,13 +1,15 @@
-import type { DefiLlamaClient } from '../../clients/defillama'
+import { DEFI_LLAMA_SEARCH_WIDTH_SECONDS, type DefiLlamaClient } from '../../clients/defillama'
 import { isRejectedPrice } from '../../prices/rejections'
 import { chainNameToId } from '../../utils/chains'
 import { chunk } from '../../utils/collections'
-import { currentUtcDayEnd } from '../../utils/time'
+import { currentUtcDayEnd, nowUnix } from '../../utils/time'
 import type { HistoricalPriceResult } from '../types'
 import { toHistoricalPrice } from './coin'
 import { DEFILLAMA_UNSUPPORTED_CHAINS } from './historical'
 
 export const DEFI_LLAMA_CURRENT_BATCH = 50
+export const CURRENT_MAX_AGE_SECONDS = DEFI_LLAMA_SEARCH_WIDTH_SECONDS
+export const CURRENT_MAX_FUTURE_SKEW_SECONDS = 5 * 60
 
 export interface CurrentPriceTarget {
   chain: string
@@ -22,7 +24,8 @@ export async function fetchCurrentPrices(
   client: DefiLlamaClient,
   targets: CurrentPriceTarget[]
 ): Promise<Map<string, HistoricalPriceResult>> {
-  const todayEnd = currentUtcDayEnd()
+  const now = nowUnix()
+  const todayEnd = currentUtcDayEnd(now)
   const coinKeys = new Set<string>()
   for (const { chain, token } of targets) {
     const chainId = chainNameToId(chain)
@@ -44,7 +47,8 @@ export async function fetchCurrentPrices(
             value > 0 &&
             typeof time === 'number' &&
             Number.isSafeInteger(time) &&
-            time > 0
+            now - time <= CURRENT_MAX_AGE_SECONDS &&
+            time - now <= CURRENT_MAX_FUTURE_SKEW_SECONDS
         )
         if (price) prices.set(key, price)
       }
