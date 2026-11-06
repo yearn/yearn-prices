@@ -155,6 +155,7 @@ export const tokenPrices = pgTable(
       table.token.asc().nullsLast(),
       table.timestamp.asc().nullsLast()
     ),
+    index('idx_token_prices_lower_token').using('btree', table.chain, sql`lower(${table.token})`, table.timestamp),
     primaryKey({ columns: [table.token, table.timestamp, table.source, table.chain], name: 'token_prices_pkey' }),
     check('token_prices_price_finite_positive', sql`price > 0 AND price::text NOT IN ('NaN', 'Infinity', '-Infinity')`)
   ]

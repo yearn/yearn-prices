@@ -124,20 +124,20 @@ export async function processClaims(
     signal: options.signal
   })
   const groupSize = Math.max(1, Math.min(25, options.concurrency * 5))
-  for (let offset = 0; offset < claims.length; offset += groupSize) {
-    const group = claims.slice(offset, offset + groupSize)
+  const groups: RepairLease[][] = []
+  for (let offset = 0; offset < claims.length; offset += groupSize)
+    groups.push(claims.slice(offset, offset + groupSize))
+  let evidenceIndex = 0
+  while (groups.length > 0) {
+    const group = groups.shift()!
     if (options.signal.aborted || Date.now() >= options.deadline) {
-      for (const claim of group) {
-        await releaseRepairLease(db, claim)
-        metrics.deferred += 1
-      }
-      for (const claim of claims.slice(offset + groupSize)) {
+      for (const claim of [group, ...groups].flat()) {
         await releaseRepairLease(db, claim)
         metrics.deferred += 1
       }
       break
     }
-    const evidence = join(options.evidenceDir, `${Date.now()}-${offset}.jsonl`)
+    const evidence = join(options.evidenceDir, `${Date.now()}-${evidenceIndex++}.jsonl`)
     const manifest = parseManifest(
       JSON.stringify({
         version: 1,
@@ -161,6 +161,12 @@ export async function processClaims(
       outcomes = readOutcomes(evidence)
     } catch (error) {
       graphError = error
+    }
+    // One throw covers the whole group. Bisect to single-target groups so only
+    // the target that fails is charged an attempt.
+    if (graphError && group.length > 1 && !options.signal.aborted && Date.now() < options.deadline) {
+      groups.unshift(...group.map((claim) => [claim]))
+      continue
     }
     let finalized = new Set<string>()
     let finalizedError: unknown = null

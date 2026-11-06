@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   claimRepairQueue,
   enqueueRepairTargets,
+  MAX_INVALID_ATTEMPTS,
   type RepairLease,
   type RepairQueueDb,
   readFinalizedRepairKeys,
@@ -45,23 +46,40 @@ describe('historical repair queue', () => {
       enqueueRepairTargets(database, [{ chainId: 1, token: TOKEN, timestamp: DAY }], DAY + 10)
     ).resolves.toBe(1)
     const sql = String(database.query.mock.calls[1][0])
-    expect(sql).toContain('ON CONFLICT (token, "timestamp", chain_id) DO UPDATE')
-    for (const column of [
-      'completed_at',
-      'attempts',
-      'next_attempt_at',
-      'lease_owner',
-      'lease_token',
-      'lease_expires_at',
-      'last_outcome',
-      'last_error'
-    ]) {
-      expect(sql).toMatch(
-        new RegExp(
-          `${column} = CASE WHEN historical_price_repair_queue.completed_at IS NOT NULL THEN (NULL|0|NOW\\(\\))`
-        )
-      )
+    expect(sql).toContain('ON CONFLICT (token, "timestamp", chain_id) DO UPDATE SET')
+    expect(sql).toContain('completed_at = NULL, attempts = 0, next_attempt_at = NOW()')
+    expect(sql).toContain('lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL')
+    expect(sql).toContain('last_outcome = NULL, last_error = NULL')
+    expect(sql).toMatch(
+      /WHERE historical_price_repair_queue\.completed_at IS NOT NULL AND .*last_outcome IS DISTINCT FROM 'invalid'/
+    )
+  })
+
+  it('parks an invalid target after the attempt cap instead of retrying forever', async () => {
+    const lease: RepairLease = {
+      chainId: 1,
+      token: TOKEN,
+      timestamp: DAY,
+      attempts: MAX_INVALID_ATTEMPTS - 1,
+      nextAttemptAt: DAY,
+      leaseOwner: 'worker-a',
+      leaseToken: 'lease-a',
+      leaseExpiresAt: DAY + 60,
+      lastOutcome: 'invalid',
+      lastError: null
     }
+    const parkedDb = db([{ rows: [], rowCount: 1 }])
+    await settleRepairFailure(parkedDb, lease, 'invalid', 'rejected')
+    expect(parkedDb.query.mock.calls[0][0]).toContain('completed_at = CASE WHEN $9::boolean THEN NOW() ELSE NULL END')
+    expect(parkedDb.query.mock.calls[0][1][8]).toBe(true)
+
+    const retryDb = db([{ rows: [], rowCount: 1 }])
+    await settleRepairFailure(retryDb, { ...lease, attempts: 0 }, 'invalid', 'rejected')
+    expect(retryDb.query.mock.calls[0][1][8]).toBe(false)
+
+    const transientDb = db([{ rows: [], rowCount: 1 }])
+    await settleRepairFailure(transientDb, { ...lease, attempts: 99 }, 'retryable', 'timeout')
+    expect(transientDb.query.mock.calls[0][1][8]).toBe(false)
   })
 
   it('claims due work with a lease token and skips locked rows', async () => {

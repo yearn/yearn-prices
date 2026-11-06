@@ -32,6 +32,9 @@ export interface RepairLease extends RepairQueueItem {
 const MAX_QUEUE_KEYS_PER_QUERY = 1_000
 const TRANSIENT_BACKOFF_SECONDS = [60, 300, 1_800, 7_200, 21_600, 86_400]
 const MISSING_BACKOFF_SECONDS = [300, 1_800, 10_800, 43_200, 172_800, 604_800]
+/** An invalid target is parked after this many attempts until an operator clears last_outcome. */
+export const MAX_INVALID_ATTEMPTS = 3
+const REOPENABLE_SQL = `historical_price_repair_queue.completed_at IS NOT NULL AND historical_price_repair_queue.last_outcome IS DISTINCT FROM 'invalid'`
 
 export function repairRetryDelaySeconds(outcome: RepairOutcome, attempts: number): number {
   if (!Number.isSafeInteger(attempts) || attempts < 0) throw new Error('attempts must be a non-negative integer')
@@ -165,15 +168,10 @@ export async function enqueueRepairTargets(
         INSERT INTO historical_price_repair_queue (chain_id, token, "timestamp")
         VALUES ${values.sql}
         ON CONFLICT (token, "timestamp", chain_id) DO UPDATE SET
-          completed_at = CASE WHEN historical_price_repair_queue.completed_at IS NOT NULL THEN NULL ELSE historical_price_repair_queue.completed_at END,
-          attempts = CASE WHEN historical_price_repair_queue.completed_at IS NOT NULL THEN 0 ELSE historical_price_repair_queue.attempts END,
-          next_attempt_at = CASE WHEN historical_price_repair_queue.completed_at IS NOT NULL THEN NOW() ELSE historical_price_repair_queue.next_attempt_at END,
-          lease_owner = CASE WHEN historical_price_repair_queue.completed_at IS NOT NULL THEN NULL ELSE historical_price_repair_queue.lease_owner END,
-          lease_token = CASE WHEN historical_price_repair_queue.completed_at IS NOT NULL THEN NULL ELSE historical_price_repair_queue.lease_token END,
-          lease_expires_at = CASE WHEN historical_price_repair_queue.completed_at IS NOT NULL THEN NULL ELSE historical_price_repair_queue.lease_expires_at END,
-          last_outcome = CASE WHEN historical_price_repair_queue.completed_at IS NOT NULL THEN NULL ELSE historical_price_repair_queue.last_outcome END,
-          last_error = CASE WHEN historical_price_repair_queue.completed_at IS NOT NULL THEN NULL ELSE historical_price_repair_queue.last_error END,
-          updated_at = NOW()
+          completed_at = NULL, attempts = 0, next_attempt_at = NOW(),
+          lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
+          last_outcome = NULL, last_error = NULL, updated_at = NOW()
+        WHERE ${REOPENABLE_SQL}
       `,
       values.params
     )
@@ -263,11 +261,13 @@ export async function settleRepairFailure(
 ): Promise<boolean> {
   if (!['missing', 'retryable', 'invalid'].includes(outcome)) throw new Error(`Invalid repair outcome: ${outcome}`)
   const delaySeconds = repairRetryDelaySeconds(outcome, lease.attempts)
+  const parked = outcome === 'invalid' && lease.attempts + 1 >= MAX_INVALID_ATTEMPTS
   const result = await db.query(
     `
       UPDATE historical_price_repair_queue
       SET attempts = attempts + 1,
           next_attempt_at = NOW() + ($6::double precision * INTERVAL '1 second'),
+          completed_at = CASE WHEN $9::boolean THEN NOW() ELSE NULL END,
           lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
           last_outcome = $4, last_error = $5, updated_at = NOW()
       WHERE chain_id = $1 AND token = $2 AND "timestamp" = $3::timestamptz
@@ -281,7 +281,8 @@ export async function settleRepairFailure(
       error,
       delaySeconds,
       lease.leaseOwner,
-      lease.leaseToken
+      lease.leaseToken,
+      parked
     ]
   )
   return (result.rowCount ?? 0) === 1

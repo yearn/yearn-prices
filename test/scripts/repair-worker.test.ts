@@ -92,6 +92,36 @@ describe('historical repair worker', () => {
     expect(String(database.query.mock.calls[0][0])).toContain('attempts = attempts + 1')
   })
 
+  it('bisects a failed group so only the failing target is charged an attempt', async () => {
+    const database = db()
+    const good = lease(TOKEN_A)
+    const bad = lease(TOKEN_B)
+    mocks.runGraphBackfill
+      .mockRejectedValueOnce(new Error('Missing graph root'))
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('Missing graph root'))
+    mocks.finalizedRepairKeys
+      .mockResolvedValueOnce(new Set([`1:${TOKEN_A}:${good.timestamp}`]))
+      .mockResolvedValueOnce(new Set())
+
+    const result = await processClaims(database, [good, bad], {
+      write: true,
+      deadline: Date.now() + 60_000,
+      concurrency: 1,
+      providerRps: 1,
+      evidenceDir: mkdtempSync(join(tmpdir(), 'repair-worker-')),
+      signal: new AbortController().signal
+    })
+
+    expect(result).toEqual({ completed: 1, missing: 0, unresolved: 0, invalid: 0, errors: 1, deferred: 0 })
+    expect(mocks.runGraphBackfill).toHaveBeenCalledTimes(3)
+    expect(mocks.runGraphBackfill.mock.calls[1][0].manifest.targets).toHaveLength(1)
+    expect(String(database.query.mock.calls[0][0])).toContain('completed_at = NOW()')
+    expect(database.query.mock.calls[0][1][1]).toBe(TOKEN_A)
+    expect(String(database.query.mock.calls[1][0])).toContain('attempts = attempts + 1')
+    expect(database.query.mock.calls[1][1][1]).toBe(TOKEN_B)
+  })
+
   it('releases a group when cancellation arrives after graph completion', async () => {
     const controller = new AbortController()
     const database = db()
