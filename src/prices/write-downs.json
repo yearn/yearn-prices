@@ -1,0 +1,14 @@
+[
+  {
+    "chain": 1,
+    "token": "0xc4c319e2d4d66cca4464c0c2b32c9bd23ebe784e",
+    "from": 1690736855,
+    "reason": "Curve 2023 exploit, pool depleted at block 17807228"
+  },
+  {
+    "chain": 1,
+    "token": "0xc897b98272aa23714464ea2a0bd5180f1b8c0025",
+    "from": 1691653319,
+    "reason": "Curve 2023 exploit, pool depleted at block 17883065"
+  }
+]

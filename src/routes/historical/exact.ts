@@ -2,6 +2,7 @@ import type { Pool } from '@neondatabase/serverless'
 import { cacheControlForHistorical } from '../../cache'
 import { getExactHistoricalPrice } from '../../db'
 import { ApiError, jsonResponse } from '../../http'
+import { writeDown } from '../../prices/write-downs'
 import type { Env } from '../../types'
 import { parseOptionalSource, parseTimestampSegment, parseTokenKey } from '../../utils'
 import { type ReadThroughUpstream, readThrough } from './read-through'
@@ -17,6 +18,13 @@ export async function handleHistorical(
   const timestamp = parseTimestampSegment(timestampSegment)
   const { chain, token, tokenKey } = parseTokenKey(tokenKeySegment)
   const source = parseOptionalSource(new URL(request.url).searchParams.get('source'))
+
+  const override = writeDown(chain, token, timestamp, source)
+  if (override)
+    return jsonResponse(
+      { coins: { [tokenKeySegment]: override } },
+      { headers: { 'cache-control': cacheControlForHistorical(timestamp) } }
+    )
 
   const row = await getExactHistoricalPrice(pool, { chain, token, timestamp }, source)
   // Today is always read live from DeFiLlama /prices/current; a closed-day table miss is filled from

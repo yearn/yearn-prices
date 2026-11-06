@@ -49,7 +49,7 @@ function logFailure(stage: 'current' | 'historical', error: unknown): void {
   console.error(JSON.stringify({ message: 'read-through-failed', stage, error: String(error) }))
 }
 
-async function knownCurveLps(pool: Pool, records: ExactPriceRecord[]): Promise<Set<string>> {
+export async function knownCurveLps(pool: Pool, records: { chain: string; token: string }[]): Promise<Set<string>> {
   if (records.length === 0) return new Set()
   const pairs = new Map(records.map((record) => [lpKey(record.chain, record.token), record]))
   const { rows } = await pool.query<{ chain: string; token: string }>(
@@ -63,7 +63,7 @@ async function knownCurveLps(pool: Pool, records: ExactPriceRecord[]): Promise<S
   return new Set(rows.map((row) => lpKey(row.chain, row.token)))
 }
 
-const lpKey = (chain: string, token: string) => `${chain}:${token.toLowerCase()}`
+export const lpKey = (chain: string, token: string) => `${chain}:${token.toLowerCase()}`
 
 export async function readThrough(
   pool: Pool,
