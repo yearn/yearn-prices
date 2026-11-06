@@ -22,7 +22,7 @@ new migration rather than editing this snapshot.
    requests. A target without another stored source returns the normal missing
    result. Source adapters and dependency validation also exclude these provider
    observations, so they cannot become inputs to new derived prices.
-4. The worker uses historical edge-cache revision `2026-10-quarantine-v1` for
+4. The worker uses historical edge-cache revision `2026-11-curve-write-down-v3` for
    every exact, batch and range cache key, including source-filtered combinations.
    Pre-incident Cache API entries become unreachable on deployment. New complete
    closed-day responses use `public, s-maxage=2592000, max-age=3600`.
@@ -30,7 +30,7 @@ new migration rather than editing this snapshot.
 
 Previously delivered browser or downstream immutable responses cannot be
 revoked by a worker deployment. Consumers must purge their own saved responses
-or re-fetch with `revision=2026-10-quarantine-v1` appended to the public URL,
+or re-fetch with `revision=2026-11-curve-write-down-v3` appended to the public URL,
 including batch/range and source-filtered URLs. Keep using this revision on those
 URLs while refreshing affected TVL/reference-price data. This query parameter is
 accepted by existing routes and gives downstream caches a new URL. Internal
@@ -102,3 +102,5 @@ Quarantined: both provider tokens x 112 days (224 rejections, `defillama` and
 dependent tokens derived from Optimism sUSD.
 Consumers must re-fetch with `revision=2026-11-susd-quarantine-v1`.
 Replacement comes from the Chainlink sUSD/USD feed plus graph re-derivation, never from provider rows.
+
+Write-down overrides serve depleted alETH/ETH and msETH/ETH LPs at zero from their incident cutoffs, without storing zero rows. Explicit source filters bypass overrides. Spot and historical edge keys use `2026-11-curve-write-down-v3`. Market quotes for discovered Curve pools reject zero supply and retain the 4x virtual-price bound; RPC failures remain fail-open.

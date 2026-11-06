@@ -24,7 +24,7 @@ export function buildOriginalKeyMap(raw: string): Map<string, string> {
 }
 
 export function groupRowsByToken(
-  rows: ExactPriceRecord[],
+  rows: (Omit<ExactPriceRecord, 'source'> & { source: ExactPriceRecord['source'] | 'write-down' })[],
   originalKeyMap: Map<string, string>
 ): Map<string, BatchHistoricalResponseCoin> {
   const coins = new Map<string, BatchHistoricalResponseCoin>()

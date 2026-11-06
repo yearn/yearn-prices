@@ -1,3 +1,4 @@
+import { createCurveLpGuard, type PlausibleQuote } from '../sources/defillama/lp-guard'
 import { getChainClient } from '../clients/rpc'
 import { ApiError } from '../http/errors'
 import { createEnsoSpotSource } from '../sources'
@@ -37,11 +38,36 @@ export function createSpotSources(env: Env): SpotPriceSource[] {
 }
 
 export class SpotSourceRegistry extends SourceRegistry<SpotPriceSource, [signal?: AbortSignal]> {
-  constructor(sources: SpotPriceSource[]) {
+  constructor(sources: SpotPriceSource[], guard?: PlausibleQuote, env?: Env) {
+    const plausible =
+      guard ??
+      createCurveLpGuard({
+        clientForChain: (chainId) => getChainClient(chainId, env),
+        coinPrices: async (chainId, coins) =>
+          Promise.all(
+            coins.map(async (coin) => {
+              for (const source of sources) {
+                if (!['enso', 'defillama'].includes(source.name) || !source.supports(chainId)) continue
+                const quote = await source.getSpotPrice(chainId, coin)
+                if (quote) return quote.price
+              }
+              return null
+            })
+          )
+      })
     super(
       sources,
       'spot',
-      (source, chainId, token, signal) => source.getSpotPrice(chainId, token, signal),
+      async (source, chainId, token, signal) => {
+        const price = await source.getSpotPrice(chainId, token, signal)
+        if (
+          price &&
+          (source.name === 'enso' || source.name.startsWith('defillama')) &&
+          !(await plausible(chainId, token, Math.floor(Date.now() / 1000), price.price))
+        )
+          return null
+        return price
+      },
       'No price available for this token'
     )
   }

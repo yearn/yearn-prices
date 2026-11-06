@@ -8,7 +8,7 @@ import { createSpotSources, SpotSourceRegistry } from './spot'
  * and nothing leaks into the next request.
  */
 export function spotSourceRegistry(env: Env): SpotSourceRegistry {
-  return new SpotSourceRegistry(createSpotSources(env))
+  return new SpotSourceRegistry(createSpotSources(env), undefined, env)
 }
 
 export function historicalSourceRegistry(env?: Env): HistoricalSourceRegistry {

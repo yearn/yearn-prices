@@ -1,3 +1,4 @@
+import { writeDown } from '../../prices/write-downs'
 import type { Pool } from '@neondatabase/serverless'
 import { CACHE_CONTROL_NO_STORE, cacheControlForRange } from '../../cache'
 import { getRangeHistoricalPrices } from '../../db'
@@ -21,18 +22,33 @@ export async function handleRangeHistorical(
   const expectedRequests = requests.flatMap(({ chain, token, startTimestamp, endTimestamp }) =>
     normalizedDaysInRange(startTimestamp, endTimestamp).map((timestamp) => ({ chain, token, timestamp }))
   )
+  const overrides = expectedRequests.flatMap((entry) => {
+    const price = writeDown(entry.chain, entry.token, entry.timestamp, source)
+    return price ? [{ ...entry, ...price }] : []
+  })
+  const pending = expectedRequests.filter((entry) => !writeDown(entry.chain, entry.token, entry.timestamp, source))
   const { rows, upstreamFailed } = await readThrough(
     pool,
     env,
-    expectedRequests,
-    await getRangeHistoricalPrices(pool, requests, source),
+    pending,
+    pending.length
+      ? await getRangeHistoricalPrices(
+          pool,
+          pending.map((entry) => ({ ...entry, startTimestamp: entry.timestamp, endTimestamp: entry.timestamp })),
+          source
+        )
+      : [],
     source,
     upstream
   )
 
-  const grouped = groupRowsByToken(rows, originalKeyMap)
+  const responseRows = [...rows, ...overrides]
 
-  const resolvedTimestamps = new Set(rows.map(toExactKey))
+  const grouped = groupRowsByToken(responseRows, originalKeyMap)
+
+  const resolvedTimestamps = new Set(
+    [...rows, ...overrides].map((entry) => `${entry.chain}:${entry.token}:${entry.timestamp}`)
+  )
   const allResolved = resolvedTimestamps.size === expectedRequests.length
 
   return jsonResponse(

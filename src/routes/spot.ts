@@ -1,3 +1,4 @@
+import { writeDown } from '../prices/write-downs'
 import { CACHE_CONTROL_NO_STORE, CACHE_CONTROL_SPOT } from '../cache'
 import { ApiError, ensure, errorEnvelope, jsonResponse } from '../http'
 import { type SpotSourceRegistry, spotSourceRegistry } from '../registries'
@@ -58,7 +59,13 @@ export async function handleSpot(
         const chainId = chainNameToId(req.chain)
         ensure(chainId !== undefined, 'INVALID_INPUT', `Unsupported chain: ${req.chain}`)
 
-        const spot = await resolveWithSignal(registry, chainId, req.token.toLowerCase(), controller.signal)
+        const spot =
+          writeDown(
+            chainId,
+            req.token,
+            Math.floor(Date.now() / 1000),
+            new URL(request.url).searchParams.get('source')
+          ) ?? (await resolveWithSignal(registry, chainId, req.token.toLowerCase(), controller.signal))
 
         return {
           req,

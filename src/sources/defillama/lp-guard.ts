@@ -1,4 +1,4 @@
-import { type Address, type PublicClient, parseAbi } from 'viem'
+import { type Address, type PublicClient, erc20Abi, parseAbi } from 'viem'
 import { estimateBlockByTimestamp } from '../../clients/rpc'
 import { resolveCurvePoolCoins } from '../onchain/adapters/curve'
 import { type ClientForChain, maybe } from '../onchain/context'
@@ -58,6 +58,10 @@ export function createCurveLpGuard(options: CurveLpGuardOptions): PlausibleQuote
       return true
     }
     const blockNumber = await blockForTimestamp(client, chainId, timestamp)
+    const totalSupply = await maybe(() =>
+      client.readContract({ address: token as Address, abi: erc20Abi, functionName: 'totalSupply', blockNumber })
+    )
+    if (totalSupply === 0n) return false
     const virtualPrice = await maybe(() =>
       client.readContract({ address: lp.pool, abi: virtualPriceAbi, functionName: 'get_virtual_price', blockNumber })
     )

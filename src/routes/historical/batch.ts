@@ -1,3 +1,4 @@
+import { writeDown } from '../../prices/write-downs'
 import type { Pool } from '@neondatabase/serverless'
 import { CACHE_CONTROL_NO_STORE, cacheControlForBatch } from '../../cache'
 import { getBatchHistoricalPrices } from '../../db'
@@ -18,19 +19,26 @@ export async function handleBatchHistorical(
   const rawCoins = url.searchParams.get('coins')
   const requests = parseBatchCoins(rawCoins)
   const originalKeyMap = buildOriginalKeyMap(rawCoins!)
+  const overrides = requests.flatMap((entry) => {
+    const price = writeDown(entry.chain, entry.token, entry.timestamp, source)
+    return price ? [{ ...entry, ...price }] : []
+  })
+  const pending = requests.filter((entry) => !writeDown(entry.chain, entry.token, entry.timestamp, source))
   const { rows, upstreamFailed } = await readThrough(
     pool,
     env,
-    requests,
-    await getBatchHistoricalPrices(pool, requests, source),
+    pending,
+    pending.length ? await getBatchHistoricalPrices(pool, pending, source) : [],
     source,
     upstream
   )
 
-  const coins = groupRowsByToken(rows, originalKeyMap)
+  const responseRows = [...rows, ...overrides]
+
+  const coins = groupRowsByToken(responseRows, originalKeyMap)
 
   const requestedKeyCount = new Set(requests.map(toExactKey)).size
-  const allResolved = rows.length === requestedKeyCount
+  const allResolved = responseRows.length === requestedKeyCount
   return jsonResponse(
     { coins: Object.fromEntries(coins.entries()) },
     {

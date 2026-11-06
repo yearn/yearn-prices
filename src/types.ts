@@ -83,7 +83,7 @@ export interface HistoricalResponseCoin {
 
 export interface BatchHistoricalResponseCoin {
   symbol: string | null
-  prices: PricePoint[]
+  prices: (Omit<PricePoint, 'source'> & { source: PriceSource | 'write-down' })[]
 }
 
 export interface ErrorPayload<C extends string = string> {

@@ -407,6 +407,8 @@ The store/TTL decision is delegated to the Cache API: `caches.default.put()` rea
 
 Known invalid provider observations are quarantined before source selection.
 See the [Curve LP repair runbook](historical-pricing/curve-lp-repair.md) for the
-incident targets and the public `revision=2026-10-quarantine-v1` query parameter
+incident targets and the public `revision=2026-11-curve-write-down-v3` query parameter
 consumers must use to bypass previously delivered immutable responses. The new
 cache policy cannot retroactively evict a browser response that is never re-requested.
+
+Write-down overrides serve depleted alETH/ETH and msETH/ETH LPs at zero from their incident cutoffs, without storing zero rows. Explicit source filters bypass overrides. Spot and historical edge keys use `2026-11-curve-write-down-v3`. Market quotes for discovered Curve pools reject zero supply and retain the 4x virtual-price bound; RPC failures remain fail-open.
