@@ -103,4 +103,4 @@ dependent tokens derived from Optimism sUSD.
 Consumers must re-fetch with `revision=2026-11-susd-quarantine-v1`.
 Replacement comes from the Chainlink sUSD/USD feed plus graph re-derivation, never from provider rows.
 
-Write-down overrides serve depleted alETH/ETH and msETH/ETH LPs at zero from their incident cutoffs, without storing zero rows. Explicit source filters bypass overrides. Spot and historical edge keys use `2026-11-curve-write-down-v3`. Market quotes for discovered Curve pools reject zero supply and retain the 4x virtual-price bound; RPC failures remain fail-open.
+Write-down overrides serve depleted alETH/ETH and msETH/ETH LPs at zero from their incident cutoffs, without storing zero rows. Explicit source filters bypass overrides on historical routes only; spot always applies them. Spot and historical edge keys use `2026-11-curve-write-down-v3`. Spot Enso quotes for known Curve LPs (an accepted `curve` row exists) reject zero supply and retain the 4x virtual-price bound; RPC and DB failures remain fail-open.

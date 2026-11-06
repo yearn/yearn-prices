@@ -1,10 +1,12 @@
+import type { Pool } from '@neondatabase/serverless'
 import { CACHE_CONTROL_NO_STORE, CACHE_CONTROL_SPOT } from '../cache'
 import { ApiError, ensure, errorEnvelope, jsonResponse } from '../http'
 import { writeDown } from '../prices/write-downs'
 import { type SpotSourceRegistry, spotSourceRegistry } from '../registries'
 import type { SpotPrice } from '../sources'
 import type { Env, SpotRequest, SpotResponseCoin } from '../types'
-import { chainNameToId, parseOptionalSource, parseSpotCoins } from '../utils'
+import { chainNameToId, parseSpotCoins } from '../utils'
+import { knownCurveLps, lpKey } from './historical/read-through'
 
 const SPOT_RESOLUTION_DEADLINE_MS = 15_000
 
@@ -13,7 +15,7 @@ async function resolveWithSignal(
   chainId: number,
   token: string,
   signal: AbortSignal,
-  source?: string
+  guarded: boolean
 ): Promise<SpotPrice> {
   let rejectOnAbort: ((reason: unknown) => void) | undefined
   const aborted = new Promise<never>((_, reject) => {
@@ -29,7 +31,7 @@ async function resolveWithSignal(
     if (signal.aborted) {
       return await aborted
     }
-    return await Promise.race([registry.resolve(chainId, token, signal, source), aborted])
+    return await Promise.race([registry.resolve(chainId, token, signal, guarded), aborted])
   } finally {
     signal.removeEventListener('abort', onAbort)
   }
@@ -41,10 +43,11 @@ async function resolveWithSignal(
 export async function handleSpot(
   request: Request,
   env: Env,
-  registry: SpotSourceRegistry = spotSourceRegistry(env)
+  registry: SpotSourceRegistry = spotSourceRegistry(env),
+  pool?: Pool
 ): Promise<Response> {
-  const source = parseOptionalSource(new URL(request.url).searchParams.get('source'))
   const requests = parseSpotCoins(new URL(request.url).searchParams.get('coins'))
+  const lps = pool ? await knownCurveLps(pool, requests).catch(() => new Set<string>()) : undefined
   const controller = new AbortController()
   const cancelFromRequest = () => controller.abort(request.signal.reason)
   if (request.signal.aborted) {
@@ -62,8 +65,14 @@ export async function handleSpot(
         ensure(chainId !== undefined, 'INVALID_INPUT', `Unsupported chain: ${req.chain}`)
 
         const spot =
-          writeDown(chainId, req.token, Math.floor(Date.now() / 1000), source) ??
-          (await resolveWithSignal(registry, chainId, req.token.toLowerCase(), controller.signal, source))
+          writeDown(chainId, req.token, Math.floor(Date.now() / 1000)) ??
+          (await resolveWithSignal(
+            registry,
+            chainId,
+            req.token.toLowerCase(),
+            controller.signal,
+            lps?.has(lpKey(req.chain, req.token)) ?? true
+          ))
 
         return {
           req,

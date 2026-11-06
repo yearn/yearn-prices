@@ -13,8 +13,8 @@ import { SourceRegistry } from './source-registry'
  * Prices an on-chain adapter's child tokens with the market sources only. It
  * never sees the on-chain source, so recursion cannot loop back into itself.
  */
-function marketPriceResolver(marketSources: SpotPriceSource[], env: Env) {
-  const registry = new SpotSourceRegistry(marketSources, undefined, env)
+function marketPriceResolver(marketSources: SpotPriceSource[]) {
+  const registry = new SpotSourceRegistry(marketSources, async () => true)
   return createMarketPriceResolver(marketSources, (chainId, token, _timestamp, signal) =>
     registry.resolve(chainId, token, signal)
   )
@@ -30,14 +30,14 @@ export function createSpotSources(env: Env): SpotPriceSource[] {
   return [
     ...marketSources,
     createOnchainSpotSource({
-      marketPrice: marketPriceResolver(marketSources, env),
+      marketPrice: marketPriceResolver(marketSources),
       env,
       clientForChain: (chainId) => getChainClient(chainId, env)
     })
   ]
 }
 
-export class SpotSourceRegistry extends SourceRegistry<SpotPriceSource, [signal?: AbortSignal, source?: string]> {
+export class SpotSourceRegistry extends SourceRegistry<SpotPriceSource, [signal?: AbortSignal, guarded?: boolean]> {
   constructor(sources: SpotPriceSource[], guard?: PlausibleQuote, env?: Env) {
     const timestamp = Math.floor(Date.now() / 1000)
     const blocks = new Map<number, Promise<bigint>>()
@@ -70,12 +70,11 @@ export class SpotSourceRegistry extends SourceRegistry<SpotPriceSource, [signal?
     super(
       sources,
       'spot',
-      async (source, chainId, token, signal, selectedSource) => {
-        if (selectedSource && source.name !== selectedSource) return null
-        signal?.throwIfAborted()
+      async (source, chainId, token, signal, guarded = true) => {
         const price = await source.getSpotPrice(chainId, token, signal)
         if (
           price &&
+          guarded &&
           (source.name === 'enso' || source.name.startsWith('defillama')) &&
           !(await plausible(chainId, token, timestamp, price.price))
         )
@@ -86,7 +85,7 @@ export class SpotSourceRegistry extends SourceRegistry<SpotPriceSource, [signal?
     )
   }
 
-  override resolve(chainId: number, token: string, signal?: AbortSignal, source?: string): Promise<SpotPrice> {
-    return super.resolve(chainId, token, signal, source)
+  override resolve(chainId: number, token: string, signal?: AbortSignal, guarded?: boolean): Promise<SpotPrice> {
+    return super.resolve(chainId, token, signal, guarded)
   }
 }

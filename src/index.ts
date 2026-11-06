@@ -44,17 +44,16 @@ function logRequest(request: Request, clientId: string | null, extra?: Record<st
 }
 
 async function routePriceRequest(request: Request, env: Env, pathname: string): Promise<Response> {
-  // Spot is a stateless Enso proxy — no database connection needed.
-  if (pathname === '/api/prices/spot' && request.method === 'GET') {
-    return handleSpot(request, env)
-  }
-
   if (!env.DATABASE_URL) {
     throw new ApiError('INTERNAL_ERROR', 'DATABASE_URL is not configured')
   }
 
   const pool = createPool(env.DATABASE_URL)
   try {
+    if (pathname === '/api/prices/spot' && request.method === 'GET') {
+      return await handleSpot(request, env, undefined, pool)
+    }
+
     if (pathname === '/api/prices/batchHistorical' && request.method === 'GET') {
       return await handleBatchHistorical(request, env, pool)
     }

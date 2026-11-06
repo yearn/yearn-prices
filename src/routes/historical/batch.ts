@@ -28,7 +28,7 @@ export async function handleBatchHistorical(
     pool,
     env,
     pending,
-    pending.length ? await getBatchHistoricalPrices(pool, pending, source) : [],
+    await getBatchHistoricalPrices(pool, pending, source),
     source,
     upstream
   )

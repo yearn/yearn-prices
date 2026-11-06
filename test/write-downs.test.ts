@@ -1,9 +1,9 @@
-import * as rpc from '../src/clients/rpc'
-import { spotSourceRegistry } from '../src/registries'
 import type { Pool } from '@neondatabase/serverless'
 import { describe, expect, it, vi } from 'vitest'
 import { canonicalCacheKey, HISTORICAL_CACHE_REVISION } from '../src/cache/edge'
+import * as rpc from '../src/clients/rpc'
 import { writeDown } from '../src/prices/write-downs'
+import { spotSourceRegistry } from '../src/registries'
 import { SpotSourceRegistry } from '../src/registries/spot'
 import { handleBatchHistorical } from '../src/routes/historical/batch'
 import { handleHistorical } from '../src/routes/historical/exact'
@@ -99,12 +99,22 @@ describe('write-downs', () => {
   })
 })
 
+it('spot serves write-downs for every source query', async () => {
+  const url = new URL(request('spot', [key]).url)
+  url.searchParams.set('source', 'enso')
+  const response = await handleSpot(new Request(url), env, new SpotSourceRegistry([]))
+  expect(await response.json()).toMatchObject({ coins: { [key]: { prices: [{ price: 0, source: 'write-down' }] } } })
+})
+
+const lpToken = '0x1111111111111111111111111111111111111111'
+const lpKeyName = `ethereum:${lpToken}`
+
 for (const scenario of ['empty', 'absurd', 'rpc-error']) {
   it(`spot Curve guard handles ${scenario}`, async () => {
     const guard = createCurveLpGuard({
       clientForChain: () =>
         fakeClient({
-          [token]: {
+          [lpToken]: {
             N_COINS: 2n,
             coins: ['0x056fd409e1d7a124bd7017459dfea2f387b6d5cd', '0xf939e0a03fb07f59a73314e73794be0e57ac1b4e'],
             totalSupply: scenario === 'empty' ? 0n : 1n,
@@ -128,11 +138,9 @@ for (const scenario of ['empty', 'absurd', 'rpc-error']) {
       ],
       guard
     )
-    const url = new URL(request('spot', [key]).url)
-    url.searchParams.set('source', 'enso')
-    const response = await handleSpot(new Request(url), env, registry)
+    const response = await handleSpot(request('spot', [lpKeyName]), env, registry)
     const body = (await response.json()) as { coins: Record<string, unknown> }
-    expect(body.coins[key]).toMatchObject(
+    expect(body.coins[lpKeyName]).toMatchObject(
       scenario === 'rpc-error' ? { prices: [{ price: 5.7e20 }] } : { error: { code: 'NOT_FOUND' } }
     )
   })
@@ -153,27 +161,31 @@ it('keeps maximum range queries at one SQL tuple per token', async () => {
   expect((query.mock.calls[0] as unknown[])[1]).toHaveLength(200)
 })
 
-it('rejects invalid spot source filters', async () => {
-  const url = new URL(request('spot', [key]).url)
-  url.searchParams.set('source', 'banana')
-  await expect(handleSpot(new Request(url), env, new SpotSourceRegistry([]))).rejects.toMatchObject({
-    code: 'INVALID_INPUT'
-  })
-})
-
-it('does not fall through to another provider for an explicit spot source', async () => {
-  const getSpotPrice = vi.fn(async () => ({ price: 10, timestamp, symbol: null, confidence: null }))
-  const registry = new SpotSourceRegistry([{ name: 'derived', priority: 1, supports: () => true, getSpotPrice }])
-  const url = new URL(request('spot', [key]).url)
-  url.searchParams.set('source', 'enso')
-  const response = await handleSpot(new Request(url), env, registry)
-  expect(await response.json()).toMatchObject({ coins: { [key]: { error: { code: 'NOT_FOUND' } } } })
-  expect(getSpotPrice).not.toHaveBeenCalled()
+it('guards spot quotes only for known Curve LPs', async () => {
+  const guard = vi.fn(async () => true)
+  const registry = new SpotSourceRegistry(
+    [
+      {
+        name: 'enso',
+        priority: 10,
+        supports: () => true,
+        getSpotPrice: async () => ({ price: 1, timestamp, symbol: null, confidence: null })
+      }
+    ],
+    guard
+  )
+  const coins = Array.from({ length: 50 }, (_, index) => `ethereum:0x${(index + 2).toString(16).padStart(40, '0')}`)
+  const known = coins[7]
+  const query = vi.fn(async () => ({ rows: [{ chain: 'ethereum', token: known.slice('ethereum:'.length) }] }))
+  await handleSpot(request('spot', coins), env, registry, { query } as unknown as Pool)
+  expect(query).toHaveBeenCalledTimes(1)
+  expect(guard).toHaveBeenCalledTimes(1)
+  expect(guard).toHaveBeenCalledWith(1, known.slice('ethereum:'.length), expect.any(Number), 1)
 })
 
 it('production registry forwards env and guards Enso without an injected guard', async () => {
   const client = fakeClient({
-    [token]: {
+    [lpToken]: {
       N_COINS: 2n,
       coins: ['0x056fd409e1d7a124bd7017459dfea2f387b6d5cd', '0xf939e0a03fb07f59a73314e73794be0e57ac1b4e'],
       totalSupply: 0n
@@ -186,7 +198,7 @@ it('production registry forwards env and guards Enso without an injected guard',
   )
   try {
     const registry = spotSourceRegistry(env)
-    await expect(registry.resolve(1, token, undefined, 'enso')).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    await expect(registry.resolve(1, lpToken)).rejects.toMatchObject({ code: 'NOT_FOUND' })
     expect(clientSpy).toHaveBeenCalledWith(1, env)
   } finally {
     vi.unstubAllGlobals()
