@@ -2,10 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   claimRepairQueue,
   enqueueRepairTargets,
-  readFinalizedRepairKeys,
-  releaseRepairLease,
   type RepairLease,
   type RepairQueueDb,
+  readFinalizedRepairKeys,
+  releaseRepairLease,
   repairRetryDelaySeconds,
   settleRepairFailure,
   settleRepairSuccess

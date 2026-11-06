@@ -9,9 +9,9 @@ import { createPool } from '../src/db'
 import {
   claimRepairQueue,
   enqueueRepairTargets,
-  releaseRepairLease,
   type RepairLease,
   type RepairQueueDb,
+  releaseRepairLease,
   settleRepairFailure,
   settleRepairSuccess
 } from '../src/db/repair-queue'

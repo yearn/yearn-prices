@@ -7,12 +7,12 @@ import { ACCEPTED_PRICE_SQL } from '../../prices/rejections'
 import { type CurrentPriceTarget, currentPriceKey, fetchCurrentPrices } from '../../sources/defillama/current'
 import { createDefiLlamaHistoricalSource } from '../../sources/defillama/historical'
 import type { PlausibleQuote } from '../../sources/defillama/lp-guard'
-import type { HistoricalBatchPrice, HistoricalPriceResult, HistoricalPriceTarget } from '../../sources/types'
 import {
-  resolveCurrentFallback,
   type CurrentFallbackResult,
-  type CurrentFallbackTarget
+  type CurrentFallbackTarget,
+  resolveCurrentFallback
 } from '../../sources/onchain/current-fallback'
+import type { HistoricalBatchPrice, HistoricalPriceResult, HistoricalPriceTarget } from '../../sources/types'
 import type { Env, ExactPriceRecord, HistoricalRequestTuple, PriceSource, TokenPriceWrite } from '../../types'
 import { chainIdToName, chainNameToId } from '../../utils/chains'
 import { currentUtcDayEnd, isClosedDay, isTodayNormalized } from '../../utils/time'
