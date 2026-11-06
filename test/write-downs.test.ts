@@ -2,7 +2,7 @@ import type { Pool } from '@neondatabase/serverless'
 import { describe, expect, it, vi } from 'vitest'
 import { canonicalCacheKey, HISTORICAL_CACHE_REVISION } from '../src/cache/edge'
 import * as rpc from '../src/clients/rpc'
-import { writeDown } from '../src/prices/write-downs'
+import { loadWriteDowns, writeDown } from '../src/prices/write-downs'
 import { spotSourceRegistry } from '../src/registries'
 import { SpotSourceRegistry } from '../src/registries/spot'
 import { handleBatchHistorical } from '../src/routes/historical/batch'
@@ -204,5 +204,14 @@ it('production registry forwards env and guards Enso without an injected guard',
   } finally {
     vi.unstubAllGlobals()
     clientSpy.mockRestore()
+  }
+})
+
+
+it('rejects invalid write-down manifests', () => {
+  const entry = { chain: 1, token, from: 1690736855, reason: 'Pool depleted' }
+  expect(() => loadWriteDowns([entry, entry])).toThrow()
+  for (const invalid of [{ token: 'bad' }, { from: 0 }, { reason: '' }]) {
+    expect(() => loadWriteDowns([{ ...entry, ...invalid }])).toThrow()
   }
 })

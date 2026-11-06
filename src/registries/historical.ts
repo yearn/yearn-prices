@@ -1,3 +1,4 @@
+import { writeDown } from '../prices/write-downs'
 import { DefiLlamaClient } from '../clients/defillama'
 import { getChainClient } from '../clients/rpc'
 import { ApiError } from '../http'
@@ -26,7 +27,8 @@ function marketPriceResolver(marketSources: HistoricalPriceSource[]) {
   const registry = new HistoricalSourceRegistry(marketSources)
   return createMarketPriceResolver(
     marketSources,
-    (chainId, token, timestamp) => registry.resolve(chainId, token, timestamp as number),
+    async (chainId, token, timestamp) =>
+      writeDown(chainId, token, timestamp as number) ?? registry.resolve(chainId, token, timestamp as number),
     { requireTimestamp: true }
   )
 }

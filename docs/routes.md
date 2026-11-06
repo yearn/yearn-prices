@@ -414,3 +414,5 @@ cache policy cannot retroactively evict a browser response that is never re-requ
 Write-down overrides serve depleted alETH/ETH and msETH/ETH LPs at zero from their incident cutoffs, without storing zero rows. Explicit source filters bypass overrides on historical routes only; spot always applies them. Spot and historical edge keys use `2026-11-curve-write-down-v3`. Spot Enso quotes for known Curve LPs (an accepted `curve` row exists) reject zero supply and retain the 4x virtual-price bound; RPC and DB failures remain fail-open.
 
 Spot ignores `source`. The production spot registry registers Enso and on-chain sources, not a DeFiLlama spot source. Spot runs one batched known-LP query per request and guards only those tokens, as read-through does; a Curve LP never priced on-chain stays unguarded. Child-token quotes inside on-chain adapters are not guarded.
+
+Spot guards at most 8 known Curve LPs per request, in request order (the same count bound as historical read-through). Remaining tokens are priced unguarded.

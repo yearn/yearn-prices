@@ -344,6 +344,7 @@ describe('spot transient cache policy', () => {
 
     const second = await worker.fetch(request, env, ctx)
     expect(second.headers.get('cache-control')).toBe('no-store')
+    // Neon poolQueryViaFetch also uses the mocked global fetch.
     expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('enso')).length).toBe(2)
     expect(cache.match).toHaveBeenCalledTimes(2)
     expect(cache.put).not.toHaveBeenCalled()
