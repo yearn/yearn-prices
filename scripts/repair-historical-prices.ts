@@ -29,6 +29,15 @@ type TargetOutcomeRecord = {
   target?: { chainId?: number; token?: string; eodTimestamp?: number }
 }
 
+export interface RepairWorkerMetrics {
+  completed: number
+  missing: number
+  unresolved: number
+  invalid: number
+  errors: number
+  deferred: number
+}
+
 function key(target: { chainId: number; token: string; timestamp: number }): string {
   return `${target.chainId}:${target.token.toLowerCase()}:${target.timestamp}`
 }
@@ -47,6 +56,12 @@ export function classifyRepairFailure(record: TargetOutcomeRecord | undefined): 
     return 'retryable'
   if (/unsupported|not.?found|no price|no historical price/.test(value)) return 'missing'
   return 'retryable'
+}
+
+/** Graph cutoffs are expected coverage outcomes, not worker failures. */
+export function isExpectedUnresolved(record: TargetOutcomeRecord | undefined): boolean {
+  if (record?.type !== 'target-outcome' || record.status !== 'unresolved') return false
+  return /^(cycle|max-depth|budget|unsupported)$/.test((record.reason ?? '').toLowerCase())
 }
 
 function readOutcomes(path: string): Map<string, TargetOutcomeRecord> {
@@ -87,7 +102,7 @@ async function reconcile(db: RepairQueueDb, write: boolean, recentDays: number) 
   }
 }
 
-async function processClaims(
+export async function processClaims(
   db: RepairQueueDb,
   claims: RepairLease[],
   options: {
@@ -98,8 +113,8 @@ async function processClaims(
     evidenceDir: string
     signal: AbortSignal
   }
-): Promise<{ completed: number; missing: number; errors: number; deferred: number }> {
-  const metrics = { completed: 0, missing: 0, errors: 0, deferred: 0 }
+): Promise<RepairWorkerMetrics> {
+  const metrics: RepairWorkerMetrics = { completed: 0, missing: 0, unresolved: 0, invalid: 0, errors: 0, deferred: 0 }
   // A 429 is recorded on the queue and retried later. The shared limiter still
   // honors Retry-After, but this worker does not sleep past its lease/budget.
   const provider = offlineProvider(options.providerRps, {
@@ -129,6 +144,7 @@ async function processClaims(
       })
     )
     let outcomes = new Map<string, TargetOutcomeRecord>()
+    let graphError: unknown = null
     try {
       await runGraphBackfill({
         pool: db as ReturnType<typeof createPool>,
@@ -143,11 +159,16 @@ async function processClaims(
       })
       outcomes = readOutcomes(evidence)
     } catch (error) {
-      outcomes = new Map(
-        group.map((claim) => [key(claim), { reason: error instanceof Error ? error.message : String(error) }])
-      )
+      graphError = error
     }
-    const finalized = await finalizedRepairKeys(db, group)
+    let finalized = new Set<string>()
+    let finalizedError: unknown = null
+    try {
+      finalized = await finalizedRepairKeys(db, group)
+    } catch (error) {
+      finalizedError = error
+    }
+    if (finalizedError && (options.signal.aborted || Date.now() >= options.deadline)) metrics.errors += 1
     for (const claim of group) {
       if (!options.write) {
         await releaseRepairLease(db, claim)
@@ -156,6 +177,25 @@ async function processClaims(
       }
       if (finalized.has(key(claim))) {
         if (await settleRepairSuccess(db, claim)) metrics.completed += 1
+        continue
+      }
+      // A runtime budget is a successful bounded stop. Claims that did not
+      // already commit are released with their attempt/backoff untouched.
+      // This check runs after the finalized read even when the graph returned
+      // normally or cancellation happened during the confirmation query.
+      if (options.signal.aborted || Date.now() >= options.deadline) {
+        await releaseRepairLease(db, claim)
+        metrics.deferred += 1
+        continue
+      }
+      if (finalizedError) {
+        const reason = finalizedError instanceof Error ? finalizedError.message : String(finalizedError)
+        if (await settleRepairFailure(db, claim, 'retryable', reason)) metrics.errors += 1
+        continue
+      }
+      if (graphError) {
+        const reason = graphError instanceof Error ? graphError.message : String(graphError)
+        if (await settleRepairFailure(db, claim, 'retryable', reason)) metrics.errors += 1
         continue
       }
       const record = outcomes.get(key(claim))
@@ -169,6 +209,8 @@ async function processClaims(
         )
       ) {
         if (outcome === 'missing') metrics.missing += 1
+        else if (outcome === 'invalid') metrics.invalid += 1
+        else if (isExpectedUnresolved(record)) metrics.unresolved += 1
         else metrics.errors += 1
       }
     }
@@ -261,10 +303,9 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       if (result.errors > 0) process.exitCode = 1
     } else if (!values.reconcile) {
       report.claimed = 0
-      report.workerResult = { completed: 0, missing: 0, errors: 0, deferred: dueBefore }
+      report.workerResult = { completed: 0, missing: 0, unresolved: 0, invalid: 0, errors: 0, deferred: dueBefore }
     }
     report.budgetExhausted = controller.signal.aborted
-    if (controller.signal.aborted) process.exitCode = 1
     report.finishedAt = new Date().toISOString()
     report.durationMs = Date.now() - started
     process.stdout.write(`${JSON.stringify(report)}\n`)

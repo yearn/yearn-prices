@@ -395,7 +395,7 @@ Price responses set cache headers based on the requested timestamps and whether 
 - Historical not found responses: `public, s-maxage=300, max-age=300`
 - Spot: `public, s-maxage=120, stale-while-revalidate=600`
 
-Unfiltered historical requests can fill missing prices through DeFiLlama read-through. Closed-day targets without accepted finalized coverage are admitted to the durable repair queue on a best-effort basis, including provisional observations. Queue failures do not discard an otherwise successful response. Source-filtered requests retain stored-row-only semantics. Daily reconciliation catches targets that request admission misses and observations whose day has since closed. Repair retries use persistent backoff; cache expiry alone does not guarantee a price will become available. See the [targeted repair runbook](historical-pricing/targeted-repair.md).
+Unfiltered historical requests can fill missing prices through DeFiLlama read-through. Requests do not read or write the durable repair queue; arbitrary misses do not create background retry work. Daily reconciliation discovers recent Yearn targets, closed provisional observations and the gap inventory. Source-filtered requests retain stored-row-only semantics. Repair retries use persistent backoff; cache expiry alone does not guarantee a price will become available. See the [targeted repair runbook](historical-pricing/targeted-repair.md).
 
 ## Edge caching
 

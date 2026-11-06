@@ -8,7 +8,7 @@
 <p>Price service · Historical maintenance</p>
 <h1>Repair the gaps that are due</h1>
 <p>Replace scheduled broad hourly warmup with persisted repair targets, bounded workers, and retry backoff. Live spot and today's historical observations continue to resolve on request.</p>
-<p class="flow">Request or daily reconciliation → durable token/day queue → due worker → validated finalization</p>
+<p class="flow">Daily reconciliation → durable token/day queue → due worker → validated finalization</p>
 <table><thead><tr><th>Before</th><th>After</th></tr></thead><tbody>
 <tr><td>Hourly inventory warmup</td><td>Every 15 minutes, drain only due targets within a configured limit and budget.</td></tr>
 <tr><td>Unresolved gaps retried each broad run</td><td>Persist attempt count, outcome and next retry time; repeated requests preserve backoff.</td></tr>
@@ -17,11 +17,13 @@
 <tr><td>A failed process loses its work state</td><td>Leased targets become reclaimable after expiry; old owners cannot settle new claims.</td></tr>
 </tbody></table>
 <h2>What remains protected</h2>
-<ul><li>Current API quotes never fill past dates.</li><li>Historical graph validation, observation windows and Curve plausibility checks remain required.</li><li>Provider errors remain retryable failures, separate from confirmed missing observations.</li><li>Queue admission failures do not discard a valid API response.</li><li>Completion means an accepted finalized price exists for the target; it does not require a separate row from every provider.</li></ul>
+<ul><li>Current API quotes never fill past dates.</li><li>Historical graph validation, observation windows and Curve plausibility checks remain required.</li><li>Provider errors remain retryable failures, separate from confirmed missing observations.</li><li>API reads do not access the repair queue; arbitrary request misses cannot create durable retry work.</li><li>Completion means an accepted finalized price exists for the target; it does not require a separate row from every provider.</li></ul>
 <p>Today's DeFiLlama misses can use a bounded on-demand Chainlink/on-chain fallback, with Enso when configured. Fallback quotes retain their source, remain provisional, and refresh on request even when a previous quote is stored.</p>
 <h2>Operation</h2>
 <p>Daily reconciliation discovers recent closed-day Yearn targets, provisional history and existing gap inventory. Weekly audit checks finalized closed-day coverage without launching broad warmup. Manual warmup commands remain available.</p>
 <p><a href="targeted-repair.md">Read the repair runbook and commands</a></p>
+<h2>Bot review follow-up</h2>
+<ul><li>Expected graph limits and clean runtime-budget stops do not fail scheduled jobs; operational failures remain separately reported.</li><li>Budget cancellation settles completed targets and releases unfinished claims without adding attempts or backoff.</li><li>Queue admission belongs to reconciliation, removing client-driven queue growth and queue work from response latency.</li><li>Direct fallback tests cover source precedence, errors and shared deadlines.</li></ul>
 <h2>Validation and rollout</h2>
 <p id="validation">TypeScript checking passes. Independent code review checked leases, finalized-only reads, failure classification and bounded discovery. Current-day fallback review checked refresh behavior, source provenance and its shared 2.5-second deadline. Tests and lint run in GitHub CI; they are not run locally under the repository's Astra instruction. The initial CI failures identified a spot provider-call assertion and an overbroad finalized-row mock, alongside formatting and import ordering. The follow-up fixes keep the original cache and repair expectations intact.</p>
 <p class="note">The migration is prepared, not applied. These changes are proposed in draft PR #92 and have not been deployed. Database execution, live coverage improvement and repair latency remain unmeasured. GitHub schedules do not provide immediate or guaranteed-time delivery.</p>

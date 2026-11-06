@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { discoverRepairTargets } from '../../scripts/lib/historical-repair'
-import { classifyRepairFailure } from '../../scripts/repair-historical-prices'
+import { classifyRepairFailure, isExpectedUnresolved } from '../../scripts/repair-historical-prices'
 import type { RepairQueueDb } from '../../src/db/repair-queue'
 import { normalizeTokenAddress } from '../../src/utils/chains'
 import { currentUtcDayEnd, nowUnix } from '../../src/utils/time'
@@ -84,10 +84,16 @@ describe('historical repair failure classification', () => {
     )
   })
 
-  it('retries cycle and budget failures', () => {
+  it('keeps cycle and budget failures retryable without treating them as worker errors', () => {
     expect(classifyRepairFailure({ type: 'target-outcome', status: 'unresolved', reason: 'cycle' })).toBe('retryable')
     expect(classifyRepairFailure({ type: 'target-outcome', status: 'unresolved', reason: 'budget exhausted' })).toBe(
       'retryable'
+    )
+    expect(isExpectedUnresolved({ type: 'target-outcome', status: 'unresolved', reason: 'cycle' })).toBe(true)
+    expect(isExpectedUnresolved({ type: 'target-outcome', status: 'unresolved', reason: 'max-depth' })).toBe(true)
+    expect(isExpectedUnresolved({ type: 'target-outcome', status: 'unresolved', reason: 'budget' })).toBe(true)
+    expect(isExpectedUnresolved({ type: 'target-outcome', status: 'unresolved', reason: 'provider unavailable' })).toBe(
+      false
     )
   })
 

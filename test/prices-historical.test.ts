@@ -546,34 +546,24 @@ describe('handleHistorical', () => {
       ).rejects.toMatchObject({ code: 'UNAVAILABLE', status: 503 })
     })
 
-    it('queues a closed-day provisional row for repair without treating it as finalized', async () => {
+    it('serves a stored closed-day row without admitting it to the repair queue', async () => {
       const db = {
-        query: vi.fn(async (sql: string) => {
-          // The normal historical read also contains the finalized predicate
-          // through SERVED_PRICE_SQL. Match the repair queue's CTE instead so
-          // the provisional row remains visible to the request while the
-          // finalized-observation check stays empty.
-          if (sql.includes('WITH requested(chain_id, chain, token, timestamp)')) return { rows: [] }
-          if (sql.includes('INSERT INTO historical_price_repair_queue')) return { rows: [] }
-          return { rows: [tableRow(TIMESTAMP, '123.45')] }
-        })
+        query: vi.fn(async () => ({ rows: [tableRow(TIMESTAMP, '123.45')] }))
       } as unknown as Pool
 
       const response = await handleHistorical(request(), ENV, db, String(TIMESTAMP), TOKEN_KEY, upstreamOf())
 
       expect(response.status).toBe(200)
+      expect(db.query).toHaveBeenCalledTimes(1)
+      await expect(response.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 123.45 } } })
       expect(
-        vi
-          .mocked(db.query)
-          .mock.calls.some(([sql]) => String(sql).includes('INSERT INTO historical_price_repair_queue'))
-      ).toBe(true)
+        vi.mocked(db.query).mock.calls.some(([sql]) => String(sql).includes('historical_price_repair_queue'))
+      ).toBe(false)
     })
 
-    it('keeps serving a read-through price when the repair queue is unavailable', async () => {
-      const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    it('serves a read-through price without admitting the provisional row to the repair queue', async () => {
       const db = {
         query: vi.fn(async (sql: string) => {
-          if (sql.includes('INSERT INTO historical_price_repair_queue')) throw new Error('queue unavailable')
           if (sql.includes('tp.finalized = TRUE')) return { rows: [] }
           if (sql.includes('INSERT INTO token_prices')) return { rows: [] }
           return { rows: [] }
@@ -590,7 +580,10 @@ describe('handleHistorical', () => {
       )
 
       expect(response.status).toBe(200)
-      expect(String(error.mock.calls[0]?.[0])).toContain('read-through-failed')
+      await expect(response.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 1800.25 } } })
+      expect(
+        vi.mocked(db.query).mock.calls.some(([sql]) => String(sql).includes('historical_price_repair_queue'))
+      ).toBe(false)
     })
 
     it('returns UNAVAILABLE when the historical call throws', async () => {

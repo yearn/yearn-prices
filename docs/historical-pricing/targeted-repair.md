@@ -6,9 +6,10 @@ resolve live. Current observations are never used to fill closed days.
 
 ## Admission and reconciliation
 
-Unfiltered historical requests enqueue at most 200 distinct closed-day targets
-that lack an accepted finalized price. This includes provisional observations.
-Queue insertion is best effort; failures do not discard a valid price response.
+Historical requests do not read or write the repair queue. Arbitrary client
+misses therefore cannot create durable retry work or delay stored-price
+responses with queue bookkeeping. Successful read-through observations remain
+provisional and become eligible for daily reconciliation once their day closes.
 Source-filtered requests retain their stored-row-only behavior.
 
 Daily reconciliation discovers the last seven closed days of active Yearn
@@ -42,8 +43,10 @@ honored through a shared in-process cooldown.
 
 The runtime budget aborts provider waits and stops new graph/finalization work.
 A hard stop 30 seconds later bounds drivers that cannot cancel an active call.
-Unprocessed work is released without charging a retry when cleanup succeeds;
-a killed process leaves its claims recoverable through lease expiry. Lease
+When the budget expires, already-finalized targets are settled successfully;
+all other in-flight and unstarted claims are released without changing their
+attempt count, next-attempt time or last outcome. A killed process leaves its
+claims recoverable through lease expiry. Lease
 length must exceed the runtime budget by at least five minutes.
 
 ## Current-day compatibility
@@ -70,9 +73,14 @@ bun run repair:historical --write --limit 100 --budget-seconds 600
 Without `--write`, the worker reports queue depth without claiming targets.
 `--recent-days` controls recent Yearn discovery. `--out <directory>` retains graph
 evidence at a selected path; otherwise evidence goes to a temporary directory.
-Structured summaries report discovery, claimed/completed/missing/error/deferred
-counts, duration and budget exhaustion. Provider errors make the run fail while
-retaining successful writes and retry state.
+Structured summaries report discovery, claimed/completed/missing/unresolved/invalid/
+error/deferred counts, duration and budget exhaustion. Expected unresolved graphs and a clean
+runtime-budget stop do not fail the job. Rejected or implausible quotes increment
+`invalid` without failing the job: unsafe prices stay unwritten, and the
+coverage gap remains visible for investigation and the coverage audit.
+Provider failures, missing outcome
+evidence and failures of queue bookkeeping remain operational errors. Graph
+cutoffs stay distinct from confirmed missing observations.
 
 The scheduled worker runs every 15 minutes. At 00:30 UTC, daily reconciliation
 runs first and a separate worker command drains due targets. Deployments do the

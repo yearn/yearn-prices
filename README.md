@@ -106,7 +106,7 @@ Full route reference, request/response shapes, error codes, and caching behavior
 ## Price sources
 
 - **Spot prices**: Enso first, then batched DeFiLlama current prices, then recursive on-chain derivation. Underlying tokens use the same market sources. Spot results are not written to historical storage.
-- **Historical prices**: stored prices with batched DeFiLlama read-through. Closed-day gaps and provisional observations enter a durable repair queue; validated graph reconstruction finalizes them offline. Today is fetched live and remains provisional.
+- **Historical prices**: stored prices with batched DeFiLlama read-through. Daily reconciliation admits recent Yearn gaps and closed provisional observations to a durable repair queue; validated graph reconstruction finalizes them offline. API reads do not enqueue arbitrary misses. Today is fetched live and remains provisional.
 
 Chain 4663 (Robinhood) has no DefiLlama coverage. Warmup writes WETH/USDG/USDC/USDT from Chainlink (`bun run warmup -- --chain 4663`).
 

@@ -1,7 +1,6 @@
 import type { Pool } from '@neondatabase/serverless'
 import { DefiLlamaClient } from '../../clients/defillama'
-import { enqueueClosedRepairTargets, finalizeTokenPrices, insertProvisionalTokenPrices } from '../../db'
-import type { RepairTarget } from '../../db/repair-queue'
+import { finalizeTokenPrices, insertProvisionalTokenPrices } from '../../db'
 import { plausibleWrites, storedCurveLpGuard } from '../../prices/curve-lp-guard'
 import { ACCEPTED_PRICE_SQL } from '../../prices/rejections'
 import { type CurrentPriceTarget, currentPriceKey, fetchCurrentPrices } from '../../sources/defillama/current'
@@ -19,7 +18,7 @@ import { currentUtcDayEnd, isClosedDay, isTodayNormalized } from '../../utils/ti
 
 const UPSTREAM_TIMEOUT_MS = 2_500
 // ponytail: 200 closed-day misses per request bounds subrequests and latency;
-// the rest stay missing until warmup or a later read fills them.
+// the rest stay missing until reconciliation or a later read fills them.
 export const MAX_READ_THROUGH_TARGETS = 200
 // Current fallback is intentionally smaller than the historical read-through:
 // Chainlink and recursive RPC reads are per-token and must stay inside the
@@ -59,7 +58,7 @@ const defaultUpstream: ReadThroughUpstream = {
 
 const exactKey = (chain: string, token: string, timestamp: number) => `${chain}:${token.toLowerCase()}:${timestamp}`
 
-function logFailure(stage: 'current' | 'historical' | 'current-fallback' | 'repair-queue', error: unknown): void {
+function logFailure(stage: 'current' | 'historical' | 'current-fallback', error: unknown): void {
   console.error(JSON.stringify({ message: 'read-through-failed', stage, error: String(error) }))
 }
 
@@ -78,29 +77,6 @@ async function knownCurveLps(pool: Pool, records: ExactPriceRecord[]): Promise<S
 }
 
 const lpKey = (chain: string, token: string) => `${chain}:${token.toLowerCase()}`
-
-async function queueClosedDayRepairs(pool: Pool, requests: HistoricalRequestTuple[]): Promise<void> {
-  const closed = [
-    ...new Map(
-      requests
-        .filter((request) => isClosedDay(request.timestamp))
-        .map((request) => [exactKey(request.chain, request.token, request.timestamp), request])
-    ).values()
-  ].slice(0, MAX_READ_THROUGH_TARGETS)
-  if (closed.length === 0) return
-
-  try {
-    // A provisional row is intentionally not sufficient here. The shared
-    // helper checks accepted finalized observations and preserves retry state.
-    const targets: RepairTarget[] = closed.flatMap((request) => {
-      const chainId = chainNameToId(request.chain)
-      return chainId === undefined ? [] : [{ chainId, token: request.token, timestamp: request.timestamp }]
-    })
-    await enqueueClosedRepairTargets(pool, targets)
-  } catch (error) {
-    logFailure('repair-queue', error)
-  }
-}
 
 export async function readThrough(
   pool: Pool,
@@ -129,7 +105,6 @@ export async function readThrough(
     return chainId === undefined ? [] : [{ chainId, token: request.token, timestamp: request.timestamp }]
   })
   if (todayTargets.size === 0 && closedTargets.length === 0) {
-    await queueClosedDayRepairs(pool, requests)
     return { rows, upstreamFailed: false }
   }
 
@@ -250,11 +225,6 @@ export async function readThrough(
   } catch (error) {
     console.error(JSON.stringify({ message: 'read-through-persist-failed', error: String(error) }))
   }
-
-  // Queue after the read-through so a successful request can be persisted
-  // before the repair worker sees the target. Existing provisional closed-day
-  // rows are still admitted because the queue helper requires finalization.
-  await queueClosedDayRepairs(pool, requests)
 
   return {
     rows: [...rows.filter((row) => !replaced.has(exactKey(row.chain, row.token, row.timestamp))), ...fetched],
