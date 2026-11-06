@@ -549,24 +549,23 @@ describe('handleHistorical', () => {
     it('queues a closed-day provisional row for repair without treating it as finalized', async () => {
       const db = {
         query: vi.fn(async (sql: string) => {
-          if (sql.includes('tp.finalized = TRUE')) return { rows: [] }
+          // The normal historical read also contains the finalized predicate
+          // through SERVED_PRICE_SQL. Match the repair queue's CTE instead so
+          // the provisional row remains visible to the request while the
+          // finalized-observation check stays empty.
+          if (sql.includes('WITH requested(chain_id, chain, token, timestamp)')) return { rows: [] }
           if (sql.includes('INSERT INTO historical_price_repair_queue')) return { rows: [] }
           return { rows: [tableRow(TIMESTAMP, '123.45')] }
         })
       } as unknown as Pool
 
-      const response = await handleHistorical(
-        request(),
-        ENV,
-        db,
-        String(TIMESTAMP),
-        TOKEN_KEY,
-        upstreamOf()
-      )
+      const response = await handleHistorical(request(), ENV, db, String(TIMESTAMP), TOKEN_KEY, upstreamOf())
 
       expect(response.status).toBe(200)
       expect(
-        vi.mocked(db.query).mock.calls.some(([sql]) => String(sql).includes('INSERT INTO historical_price_repair_queue'))
+        vi
+          .mocked(db.query)
+          .mock.calls.some(([sql]) => String(sql).includes('INSERT INTO historical_price_repair_queue'))
       ).toBe(true)
     })
 

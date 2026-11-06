@@ -1,5 +1,5 @@
+import { type RepairQueueDb, type RepairTarget, readFinalizedRepairKeys } from '../../src/db/repair-queue'
 import { NOT_REJECTED_PRICE_SQL } from '../../src/prices/rejections'
-import { readFinalizedRepairKeys, type RepairQueueDb, type RepairTarget } from '../../src/db/repair-queue'
 import { CHAIN_ID_TO_NAME, chainIdToName, normalizeTokenAddress } from '../../src/utils/chains'
 import { currentUtcDayEnd, nowUnix } from '../../src/utils/time'
 
@@ -33,7 +33,13 @@ export async function discoverRepairTargets(
   db: RepairQueueDb,
   roots: RepairTarget[],
   recentClosedDays: number
-): Promise<{ targets: RepairTarget[]; finalized: number; provisionalSelected: number; inventorySelected: number; discoveryLimit: number }> {
+): Promise<{
+  targets: RepairTarget[]
+  finalized: number
+  provisionalSelected: number
+  inventorySelected: number
+  discoveryLimit: number
+}> {
   if (!Number.isSafeInteger(recentClosedDays) || recentClosedDays < 1 || recentClosedDays > 365) {
     throw new Error('recentClosedDays must be an integer from 1 through 365')
   }
@@ -45,11 +51,12 @@ export async function discoverRepairTargets(
   const counts: number[] = []
   for (const kind of ['provisional', 'inventory'] as const) {
     // Both alternatives are fixed SQL. User input is passed only as parameters.
-    const candidates = kind === 'provisional'
-      ? `SELECT DISTINCT c.chain_id, c.chain, lower(p.token) AS token, p.timestamp
+    const candidates =
+      kind === 'provisional'
+        ? `SELECT DISTINCT c.chain_id, c.chain, lower(p.token) AS token, p.timestamp
          FROM token_prices p JOIN chains c ON p.chain = c.chain
          WHERE p.finalized = FALSE AND p.timestamp < to_timestamp($2)`
-      : `SELECT c.chain_id, c.chain, i.token, i.timestamp
+        : `SELECT c.chain_id, c.chain, i.token, i.timestamp
          FROM historical_price_gap_inventory i JOIN chains c ON i.chain_id = c.chain_id
          WHERE i.timestamp < to_timestamp($2)`
     const result = await db.query<Row>(

@@ -91,6 +91,7 @@ Apply `0002_historical_repair_queue.sql` and
 starting the new jobs. No migration or production rollout has been performed
 by editing these files.
 
-TypeScript checking and code review provide static validation. Tests, lint and
-migration execution were not run under the repository's Astra instruction.
+TypeScript checking and code review provide static validation. Tests and lint
+run in GitHub CI, not locally under the repository's Astra instruction.
+Migrations have not been applied to a live database.
 Coverage gain and actual repair latency remain unmeasured until a live run.

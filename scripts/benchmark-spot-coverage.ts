@@ -3,14 +3,14 @@ import { pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
 import { config as loadEnv } from 'dotenv'
 
-import { ApiError } from '../src/http/errors'
 import { getChainClient } from '../src/clients/rpc'
+import { ApiError } from '../src/http/errors'
+import { createMarketPriceResolver } from '../src/registries/market-price'
+import { SpotSourceRegistry } from '../src/registries/spot'
 import { createDefiLlamaSpotSource } from '../src/sources/defillama'
 import { createEnsoSpotSource } from '../src/sources/enso'
 import { createOnchainSpotSource } from '../src/sources/onchain'
-import { createMarketPriceResolver } from '../src/registries/market-price'
-import { SpotSourceRegistry } from '../src/registries/spot'
-import type { SpotPrice, SpotPriceSource } from '../src/sources/types'
+import type { SpotPriceSource } from '../src/sources/types'
 import type { Env } from '../src/types'
 import { chainIdToName, chainNameToId, normalizeTokenAddress } from '../src/utils/chains'
 import { nowUnix } from '../src/utils/time'
@@ -92,7 +92,9 @@ interface InputTarget {
 }
 
 interface SharedSourceCacheEntry {
-  result: Promise<{ ok: true; value: Awaited<ReturnType<SpotPriceSource['getSpotPrice']>> } | { ok: false; error: unknown }>
+  result: Promise<
+    { ok: true; value: Awaited<ReturnType<SpotPriceSource['getSpotPrice']>> } | { ok: false; error: unknown }
+  >
 }
 
 /**
@@ -180,12 +182,7 @@ function normalizeTarget(input: InputTarget, index: number): SpotCoverageTarget 
   const address = input.token ?? input.address
   if (typeof address !== 'string') throw new Error(`target ${index}: token/address is required`)
   const token = normalizeTokenAddress(address)
-  const label =
-    typeof input.label === 'string'
-      ? input.label
-      : typeof input.symbol === 'string'
-        ? input.symbol
-        : null
+  const label = typeof input.label === 'string' ? input.label : typeof input.symbol === 'string' ? input.symbol : null
   return { chainId, chain: chainIdToName(chainId)!, token, label }
 }
 
@@ -227,8 +224,11 @@ function dedupeTargets(targets: SpotCoverageTarget[]): SpotCoverageTarget[] {
     const key = `${target.chainId}:${target.token.toLowerCase()}`
     if (!map.has(key)) map.set(key, target)
   }
-  return [...map.values()].sort((left, right) =>
-    left.chainId - right.chainId || left.token.localeCompare(right.token) || (left.label ?? '').localeCompare(right.label ?? '')
+  return [...map.values()].sort(
+    (left, right) =>
+      left.chainId - right.chainId ||
+      left.token.localeCompare(right.token) ||
+      (left.label ?? '').localeCompare(right.label ?? '')
   )
 }
 
@@ -263,7 +263,11 @@ async function resolveOne(registry: SpotSourceRegistry, target: SpotCoverageTarg
       price: result.price,
       timestamp: result.timestamp,
       observationEndpoint:
-        result.source === 'defillama' ? '/prices/current' : result.source === 'enso' ? 'Enso token price' : 'RPC contract reads',
+        result.source === 'defillama'
+          ? '/prices/current'
+          : result.source === 'enso'
+            ? 'Enso token price'
+            : 'RPC contract reads',
       ageSeconds: Math.max(0, nowUnix() - result.timestamp),
       latencyMs: Math.round((performance.now() - started) * 100) / 100,
       errorCode: null,
@@ -364,7 +368,12 @@ export async function runSpotCoverageBenchmark(
     const recoveredFrom =
       candidateResult.status === 'priced' && baselineResult.status !== 'priced' ? baselineResult.status : null
     let disagreement: SpotCoverageComparison['disagreement'] = null
-    if (baselineResult.status === 'priced' && candidateResult.status === 'priced' && baselineResult.price && candidateResult.price) {
+    if (
+      baselineResult.status === 'priced' &&
+      candidateResult.status === 'priced' &&
+      baselineResult.price &&
+      candidateResult.price
+    ) {
       const absolute = Math.abs(candidateResult.price - baselineResult.price)
       const relativeBps = (absolute / baselineResult.price) * 10_000
       if (relativeBps >= disagreementBps || baselineResult.source !== candidateResult.source) {
@@ -431,7 +440,8 @@ async function main(): Promise<void> {
   })
   const targets = values.targets ? parseTargetFile(values.targets) : await loadDefaultTargets()
   const limit = values.limit ? Number(values.limit) : undefined
-  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) throw new Error('--limit must be a positive integer')
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1))
+    throw new Error('--limit must be a positive integer')
   const report = await runSpotCoverageBenchmark(
     limit === undefined ? targets : targets.slice(0, limit),
     process.env as unknown as Env,
@@ -449,4 +459,3 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.exitCode = 1
   })
 }
-

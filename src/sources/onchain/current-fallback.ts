@@ -1,13 +1,13 @@
 import { ApiError } from '../../http/errors'
 import { createMarketPriceResolver } from '../../registries/market-price'
 import { SpotSourceRegistry } from '../../registries/spot'
+import type { Env, PriceSource } from '../../types'
 import { chainIdToName } from '../../utils/chains'
 import { nowUnix } from '../../utils/time'
 import { createChainlinkHistoricalSource } from '../chainlink'
 import { createDefiLlamaSpotSource } from '../defillama'
 import { createEnsoSpotSource } from '../enso'
 import type { SpotPriceResult, SpotPriceSource } from '../types'
-import type { Env, PriceSource } from '../../types'
 import { createOnchainSpotSource } from './source'
 
 export interface CurrentFallbackQuote {
@@ -178,10 +178,7 @@ export async function resolveCurrentFallback(
 
       if (!enso) return
       try {
-        const ensoPrice = await withDeadline(
-          () => enso.getSpotPrice(target.chainId, target.token, deadline),
-          deadline
-        )
+        const ensoPrice = await withDeadline(() => enso.getSpotPrice(target.chainId, target.token, deadline), deadline)
         if (ensoPrice) {
           prices.set(targetKey, { ...ensoPrice, source: 'enso', observationEndpoint: 'enso.current' })
         }

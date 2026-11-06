@@ -24,7 +24,7 @@ body{margin:0;background:#f3f5f8;color:#152333;font:16px/1.6 system-ui,sans-seri
 <p><a href="spot-coverage-benchmark.md">Benchmark instructions</a> describe how to compare Enso + derivation against Enso + DeFiLlama + derivation. Both graphs share market observations; each target gets an independent derivation budget.</p>
 <ul><li>JSON and optional HTML reports show priced, missing and error outcomes.</li><li>Direct and derived recoveries are distinguishable, as are recovery from absence and recovery from provider failure.</li><li>Source changes and price disagreements remain visible even when both graphs return prices.</li></ul>
 <h2>Validation and limits</h2>
-<p id="validation">TypeScript checking passes. Focused tests were added but remain unrun, along with lint, under the repository's Astra instruction. Independent code review checked batching, cancellation, source wiring and benchmark cache behavior.</p>
+<p id="validation">TypeScript checking passes. Tests and lint run in GitHub CI; they are not run locally under the repository's Astra instruction. The cache regression now checks that both Enso and DeFiLlama are retried on the next request after transient failures. Independent code review checked batching, cancellation, source wiring and benchmark cache behavior.</p>
 <p class="note">No live coverage gain has been measured in this change. The benchmark uses live provider/RPC access even with a saved target file. Its cached comparison timings are not production latency measurements.</p>
 <h2>Next additions</h2>
 <p>Use measured unresolved dependencies to prioritize Curve coin prices, Sugar Oracle, Gamma, and Pendle PT/YT/SY. Those integrations and wider discovery are later phases.</p>

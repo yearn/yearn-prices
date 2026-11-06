@@ -1,24 +1,24 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { parseArgs } from 'node:util'
 import { pathToFileURL } from 'node:url'
+import { parseArgs } from 'node:util'
 import { config } from 'dotenv'
 import { parseManifest } from '../src/backfill/manifest'
 import { createPool } from '../src/db'
-import { discoverRepairTargets, finalizedRepairKeys } from './lib/historical-repair'
 import {
   claimRepairQueue,
   enqueueRepairTargets,
   releaseRepairLease,
-  settleRepairFailure,
-  settleRepairSuccess,
   type RepairLease,
-  type RepairQueueDb
+  type RepairQueueDb,
+  settleRepairFailure,
+  settleRepairSuccess
 } from '../src/db/repair-queue'
 import { runGraphBackfill } from './lib/graph-backfill'
-import { offlineProvider } from './lib/offline-provider'
+import { discoverRepairTargets, finalizedRepairKeys } from './lib/historical-repair'
 import { fetchYearnVaults } from './lib/kong-vaults'
+import { offlineProvider } from './lib/offline-provider'
 
 config({ quiet: true })
 
@@ -34,11 +34,17 @@ function key(target: { chainId: number; token: string; timestamp: number }): str
 }
 
 export function classifyRepairFailure(record: TargetOutcomeRecord | undefined): 'missing' | 'retryable' | 'invalid' {
-  if (!record || record.type !== 'target-outcome') return 'retryable'
-  if (record.status === 'rejected' || record.status === 'rejected_implausible' || record.reason === 'invalid') return 'invalid'
+  if (record?.type !== 'target-outcome') return 'retryable'
+  if (record.status === 'rejected' || record.status === 'rejected_implausible' || record.reason === 'invalid')
+    return 'invalid'
   const reason = record.reason
   const value = (reason ?? '').toLowerCase()
-  if (/cycle|max.?depth|budget|retryable|timeout|unavailable|provider|network|rate.?limit|malformed|transport|rpc/.test(value)) return 'retryable'
+  if (
+    /cycle|max.?depth|budget|retryable|timeout|unavailable|provider|network|rate.?limit|malformed|transport|rpc/.test(
+      value
+    )
+  )
+    return 'retryable'
   if (/unsupported|not.?found|no price|no historical price/.test(value)) return 'missing'
   return 'retryable'
 }
@@ -71,18 +77,36 @@ async function reconcile(db: RepairQueueDb, write: boolean, recentDays: number) 
     ])
   const found = await discoverRepairTargets(db, roots, recentDays)
   const enqueued = write ? await enqueueRepairTargets(db, found.targets) : 0
-  return { discovered: found.targets.length, finalized: found.finalized, enqueued, provisionalSelected: found.provisionalSelected, inventorySelected: found.inventorySelected, discoveryLimit: found.discoveryLimit }
+  return {
+    discovered: found.targets.length,
+    finalized: found.finalized,
+    enqueued,
+    provisionalSelected: found.provisionalSelected,
+    inventorySelected: found.inventorySelected,
+    discoveryLimit: found.discoveryLimit
+  }
 }
 
 async function processClaims(
   db: RepairQueueDb,
   claims: RepairLease[],
-  options: { write: boolean; deadline: number; concurrency: number; providerRps: number; evidenceDir: string; signal: AbortSignal }
+  options: {
+    write: boolean
+    deadline: number
+    concurrency: number
+    providerRps: number
+    evidenceDir: string
+    signal: AbortSignal
+  }
 ): Promise<{ completed: number; missing: number; errors: number; deferred: number }> {
   const metrics = { completed: 0, missing: 0, errors: 0, deferred: 0 }
   // A 429 is recorded on the queue and retried later. The shared limiter still
   // honors Retry-After, but this worker does not sleep past its lease/budget.
-  const provider = offlineProvider(options.providerRps, { retryRateLimits: false, timeoutMs: 5_000, signal: options.signal })
+  const provider = offlineProvider(options.providerRps, {
+    retryRateLimits: false,
+    timeoutMs: 5_000,
+    signal: options.signal
+  })
   const groupSize = Math.max(1, Math.min(25, options.concurrency * 5))
   for (let offset = 0; offset < claims.length; offset += groupSize) {
     const group = claims.slice(offset, offset + groupSize)
@@ -98,10 +122,12 @@ async function processClaims(
       break
     }
     const evidence = join(options.evidenceDir, `${Date.now()}-${offset}.jsonl`)
-    const manifest = parseManifest(JSON.stringify({
-      version: 1,
-      targets: group.map((claim) => ({ chainId: claim.chainId, token: claim.token, eodTimestamp: claim.timestamp }))
-    }))
+    const manifest = parseManifest(
+      JSON.stringify({
+        version: 1,
+        targets: group.map((claim) => ({ chainId: claim.chainId, token: claim.token, eodTimestamp: claim.timestamp }))
+      })
+    )
     let outcomes = new Map<string, TargetOutcomeRecord>()
     try {
       await runGraphBackfill({
@@ -117,7 +143,9 @@ async function processClaims(
       })
       outcomes = readOutcomes(evidence)
     } catch (error) {
-      outcomes = new Map(group.map((claim) => [key(claim), { reason: error instanceof Error ? error.message : String(error) }]))
+      outcomes = new Map(
+        group.map((claim) => [key(claim), { reason: error instanceof Error ? error.message : String(error) }])
+      )
     }
     const finalized = await finalizedRepairKeys(db, group)
     for (const claim of group) {
@@ -132,7 +160,14 @@ async function processClaims(
       }
       const record = outcomes.get(key(claim))
       const outcome = classifyRepairFailure(record)
-      if (await settleRepairFailure(db, claim, outcome, record?.reason ?? 'No finalized observation; retry classification')) {
+      if (
+        await settleRepairFailure(
+          db,
+          claim,
+          outcome,
+          record?.reason ?? 'No finalized observation; retry classification'
+        )
+      ) {
         if (outcome === 'missing') metrics.missing += 1
         else metrics.errors += 1
       }
@@ -142,7 +177,8 @@ async function processClaims(
 }
 
 export async function main(argv = process.argv.slice(2)): Promise<void> {
-  const { values } = parseArgs({ args: argv,
+  const { values } = parseArgs({
+    args: argv,
     options: {
       reconcile: { type: 'boolean', default: false },
       write: { type: 'boolean', default: false },
@@ -161,7 +197,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   if (!databaseUrl) throw new Error('DATABASE_URL is required')
   const positiveInteger = (raw: string | undefined, label: string, maximum = Number.MAX_SAFE_INTEGER): number => {
     const value = Number(raw)
-    if (!Number.isSafeInteger(value) || value < 1 || value > maximum) throw new Error(`${label} must be a positive safe integer`)
+    if (!Number.isSafeInteger(value) || value < 1 || value > maximum)
+      throw new Error(`${label} must be a positive safe integer`)
     return value
   }
   const limit = positiveInteger(values.limit, '--limit', 10_000)
@@ -170,28 +207,43 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const concurrency = positiveInteger(values.concurrency, '--concurrency', 32)
   const providerRps = positiveInteger(values['provider-rps'], '--provider-rps', 10)
   const leaseSeconds = positiveInteger(values['lease-seconds'], '--lease-seconds', 86_400)
-  if (leaseSeconds < budgetSeconds + 300) throw new Error('--lease-seconds must exceed --budget-seconds by at least five minutes')
+  if (leaseSeconds < budgetSeconds + 300)
+    throw new Error('--lease-seconds must exceed --budget-seconds by at least five minutes')
   const owner = values.owner!
   const outputDir = values.out ? resolve(values.out) : mkdtempSync(join(tmpdir(), 'historical-repair-'))
   mkdirSync(outputDir, { recursive: true })
   const pool = createPool(databaseUrl)
   const started = Date.now()
   const controller = new AbortController()
-  const deadlineTimer = setTimeout(() => controller.abort(new Error('Historical repair runtime budget exhausted')), budgetSeconds * 1000)
+  const deadlineTimer = setTimeout(
+    () => controller.abort(new Error('Historical repair runtime budget exhausted')),
+    budgetSeconds * 1000
+  )
   // RPC/database drivers may not abort an already-running call. Stop the process
   // before its leases expire rather than let a timed-out worker overlap a reclaim.
   // Unsettled claims remain durable and recover through lease expiry.
-  const hardStopTimer = setTimeout(() => {
-    console.error(JSON.stringify({ message: 'repair-hard-deadline', durationMs: Date.now() - started, recovery: 'lease-expiry' }))
-    process.exit(2)
-  }, (budgetSeconds + 30) * 1000)
+  const hardStopTimer = setTimeout(
+    () => {
+      console.error(
+        JSON.stringify({ message: 'repair-hard-deadline', durationMs: Date.now() - started, recovery: 'lease-expiry' })
+      )
+      process.exit(2)
+    },
+    (budgetSeconds + 30) * 1000
+  )
   try {
-    const report: Record<string, unknown> = { startedAt: new Date(started).toISOString(), mode: values.write ? 'write' : 'dry-run', reconcile: values.reconcile }
+    const report: Record<string, unknown> = {
+      startedAt: new Date(started).toISOString(),
+      mode: values.write ? 'write' : 'dry-run',
+      reconcile: values.reconcile
+    }
     if (values.reconcile) report.reconcileResult = await reconcile(pool, values.write ?? false, recentDays)
     const dueBefore = Number(
-      (await pool.query<{ count: string }>(
-        `SELECT count(*)::text AS count FROM historical_price_repair_queue WHERE completed_at IS NULL AND next_attempt_at <= now() AND (lease_expires_at IS NULL OR lease_expires_at <= now())`
-      )).rows[0]?.count ?? 0
+      (
+        await pool.query<{ count: string }>(
+          `SELECT count(*)::text AS count FROM historical_price_repair_queue WHERE completed_at IS NULL AND next_attempt_at <= now() AND (lease_expires_at IS NULL OR lease_expires_at <= now())`
+        )
+      ).rows[0]?.count ?? 0
     )
     report.dueBefore = dueBefore
     if (values.write && !values.reconcile) {

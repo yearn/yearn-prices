@@ -1,10 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { DefiLlamaClient } from '../../../src/clients/defillama'
-import {
-  createDefiLlamaSpotSource,
-  DEFI_LLAMA_SPOT_BATCH
-} from '../../../src/sources/defillama/spot'
 import { CURRENT_MAX_AGE_SECONDS, CURRENT_MAX_FUTURE_SKEW_SECONDS } from '../../../src/sources/defillama/current'
+import { createDefiLlamaSpotSource, DEFI_LLAMA_SPOT_BATCH } from '../../../src/sources/defillama/spot'
 
 const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
 const OTHER = '0x0000000000000000000000000000000000000001'
@@ -64,8 +61,9 @@ describe('createDefiLlamaSpotSource', () => {
   })
 
   it('coalesces concurrent lookups and splits large batches', async () => {
-    const tokens = Array.from({ length: DEFI_LLAMA_SPOT_BATCH + 1 }, (_, index) =>
-      `0x${String(index + 1).padStart(40, '0')}`
+    const tokens = Array.from(
+      { length: DEFI_LLAMA_SPOT_BATCH + 1 },
+      (_, index) => `0x${String(index + 1).padStart(40, '0')}`
     )
     const getCurrent = vi.fn(async (keys: string[]) => ({
       coins: Object.fromEntries(keys.map((key) => [key, { price: 1, timestamp: NOW }]))
@@ -181,8 +179,9 @@ describe('createDefiLlamaSpotSource', () => {
       const source = createDefiLlamaSpotSource({
         getCurrent: getCurrentMock as unknown as DefiLlamaClient['getCurrent']
       })
-      const tokens = Array.from({ length: DEFI_LLAMA_SPOT_BATCH * 2 + 1 }, (_, index) =>
-        `0x${String(index + 1).padStart(40, '0')}`
+      const tokens = Array.from(
+        { length: DEFI_LLAMA_SPOT_BATCH * 2 + 1 },
+        (_, index) => `0x${String(index + 1).padStart(40, '0')}`
       )
       const requests = tokens.map((token) => source.getSpotPrice(1, token))
 

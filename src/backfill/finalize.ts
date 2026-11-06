@@ -218,9 +218,7 @@ async function applyBatch(
     (target) => !insertedKeys.has(priceKey(target.chain, target.token, target.eodTimestamp))
   )
   const contestedPriced =
-    contested.length > 0
-      ? await readPricedKeys(client, contested, readChunkSize, { finalizedOnly })
-      : new Set<string>()
+    contested.length > 0 ? await readPricedKeys(client, contested, readChunkSize, { finalizedOnly }) : new Set<string>()
 
   const results: FinalizationTargetResult[] = [
     ...concurrent.map((target) => toResult(target, 'skipped_concurrent_existing'))

@@ -6,8 +6,8 @@ import { chainIdToName } from '../../utils/chains'
 import { currentUtcDayEnd, nowUnix } from '../../utils/time'
 import { SpotPriceSourceBase } from '../base'
 import type { SpotPriceResult } from '../types'
-import { DEFI_LLAMA_CURRENT_BATCH, CURRENT_MAX_AGE_SECONDS, CURRENT_MAX_FUTURE_SKEW_SECONDS } from './current'
 import { toHistoricalPrice } from './coin'
+import { CURRENT_MAX_AGE_SECONDS, CURRENT_MAX_FUTURE_SKEW_SECONDS, DEFI_LLAMA_CURRENT_BATCH } from './current'
 import { DEFILLAMA_UNSUPPORTED_CHAINS } from './historical'
 
 /** Maximum number of coins sent to one /prices/current request. */
@@ -112,7 +112,6 @@ export class DefiLlamaSpotSource extends SpotPriceSourceBase {
   private flushScheduled = false
   private flushRunning = false
   private flushAgain = false
-  private flushTimer: ReturnType<typeof setTimeout> | undefined
 
   constructor(private readonly client: CurrentClient = defaultClient) {
     super()
@@ -194,9 +193,8 @@ export class DefiLlamaSpotSource extends SpotPriceSourceBase {
       return
     }
     this.flushScheduled = true
-    this.flushTimer = setTimeout(() => {
+    setTimeout(() => {
       this.flushScheduled = false
-      this.flushTimer = undefined
       void this.flush()
     }, DEFI_LLAMA_SPOT_BATCH_WINDOW_MS)
   }
@@ -273,8 +271,6 @@ export class DefiLlamaSpotSource extends SpotPriceSourceBase {
   }
 }
 
-export function createDefiLlamaSpotSource(
-  client?: CurrentClient
-): DefiLlamaSpotSource {
+export function createDefiLlamaSpotSource(client?: CurrentClient): DefiLlamaSpotSource {
   return new DefiLlamaSpotSource(client)
 }

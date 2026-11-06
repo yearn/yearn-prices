@@ -115,7 +115,9 @@ describe('handleSpot', () => {
 
   it('returns an error for every token and the spot cache header when every token fails', async () => {
     fetchMock.mockImplementation((url: string) =>
-      url.includes('coins.llama.fi/prices/current/') ? Promise.resolve(defillamaEmptyRes()) : Promise.resolve(ensoRes(404, {}))
+      url.includes('coins.llama.fi/prices/current/')
+        ? Promise.resolve(defillamaEmptyRes())
+        : Promise.resolve(ensoRes(404, {}))
     )
 
     const response = await handleSpot(spotRequest([ETH_KEY, BASE_KEY]), ENV)
@@ -247,7 +249,9 @@ describe('handleSpot', () => {
 
   it('returns an error when Enso returns a 404', async () => {
     fetchMock.mockImplementation((url: string) =>
-      url.includes('coins.llama.fi/prices/current/') ? Promise.resolve(defillamaEmptyRes()) : Promise.resolve(ensoRes(404, {}))
+      url.includes('coins.llama.fi/prices/current/')
+        ? Promise.resolve(defillamaEmptyRes())
+        : Promise.resolve(ensoRes(404, {}))
     )
 
     const response = await handleSpot(spotRequest([ETH_KEY]), ENV)

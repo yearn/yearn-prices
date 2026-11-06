@@ -187,7 +187,11 @@ export async function enqueueClosedRepairTargets(
   targets: RepairTarget[],
   now = Math.floor(Date.now() / 1_000)
 ): Promise<number> {
-  return enqueueRepairTargets(db, targets.filter((target) => isClosedDay(target.timestamp, now)), now)
+  return enqueueRepairTargets(
+    db,
+    targets.filter((target) => isClosedDay(target.timestamp, now)),
+    now
+  )
 }
 
 /** Atomically claim due work. Expired leases are safely reclaimable. */
@@ -196,7 +200,8 @@ export async function claimRepairQueue(
   options: { limit: number; owner: string; leaseSeconds: number; leaseToken?: string }
 ): Promise<RepairLease[]> {
   if (!Number.isInteger(options.limit) || options.limit < 1) throw new Error('repair queue limit must be positive')
-  if (!Number.isFinite(options.leaseSeconds) || options.leaseSeconds <= 0) throw new Error('leaseSeconds must be positive')
+  if (!Number.isFinite(options.leaseSeconds) || options.leaseSeconds <= 0)
+    throw new Error('leaseSeconds must be positive')
   const token = options.leaseToken ?? randomLeaseToken()
   const result = await db.query<Record<string, unknown>>(
     `
@@ -268,7 +273,16 @@ export async function settleRepairFailure(
       WHERE chain_id = $1 AND token = $2 AND "timestamp" = $3::timestamptz
         AND completed_at IS NULL AND lease_owner = $7 AND lease_token = $8
     `,
-    [lease.chainId, lease.token, unixToIsoTimestamp(lease.timestamp), outcome, error, delaySeconds, lease.leaseOwner, lease.leaseToken]
+    [
+      lease.chainId,
+      lease.token,
+      unixToIsoTimestamp(lease.timestamp),
+      outcome,
+      error,
+      delaySeconds,
+      lease.leaseOwner,
+      lease.leaseToken
+    ]
   )
   return (result.rowCount ?? 0) === 1
 }
@@ -286,4 +300,3 @@ export async function releaseRepairLease(db: RepairQueueDb, lease: RepairLease):
   )
   return (result.rowCount ?? 0) === 1
 }
-

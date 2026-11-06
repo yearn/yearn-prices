@@ -1,6 +1,7 @@
 import type { Pool } from '@neondatabase/serverless'
 import { DefiLlamaClient } from '../../clients/defillama'
 import { enqueueClosedRepairTargets, finalizeTokenPrices, insertProvisionalTokenPrices } from '../../db'
+import type { RepairTarget } from '../../db/repair-queue'
 import { plausibleWrites, storedCurveLpGuard } from '../../prices/curve-lp-guard'
 import { ACCEPTED_PRICE_SQL } from '../../prices/rejections'
 import { type CurrentPriceTarget, currentPriceKey, fetchCurrentPrices } from '../../sources/defillama/current'
@@ -13,7 +14,6 @@ import {
   type CurrentFallbackTarget
 } from '../../sources/onchain/current-fallback'
 import type { Env, ExactPriceRecord, HistoricalRequestTuple, PriceSource, TokenPriceWrite } from '../../types'
-import type { RepairTarget } from '../../db/repair-queue'
 import { chainIdToName, chainNameToId } from '../../utils/chains'
 import { currentUtcDayEnd, isClosedDay, isTodayNormalized } from '../../utils/time'
 
@@ -216,16 +216,7 @@ export async function readThrough(
     if (!price) continue
     const observed = stored.get(exactKey(chain, token, todayEnd))?.observedTimestamp
     if (observed != null && observed >= price.timestamp) continue
-    todayRecords.push(
-      toRecord(
-        chain,
-        token,
-        todayEnd,
-        price,
-        price.observationEndpoint,
-        price.source
-      )
-    )
+    todayRecords.push(toRecord(chain, token, todayEnd, price, price.observationEndpoint, price.source))
   }
 
   for (const { target, price } of closed) {

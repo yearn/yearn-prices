@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
+import { discoverRepairTargets } from '../../scripts/lib/historical-repair'
+import { classifyRepairFailure } from '../../scripts/repair-historical-prices'
 import type { RepairQueueDb } from '../../src/db/repair-queue'
 import { normalizeTokenAddress } from '../../src/utils/chains'
 import { currentUtcDayEnd, nowUnix } from '../../src/utils/time'
-import { discoverRepairTargets } from '../../scripts/lib/historical-repair'
-import { classifyRepairFailure } from '../../scripts/repair-historical-prices'
 
 const ROOT = '0x0000000000000000000000000000000000000001'
 const EXTRA = '0xabcd000000000000000000000000000000000000'
@@ -24,11 +24,7 @@ describe('historical repair discovery', () => {
       { rows: [] }
     ])
 
-    const result = await discoverRepairTargets(
-      db,
-      [{ chainId: 1, token: ROOT, timestamp: previousDay }],
-      2
-    )
+    const result = await discoverRepairTargets(db, [{ chainId: 1, token: ROOT, timestamp: previousDay }], 2)
 
     expect(result.provisionalSelected).toBe(1)
     expect(result.targets).toContainEqual({ chainId: 1, token: normalizeTokenAddress(EXTRA), timestamp: previousDay })
@@ -46,11 +42,7 @@ describe('historical repair discovery', () => {
       { rows: [{ chain_id: 1, token: ROOT.toLowerCase(), timestamp: new Date(previousDay * 1000) }] }
     ])
 
-    const result = await discoverRepairTargets(
-      db,
-      [{ chainId: 1, token: ROOT, timestamp: previousDay }],
-      1
-    )
+    const result = await discoverRepairTargets(db, [{ chainId: 1, token: ROOT, timestamp: previousDay }], 1)
 
     expect(result.finalized).toBe(1)
     expect(result.targets).toEqual([])
@@ -73,11 +65,7 @@ describe('historical repair discovery', () => {
       { rows: [] }
     ])
 
-    const result = await discoverRepairTargets(
-      db,
-      [{ chainId: 1, token: ROOT, timestamp: previousDay }],
-      1
-    )
+    const result = await discoverRepairTargets(db, [{ chainId: 1, token: ROOT, timestamp: previousDay }], 1)
 
     expect(result.inventorySelected).toBe(1)
     expect(result.targets).toContainEqual({ chainId: 1, token: normalizeTokenAddress(EXTRA), timestamp: previousDay })
@@ -91,12 +79,16 @@ describe('historical repair failure classification', () => {
   })
 
   it('treats explicit unsupported outcomes as missing', () => {
-    expect(classifyRepairFailure({ type: 'target-outcome', status: 'unresolved', reason: 'unsupported adapter' })).toBe('missing')
+    expect(classifyRepairFailure({ type: 'target-outcome', status: 'unresolved', reason: 'unsupported adapter' })).toBe(
+      'missing'
+    )
   })
 
   it('retries cycle and budget failures', () => {
     expect(classifyRepairFailure({ type: 'target-outcome', status: 'unresolved', reason: 'cycle' })).toBe('retryable')
-    expect(classifyRepairFailure({ type: 'target-outcome', status: 'unresolved', reason: 'budget exhausted' })).toBe('retryable')
+    expect(classifyRepairFailure({ type: 'target-outcome', status: 'unresolved', reason: 'budget exhausted' })).toBe(
+      'retryable'
+    )
   })
 
   it('marks rejected outcomes invalid', () => {

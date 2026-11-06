@@ -23,7 +23,7 @@
 <p>Daily reconciliation discovers recent closed-day Yearn targets, provisional history and existing gap inventory. Weekly audit checks finalized closed-day coverage without launching broad warmup. Manual warmup commands remain available.</p>
 <p><a href="targeted-repair.md">Read the repair runbook and commands</a></p>
 <h2>Validation and rollout</h2>
-<p id="validation">TypeScript checking passes. Independent code review checked leases, finalized-only reads, failure classification and bounded discovery. Current-day fallback review checked refresh behavior, source provenance and its shared 2.5-second deadline. Focused tests were added but remain unrun, along with lint, under the repository's Astra instruction.</p>
-<p class="note">The migration is prepared, not applied. These changes are local and have not been deployed. Database execution, live coverage improvement and repair latency remain unmeasured. GitHub schedules do not provide immediate or guaranteed-time delivery.</p>
+<p id="validation">TypeScript checking passes. Independent code review checked leases, finalized-only reads, failure classification and bounded discovery. Current-day fallback review checked refresh behavior, source provenance and its shared 2.5-second deadline. Tests and lint run in GitHub CI; they are not run locally under the repository's Astra instruction. The initial CI failures identified a spot provider-call assertion and an overbroad finalized-row mock, alongside formatting and import ordering. The follow-up fixes keep the original cache and repair expectations intact.</p>
+<p class="note">The migration is prepared, not applied. These changes are proposed in draft PR #92 and have not been deployed. Database execution, live coverage improvement and repair latency remain unmeasured. GitHub schedules do not provide immediate or guaranteed-time delivery.</p>
 </main>
 </html>

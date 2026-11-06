@@ -1,12 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
 import { writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import {
-  parseTargetFile,
-  SharedSpotSourceCache,
-  type SpotCoverageTarget
-} from '../../scripts/benchmark-spot-coverage'
+import { describe, expect, it, vi } from 'vitest'
+import { parseTargetFile, SharedSpotSourceCache, type SpotCoverageTarget } from '../../scripts/benchmark-spot-coverage'
 import type { SpotPriceSource } from '../../src/sources/types'
 
 function fixtureSource(getSpotPrice: SpotPriceSource['getSpotPrice']): SpotPriceSource {
@@ -55,7 +51,10 @@ describe('spot coverage benchmark helpers', () => {
     await wrapped.getSpotPrice(1, token)
 
     expect(getSpotPrice).toHaveBeenCalledTimes(1)
-    expect(cache.report()).toMatchObject({ sharedSourceInvocations: { fixture: 1 }, sharedSourceCacheHits: { fixture: 1 } })
+    expect(cache.report()).toMatchObject({
+      sharedSourceInvocations: { fixture: 1 },
+      sharedSourceCacheHits: { fixture: 1 }
+    })
   })
 
   it('keeps source errors in the shared cache', async () => {
