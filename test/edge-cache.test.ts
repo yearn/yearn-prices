@@ -344,10 +344,7 @@ describe('spot transient cache policy', () => {
 
     const second = await worker.fetch(request, env, ctx)
     expect(second.headers.get('cache-control')).toBe('no-store')
-    // Each request first tries Enso, then the DeFiLlama spot fallback. Both
-    // requests must reach the providers because transient responses are
-    // deliberately not written to the edge cache.
-    expect(fetchMock).toHaveBeenCalledTimes(4)
+    // Neon poolQueryViaFetch also uses the mocked global fetch.
     const providerHosts = fetchMock.mock.calls.map(([url]) => new URL(String(url)).hostname)
     expect(providerHosts.filter((host) => host === 'api.enso.build')).toHaveLength(2)
     expect(providerHosts.filter((host) => host === 'coins.llama.fi')).toHaveLength(2)

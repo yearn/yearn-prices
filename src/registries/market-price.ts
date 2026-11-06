@@ -1,4 +1,5 @@
 import { ApiError } from '../http/errors'
+import { writeDown } from '../prices/write-downs'
 import type { MarketPriceResolver, ResolvedPricePath } from '../sources/onchain/types'
 import type { PriceSource } from '../types'
 
@@ -35,6 +36,9 @@ export function createMarketPriceResolver(
       return null
     }
     if (!marketSources.some((source) => source.supports(target.chainId))) {
+      return null
+    }
+    if (writeDown(target.chainId, target.token, target.timestamp ?? Math.floor(Date.now() / 1000))) {
       return null
     }
 

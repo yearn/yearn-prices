@@ -3,7 +3,7 @@ import type { Env } from '../types'
 
 // Bumping this revision invalidates prior historical cache entries, including
 // arbitrary batch/range combinations and source filters.
-export const HISTORICAL_CACHE_REVISION = '2026-11-cache-integrity-v2'
+export const HISTORICAL_CACHE_REVISION = '2026-11-curve-write-down-v3'
 
 // Cloudflare edge caching via the Cache API.
 //
@@ -23,6 +23,7 @@ function edgeCache(): Cache {
 export function canonicalCacheKey(rawUrl: string): string {
   const url = new URL(rawUrl)
   if (
+    url.pathname === '/api/prices/spot' ||
     url.pathname.startsWith('/api/prices/historical/') ||
     url.pathname === '/api/prices/batchHistorical' ||
     url.pathname === '/api/prices/rangeHistorical'

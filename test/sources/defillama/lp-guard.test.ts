@@ -26,6 +26,18 @@ function guard(reads: Record<string, Record<string, unknown>>, prices: Record<st
 const peggedCoins = { [GUSD]: 1, [CRVUSD]: 0.998 }
 
 describe('createCurveLpGuard', () => {
+  it('rejects zero supply even without virtual price or coin prices', async () => {
+    expect(await guard({ [LP]: { N_COINS: 2n, coins: [GUSD, CRVUSD], totalSupply: 0n } })(1, LP, TIMESTAMP, 1)).toBe(
+      false
+    )
+  })
+
+  it('rejects the incident Enso quote with nonzero supply', async () => {
+    expect(await guard({ [LP]: { ...stableReads[LP], totalSupply: 1n } }, peggedCoins)(1, LP, TIMESTAMP, 5.7e20)).toBe(
+      false
+    )
+  })
+
   it('rejects the GUSD-crvUSD quote from issue 62', async () => {
     const isPlausible = guard(stableReads, peggedCoins)
     expect(await isPlausible(1, LP, TIMESTAMP, 6_656_790_044_458_034)).toBe(false)

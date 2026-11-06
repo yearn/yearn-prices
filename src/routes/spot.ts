@@ -1,17 +1,37 @@
+import type { Pool } from '@neondatabase/serverless'
 import { CACHE_CONTROL_NO_STORE, CACHE_CONTROL_SPOT } from '../cache'
 import { ApiError, ensure, errorEnvelope, jsonResponse } from '../http'
+import { writeDown } from '../prices/write-downs'
 import { type SpotSourceRegistry, spotSourceRegistry } from '../registries'
 import type { SpotPrice } from '../sources'
 import type { Env, SpotRequest, SpotResponseCoin } from '../types'
 import { chainNameToId, parseSpotCoins } from '../utils'
+import { knownCurveLps, lpKey, MAX_GUARDED_RECORDS } from './historical/read-through'
 
 const SPOT_RESOLUTION_DEADLINE_MS = 15_000
+const KNOWN_LP_LOOKUP_MS = 1_000
+
+async function knownLps(pool: Pool | undefined, requests: SpotRequest[], signal: AbortSignal) {
+  const empty = new Set<string>()
+  if (!pool) return empty
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const fallback = new Promise<Set<string>>((resolve) => {
+    timer = setTimeout(resolve, KNOWN_LP_LOOKUP_MS, empty)
+    signal.addEventListener('abort', () => resolve(empty), { once: true })
+  })
+  try {
+    return await Promise.race([knownCurveLps(pool, requests).catch(() => empty), fallback])
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 async function resolveWithSignal(
   registry: SpotSourceRegistry,
   chainId: number,
   token: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  guarded: boolean
 ): Promise<SpotPrice> {
   let rejectOnAbort: ((reason: unknown) => void) | undefined
   const aborted = new Promise<never>((_, reject) => {
@@ -27,7 +47,7 @@ async function resolveWithSignal(
     if (signal.aborted) {
       return await aborted
     }
-    return await Promise.race([registry.resolve(chainId, token, signal), aborted])
+    return await Promise.race([registry.resolve(chainId, token, signal, guarded), aborted])
   } finally {
     signal.removeEventListener('abort', onAbort)
   }
@@ -39,7 +59,8 @@ async function resolveWithSignal(
 export async function handleSpot(
   request: Request,
   env: Env,
-  registry: SpotSourceRegistry = spotSourceRegistry(env)
+  registry: SpotSourceRegistry = spotSourceRegistry(env),
+  pool?: Pool
 ): Promise<Response> {
   const requests = parseSpotCoins(new URL(request.url).searchParams.get('coins'))
   const controller = new AbortController()
@@ -53,12 +74,27 @@ export async function handleSpot(
   const timeout = setTimeout(() => controller.abort(), SPOT_RESOLUTION_DEADLINE_MS)
   let settled: PromiseSettledResult<{ req: SpotRequest; spot: SpotPrice }>[]
   try {
+    const lps = await knownLps(pool, requests, controller.signal)
+    const guarded = new Set(
+      requests
+        .map((req) => lpKey(req.chain, req.token))
+        .filter((key) => lps.has(key))
+        .slice(0, MAX_GUARDED_RECORDS)
+    )
     settled = await Promise.allSettled(
       requests.map(async (req): Promise<{ req: SpotRequest; spot: SpotPrice }> => {
         const chainId = chainNameToId(req.chain)
         ensure(chainId !== undefined, 'INVALID_INPUT', `Unsupported chain: ${req.chain}`)
 
-        const spot = await resolveWithSignal(registry, chainId, req.token.toLowerCase(), controller.signal)
+        const spot =
+          writeDown(chainId, req.token, Math.floor(Date.now() / 1000)) ??
+          (await resolveWithSignal(
+            registry,
+            chainId,
+            req.token.toLowerCase(),
+            controller.signal,
+            guarded.has(lpKey(req.chain, req.token))
+          ))
 
         return {
           req,
