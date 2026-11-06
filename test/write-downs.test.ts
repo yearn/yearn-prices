@@ -146,7 +146,7 @@ for (const scenario of ['empty', 'absurd', 'rpc-error']) {
   })
 }
 
-it('keeps maximum range queries at one SQL tuple per token', async () => {
+it('chunks maximum range queries into exact timestamp lookups', async () => {
   const coins = Object.fromEntries(
     Array.from({ length: 50 }, (_, index) => [
       `ethereum:0x${(index + 1).toString(16).padStart(40, '0')}`,
@@ -158,7 +158,8 @@ it('keeps maximum range queries at one SQL tuple per token', async () => {
     current: async () => new Map(),
     historical: async () => ({ prices: [], failed: false })
   })
-  expect((query.mock.calls[0] as unknown[])[1]).toHaveLength(200)
+  expect((query.mock.calls[0] as unknown[])[1]).toHaveLength(30_000)
+  expect((query.mock.calls[1] as unknown[])[1]).toHaveLength(24_900)
 })
 
 it('guards spot quotes only for known Curve LPs', async () => {

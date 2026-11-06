@@ -9,12 +9,14 @@ import type { Env } from '../types'
 import { createMarketPriceResolver } from './market-price'
 import { SourceRegistry } from './source-registry'
 
+const isGuardedSource = (source: SpotPriceSource) => source.name === 'enso'
+
 /**
  * Prices an on-chain adapter's child tokens with the market sources only. It
  * never sees the on-chain source, so recursion cannot loop back into itself.
  */
-function marketPriceResolver(marketSources: SpotPriceSource[]) {
-  const registry = new SpotSourceRegistry(marketSources, async () => true)
+function marketPriceResolver(marketSources: SpotPriceSource[], env: Env) {
+  const registry = new SpotSourceRegistry(marketSources, async () => true, env)
   return createMarketPriceResolver(marketSources, (chainId, token, _timestamp, signal) =>
     registry.resolve(chainId, token, signal)
   )
@@ -30,7 +32,7 @@ export function createSpotSources(env: Env): SpotPriceSource[] {
   return [
     ...marketSources,
     createOnchainSpotSource({
-      marketPrice: marketPriceResolver(marketSources),
+      marketPrice: marketPriceResolver(marketSources, env),
       env,
       clientForChain: (chainId) => getChainClient(chainId, env)
     })
@@ -58,7 +60,7 @@ export class SpotSourceRegistry extends SourceRegistry<SpotPriceSource, [signal?
           Promise.all(
             coins.map(async (coin) => {
               for (const source of sources) {
-                if (!(source.name === 'enso' || source.name.startsWith('defillama')) || !source.supports(chainId))
+                if (!isGuardedSource(source) || !source.supports(chainId))
                   continue
                 const quote = await source.getSpotPrice(chainId, coin)
                 if (quote) return quote.price
@@ -75,7 +77,7 @@ export class SpotSourceRegistry extends SourceRegistry<SpotPriceSource, [signal?
         if (
           price &&
           guarded &&
-          (source.name === 'enso' || source.name.startsWith('defillama')) &&
+          isGuardedSource(source) &&
           !(await plausible(chainId, token, timestamp, price.price))
         )
           return null

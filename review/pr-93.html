@@ -1,0 +1,8 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>PR 93 review</title>
+<body><h1>PR 93 corrections — incomplete</h1>
+<p>Range reads now use the existing chunked exact-timestamp query. The maximum-range regression expects two SQL chunks, containing 30,000 and 24,900 parameters.</p>
+<p>The manifest rejects uppercase addresses. Historical response types explicitly include write-down. The spot registry forwards environment configuration to its child registry and consistently selects Enso for guarding.</p>
+<p>Still outstanding: replace the database-based spot guard gate with a batched RPC LP probe, add non-LP production wiring coverage, and validate the complete suite.</p>
+<p>Validation: bunx tsc --noEmit and git diff --check printed no output. Tests and lint were not run because the worktree instructions prohibit Astra from running them.</p>
+</body></html>

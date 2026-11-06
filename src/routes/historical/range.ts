@@ -1,6 +1,6 @@
 import type { Pool } from '@neondatabase/serverless'
 import { CACHE_CONTROL_NO_STORE, cacheControlForRange } from '../../cache'
-import { getRangeHistoricalPrices } from '../../db'
+import { getBatchHistoricalPrices } from '../../db'
 import { jsonResponse } from '../../http'
 import { writeDown } from '../../prices/write-downs'
 import type { Env } from '../../types'
@@ -27,15 +27,11 @@ export async function handleRangeHistorical(
     return price ? [{ ...entry, ...price }] : []
   })
   const pending = expectedRequests.filter((entry) => !writeDown(entry.chain, entry.token, entry.timestamp, source))
-  const pendingRanges = requests.flatMap((entry) => {
-    const days = pending.filter((day) => day.chain === entry.chain && day.token === entry.token)
-    return days.length ? [{ ...entry, endTimestamp: days[days.length - 1].timestamp }] : []
-  })
   const { rows, upstreamFailed } = await readThrough(
     pool,
     env,
     pending,
-    await getRangeHistoricalPrices(pool, pendingRanges, source),
+    await getBatchHistoricalPrices(pool, pending, source),
     source,
     upstream
   )

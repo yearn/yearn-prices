@@ -8,7 +8,7 @@ for (const entry of manifest) {
     entries.has(key) ||
     !Number.isSafeInteger(entry.chain) ||
     entry.chain <= 0 ||
-    !/^0x[0-9a-f]{40}$/i.test(entry.token) ||
+    !/^0x[0-9a-f]{40}$/.test(entry.token) ||
     !Number.isSafeInteger(entry.from) ||
     entry.from <= 0 ||
     entry.price !== 0 ||
