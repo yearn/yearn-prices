@@ -9,6 +9,22 @@ import { chainNameToId, parseSpotCoins } from '../utils'
 import { knownCurveLps, lpKey, MAX_GUARDED_RECORDS } from './historical/read-through'
 
 const SPOT_RESOLUTION_DEADLINE_MS = 15_000
+const KNOWN_LP_LOOKUP_MS = 1_000
+
+async function knownLps(pool: Pool | undefined, requests: SpotRequest[], signal: AbortSignal) {
+  const empty = new Set<string>()
+  if (!pool) return empty
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const fallback = new Promise<Set<string>>((resolve) => {
+    timer = setTimeout(resolve, KNOWN_LP_LOOKUP_MS, empty)
+    signal.addEventListener('abort', () => resolve(empty), { once: true })
+  })
+  try {
+    return await Promise.race([knownCurveLps(pool, requests).catch(() => empty), fallback])
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 async function resolveWithSignal(
   registry: SpotSourceRegistry,
@@ -58,42 +74,26 @@ export async function handleSpot(
   const timeout = setTimeout(() => controller.abort(), SPOT_RESOLUTION_DEADLINE_MS)
   let settled: PromiseSettledResult<{ req: SpotRequest; spot: SpotPrice }>[]
   try {
-    const quotes = new Map<string, SpotPrice>()
-    for (const req of requests) {
-      const chainId = chainNameToId(req.chain)
-      void (chainId === undefined ? Promise.resolve(undefined) :
-        registry.resolve(chainId, req.token.toLowerCase(), controller.signal, false)
-          .then((price) => { quotes.set(req.originalKey, price); return price })
-          .catch(() => undefined))
-    }
-    const empty = new Set<string>()
-    let stopLookup: (() => void) | undefined
-    const stopped = new Promise<Set<string>>((resolve) => {
-      stopLookup = () => resolve(empty)
-      controller.signal.addEventListener('abort', stopLookup, { once: true })
-      if (controller.signal.aborted) stopLookup()
-    })
-    const lps = await Promise.race([
-      pool ? knownCurveLps(pool, requests).catch(() => empty) : Promise.resolve(empty),
-      stopped
-    ])
-    if (stopLookup) controller.signal.removeEventListener('abort', stopLookup)
-    let guardedCount = 0
+    const lps = await knownLps(pool, requests, controller.signal)
+    const guarded = new Set(
+      requests
+        .map((req) => lpKey(req.chain, req.token))
+        .filter((key) => lps.has(key))
+        .slice(0, MAX_GUARDED_RECORDS)
+    )
     settled = await Promise.allSettled(
       requests.map(async (req): Promise<{ req: SpotRequest; spot: SpotPrice }> => {
         const chainId = chainNameToId(req.chain)
         ensure(chainId !== undefined, 'INVALID_INPUT', `Unsupported chain: ${req.chain}`)
 
-        const guarded = lps.has(lpKey(req.chain, req.token)) && guardedCount++ < MAX_GUARDED_RECORDS
-        const cached = quotes.get(req.originalKey)
         const spot =
           writeDown(chainId, req.token, Math.floor(Date.now() / 1000)) ??
-          (!guarded && cached ? cached : await resolveWithSignal(
+          (await resolveWithSignal(
             registry,
             chainId,
             req.token.toLowerCase(),
             controller.signal,
-            guarded
+            guarded.has(lpKey(req.chain, req.token))
           ))
 
         return {

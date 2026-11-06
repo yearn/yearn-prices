@@ -1,13 +1,16 @@
 import type { Pool } from '@neondatabase/serverless'
+import { getAddress } from 'viem'
 import { describe, expect, it, vi } from 'vitest'
 import { canonicalCacheKey, HISTORICAL_CACHE_REVISION } from '../src/cache/edge'
 import * as rpc from '../src/clients/rpc'
 import { loadWriteDowns, writeDown } from '../src/prices/write-downs'
 import { spotSourceRegistry } from '../src/registries'
+import { createMarketPriceResolver } from '../src/registries/market-price'
 import { SpotSourceRegistry } from '../src/registries/spot'
 import { handleBatchHistorical } from '../src/routes/historical/batch'
 import { handleHistorical } from '../src/routes/historical/exact'
 import { handleRangeHistorical } from '../src/routes/historical/range'
+import { MAX_GUARDED_RECORDS } from '../src/routes/historical/read-through'
 import { handleSpot } from '../src/routes/spot'
 import { createCurveLpGuard } from '../src/sources/defillama/lp-guard'
 import { fakeClient } from './sources/onchain/helpers'
@@ -138,7 +141,8 @@ for (const scenario of ['empty', 'absurd', 'rpc-error']) {
       ],
       guard
     )
-    const response = await handleSpot(request('spot', [lpKeyName]), env, registry)
+    const pool = { query: async () => ({ rows: [{ chain: 'ethereum', token: lpToken }] }) } as unknown as Pool
+    const response = await handleSpot(request('spot', [lpKeyName]), env, registry, pool)
     const body = (await response.json()) as { coins: Record<string, unknown> }
     expect(body.coins[lpKeyName]).toMatchObject(
       scenario === 'rpc-error' ? { prices: [{ price: 5.7e20 }] } : { error: { code: 'NOT_FOUND' } }
@@ -176,12 +180,85 @@ it('guards spot quotes only for known Curve LPs', async () => {
     guard
   )
   const coins = Array.from({ length: 50 }, (_, index) => `ethereum:0x${(index + 2).toString(16).padStart(40, '0')}`)
-  const known = coins[7]
-  const query = vi.fn(async () => ({ rows: [{ chain: 'ethereum', token: known.slice('ethereum:'.length) }] }))
-  await handleSpot(request('spot', coins), env, registry, { query } as unknown as Pool)
+  const known = coins.slice(0, 10).map((coin) => coin.slice('ethereum:'.length))
+  const query = vi.fn(async () => ({ rows: known.map((lp) => ({ chain: 'ethereum', token: lp })) }))
+  const response = await handleSpot(request('spot', coins), env, registry, { query } as unknown as Pool)
+  const body = (await response.json()) as { coins: Record<string, { prices?: unknown[] }> }
   expect(query).toHaveBeenCalledTimes(1)
-  expect(guard).toHaveBeenCalledTimes(1)
-  expect(guard).toHaveBeenCalledWith(1, known.slice('ethereum:'.length), expect.any(Number), 1)
+  expect(guard).toHaveBeenCalledTimes(MAX_GUARDED_RECORDS)
+  expect(guard.mock.calls.map((call) => (call as unknown[])[1])).toEqual(known.slice(0, MAX_GUARDED_RECORDS))
+  expect(coins.every((coin) => body.coins[coin].prices?.length === 1)).toBe(true)
+})
+
+it('serves unguarded spot prices when the known-LP lookup hangs', async () => {
+  vi.useFakeTimers()
+  try {
+    const guard = vi.fn(async () => false)
+    const registry = new SpotSourceRegistry(
+      [
+        {
+          name: 'enso',
+          priority: 10,
+          supports: () => true,
+          getSpotPrice: async () => ({ price: 1, timestamp, symbol: null, confidence: null })
+        }
+      ],
+      guard
+    )
+    const pool = { query: () => new Promise(() => {}) } as unknown as Pool
+    const pending = handleSpot(request('spot', [lpKeyName]), env, registry, pool)
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(await (await pending).json()).toMatchObject({ coins: { [lpKeyName]: { prices: [{ price: 1 }] } } })
+    expect(guard).not.toHaveBeenCalled()
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('withholds written-down child tokens from derived prices', async () => {
+  const resolve = vi.fn(async () => ({ price: 5.7e20, timestamp, symbol: null, confidence: null, source: 'enso' }))
+  const marketPrice = createMarketPriceResolver([{ supports: () => true }], resolve)
+  expect(await marketPrice({ chainId: 1, token, timestamp } as never)).toBeNull()
+  expect(await marketPrice({ chainId: 1, token, timestamp: null } as never)).toBeNull()
+  expect(resolve).not.toHaveBeenCalled()
+})
+
+it('trims a range straddling a write-down cutoff and merges both halves', async () => {
+  const before = 1690675199
+  const query = vi.fn(async () => ({
+    rows: [
+      {
+        chain: 'ethereum',
+        token,
+        timestamp: new Date(before * 1000),
+        price: '2',
+        symbol: null,
+        confidence: null,
+        source: 'curve'
+      }
+    ]
+  }))
+  const response = await handleRangeHistorical(
+    request('rangeHistorical', { [key]: [before, timestamp] }),
+    env,
+    { query } as unknown as Pool,
+    { current: async () => new Map(), historical: async () => ({ prices: [], failed: false }) }
+  )
+  expect((query.mock.calls[0] as unknown[])[1]).toEqual([
+    'ethereum',
+    getAddress(token),
+    new Date(before * 1000).toISOString()
+  ])
+  expect(await response.json()).toMatchObject({
+    coins: {
+      [key]: {
+        prices: [
+          { timestamp: before, price: 2, source: 'curve' },
+          { timestamp, price: 0, source: 'write-down' }
+        ]
+      }
+    }
+  })
 })
 
 it('production registry forwards env and guards Enso without an injected guard', async () => {
@@ -206,7 +283,6 @@ it('production registry forwards env and guards Enso without an injected guard',
     clientSpy.mockRestore()
   }
 })
-
 
 it('rejects invalid write-down manifests', () => {
   const entry = { chain: 1, token, from: 1690736855, reason: 'Pool depleted' }

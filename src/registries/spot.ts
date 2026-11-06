@@ -1,6 +1,5 @@
 import { getChainClient } from '../clients/rpc'
 import { ApiError } from '../http/errors'
-import { writeDown } from '../prices/write-downs'
 import { createEnsoSpotSource } from '../sources'
 import { createCurveLpGuard, type PlausibleQuote } from '../sources/defillama/lp-guard'
 import { createOnchainSpotSource } from '../sources/onchain'
@@ -18,10 +17,8 @@ const isGuardedSource = (source: SpotPriceSource) => source.name === 'enso'
  */
 function marketPriceResolver(marketSources: SpotPriceSource[], env: Env) {
   const registry = new SpotSourceRegistry(marketSources, async () => true, env)
-  return createMarketPriceResolver(
-    marketSources,
-    async (chainId, token, _timestamp, signal) =>
-      writeDown(chainId, token, Math.floor(Date.now() / 1000)) ?? registry.resolve(chainId, token, signal)
+  return createMarketPriceResolver(marketSources, (chainId, token, _timestamp, signal) =>
+    registry.resolve(chainId, token, signal)
   )
 }
 
