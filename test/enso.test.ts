@@ -68,6 +68,15 @@ describe('EnsoClient', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('surfaces a 429 on the first attempt without retrying', async () => {
+    fetchMock.mockResolvedValue(res(429, {}))
+    const onRetry = vi.fn()
+
+    await expect(newClient(onRetry).getPrice(1, ADDR)).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(onRetry).not.toHaveBeenCalled()
+  })
+
   it('retries on 5xx then succeeds', async () => {
     vi.useFakeTimers()
     fetchMock.mockResolvedValueOnce(res(500, {})).mockResolvedValueOnce(res(200, OK_BODY))

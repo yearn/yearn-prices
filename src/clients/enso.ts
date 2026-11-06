@@ -21,6 +21,7 @@ export class EnsoClient {
       rateLimiter: this.rateLimiter,
       headers: { authorization: `Bearer ${this.apiKey}` },
       notFoundAsError: true,
+      retryRateLimits: false,
       onRetry: this.onRetry,
       signal: options.signal,
       timeoutMs: ENSO_ATTEMPT_TIMEOUT_MS
