@@ -44,7 +44,8 @@ const MAX_EXACT_REQUESTS_PER_QUERY = 10_000
 export async function getBatchHistoricalPrices(
   pool: QueryExecutor,
   requests: HistoricalRequestTuple[],
-  source?: PriceSource
+  source?: PriceSource,
+  options: { finalizedOnly?: boolean } = {}
 ): Promise<ExactPriceRecord[]> {
   if (requests.length === 0) {
     return []
@@ -52,7 +53,7 @@ export async function getBatchHistoricalPrices(
   if (requests.length > MAX_EXACT_REQUESTS_PER_QUERY) {
     const rows: ExactPriceRecord[] = []
     for (const part of chunk(requests, MAX_EXACT_REQUESTS_PER_QUERY)) {
-      rows.push(...(await getBatchHistoricalPrices(pool, part, source)))
+      rows.push(...(await getBatchHistoricalPrices(pool, part, source, options)))
     }
     return rows
   }
@@ -67,33 +68,38 @@ export async function getBatchHistoricalPrices(
 
   const requestedSql = `(VALUES ${valuesSql.join(', ')}) AS r(chain, token, timestamp)`
   let sql: string
+  const acceptedSql = options.finalizedOnly ? `tp.finalized = TRUE AND ${NOT_REJECTED_PRICE_SQL}` : SERVED_PRICE_SQL
+  // Repair targets are normalized independently of legacy row casing. Return
+  // the caller's token spelling so existence keys still match its manifest.
+  const tokenColumn = options.finalizedOnly ? 'r.token' : 'tp.token'
+  const tokenMatch = options.finalizedOnly ? 'lower(tp.token) = lower(r.token)' : 'tp.token = r.token'
 
   if (source) {
     params.push(source)
     const sourceIndex = params.length
     sql = `
-      SELECT tp.chain, tp.token, tp.timestamp, tp.price, tp.symbol, tp.confidence, tp.source,
+      SELECT tp.chain, ${tokenColumn} AS token, tp.timestamp, tp.price, tp.symbol, tp.confidence, tp.source,
         tp.observed_at, tp.observation_endpoint
       FROM token_prices tp
       INNER JOIN ${requestedSql}
         ON tp.chain = r.chain
-       AND tp.token = r.token
+       AND ${tokenMatch}
        AND tp.timestamp = r.timestamp
-      WHERE tp.source = $${sourceIndex} AND ${SERVED_PRICE_SQL}
-      ORDER BY tp.chain, tp.token, tp.timestamp
+      WHERE tp.source = $${sourceIndex} AND ${acceptedSql}
+      ORDER BY tp.chain, ${tokenColumn}, tp.timestamp
     `
   } else {
     sql = `
-      SELECT DISTINCT ON (tp.chain, tp.token, tp.timestamp)
-        tp.chain, tp.token, tp.timestamp, tp.price, tp.symbol, tp.confidence, tp.source,
+      SELECT DISTINCT ON (tp.chain, ${tokenColumn}, tp.timestamp)
+        tp.chain, ${tokenColumn} AS token, tp.timestamp, tp.price, tp.symbol, tp.confidence, tp.source,
         tp.observed_at, tp.observation_endpoint
       FROM token_prices tp
       INNER JOIN ${requestedSql}
         ON tp.chain = r.chain
-       AND tp.token = r.token
+       AND ${tokenMatch}
        AND tp.timestamp = r.timestamp
-      WHERE ${SERVED_PRICE_SQL}
-      ORDER BY tp.chain, tp.token, tp.timestamp, ${buildSourceCaseExpression()}
+      WHERE ${acceptedSql}
+      ORDER BY tp.chain, ${tokenColumn}, tp.timestamp, ${buildSourceCaseExpression()}
     `
   }
 

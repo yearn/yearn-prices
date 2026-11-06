@@ -20,6 +20,10 @@ function ensoRes(status: number, body?: unknown) {
   return { ok: status >= 200 && status < 300, status, json: async () => body }
 }
 
+function defillamaEmptyRes() {
+  return ensoRes(200, { coins: {} })
+}
+
 function okBody(overrides: Record<string, unknown> = {}) {
   return {
     decimals: 8,
@@ -98,6 +102,7 @@ describe('handleSpot', () => {
     fetchMock.mockImplementation((url: string) => {
       if (url.includes('/api/v1/prices/1/')) return Promise.resolve(ensoRes(200, okBody({ price: 100 })))
       if (url.includes('/api/v1/prices/8453/')) return Promise.resolve(ensoRes(404, {}))
+      if (url.includes('coins.llama.fi/prices/current/')) return Promise.resolve(defillamaEmptyRes())
       throw new Error(`unexpected url ${url}`)
     })
 
@@ -109,7 +114,9 @@ describe('handleSpot', () => {
   })
 
   it('returns an error for every token and the spot cache header when every token fails', async () => {
-    fetchMock.mockResolvedValue(ensoRes(404, {}))
+    fetchMock.mockImplementation((url: string) =>
+      url.includes('coins.llama.fi/prices/current/') ? Promise.resolve(defillamaEmptyRes()) : Promise.resolve(ensoRes(404, {}))
+    )
 
     const response = await handleSpot(spotRequest([ETH_KEY, BASE_KEY]), ENV)
     const body = (await response.json()) as SpotBody
@@ -224,7 +231,11 @@ describe('handleSpot', () => {
   })
 
   it('returns an error when Enso reports a zero price', async () => {
-    fetchMock.mockResolvedValue(ensoRes(200, okBody({ price: 0 })))
+    fetchMock.mockImplementation((url: string) =>
+      url.includes('coins.llama.fi/prices/current/')
+        ? Promise.resolve(defillamaEmptyRes())
+        : Promise.resolve(ensoRes(200, okBody({ price: 0 })))
+    )
 
     const response = await handleSpot(spotRequest([ETH_KEY]), ENV)
     const body = (await response.json()) as SpotBody
@@ -235,7 +246,9 @@ describe('handleSpot', () => {
   })
 
   it('returns an error when Enso returns a 404', async () => {
-    fetchMock.mockResolvedValue(ensoRes(404, {}))
+    fetchMock.mockImplementation((url: string) =>
+      url.includes('coins.llama.fi/prices/current/') ? Promise.resolve(defillamaEmptyRes()) : Promise.resolve(ensoRes(404, {}))
+    )
 
     const response = await handleSpot(spotRequest([ETH_KEY]), ENV)
     const body = (await response.json()) as SpotBody

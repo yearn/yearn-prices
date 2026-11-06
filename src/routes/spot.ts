@@ -33,7 +33,7 @@ async function resolveWithSignal(
   }
 }
 
-// Stateless proxy for live spot prices from Enso. Intentionally does not persist:
+// Live spot resolution through market sources and derivation. Intentionally does not persist:
 // spot is a latest-price use case served by the edge cache, and writing a mid-day
 // spot price as that day's historical close would corrupt the price history.
 export async function handleSpot(

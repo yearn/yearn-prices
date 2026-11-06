@@ -7,3 +7,4 @@ export {
   listDefiLlamaCoinGeckoAliases
 } from './aliases'
 export { createDefiLlamaHistoricalSource, DEFILLAMA_UNSUPPORTED_CHAINS, DefiLlamaHistoricalSource } from './historical'
+export { createDefiLlamaSpotSource, DefiLlamaSpotSource } from './spot'

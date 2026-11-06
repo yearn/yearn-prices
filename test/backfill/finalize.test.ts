@@ -156,6 +156,31 @@ describe('finalizeBackfillTargets client lifecycle', () => {
     expect(clients[0].released).toBe(1)
   })
 
+  it('uses finalized-only reads for initial, contested, and dry-run checks', async () => {
+    const queries: string[] = []
+    const pool: BackfillClientPool = {
+      connect: async () => ({
+        query: async (sql: string) => {
+          queries.push(sql)
+          if (sql.includes('INSERT INTO token_prices')) return { rows: [] }
+          return { rows: [] }
+        },
+        release: () => {}
+      })
+    }
+
+    await finalizeBackfillTargets(pool, [TARGET], { finalizedOnly: true })
+    const writeReads = queries.filter((sql) => sql.includes('FROM token_prices tp'))
+    expect(writeReads).toHaveLength(2)
+    expect(writeReads.every((sql) => sql.includes('tp.finalized = TRUE'))).toBe(true)
+
+    queries.length = 0
+    await finalizeBackfillTargets(pool, [TARGET], { finalizedOnly: true, dryRun: true })
+    const dryReads = queries.filter((sql) => sql.includes('FROM token_prices tp'))
+    expect(dryReads).toHaveLength(1)
+    expect(dryReads[0]).toContain('tp.finalized = TRUE')
+  })
+
   it('marks a defillama resolution rejected_implausible when it is implausible', async () => {
     const { pool } = fakePool(0)
 

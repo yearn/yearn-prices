@@ -54,8 +54,8 @@ export class DefiLlamaClient {
     return this.fetchCoins<DefiLlamaBatchResponse>(url.toString())
   }
 
-  getCurrent(coins: string[]): Promise<DefiLlamaHistoricalResponse> {
-    return this.fetchCoins<DefiLlamaHistoricalResponse>(`${BASE_URL}/prices/current/${coins.join(',')}`)
+  getCurrent(coins: string[], signal?: AbortSignal): Promise<DefiLlamaHistoricalResponse> {
+    return this.fetchCoins<DefiLlamaHistoricalResponse>(`${BASE_URL}/prices/current/${coins.join(',')}`, signal)
   }
 
   getFirst(coins: string[]): Promise<DefiLlamaHistoricalResponse> {
@@ -84,8 +84,8 @@ export class DefiLlamaClient {
     return this.fetchJson<DefiLlamaChartResponse>(url.toString())
   }
 
-  private async fetchCoins<T extends { coins: unknown }>(url: string): Promise<T> {
-    const body = await this.fetchJson<T | null>(url)
+  private async fetchCoins<T extends { coins: unknown }>(url: string, signal?: AbortSignal): Promise<T> {
+    const body = await this.fetchJson<T | null>(url, signal)
     const coins = body?.coins
     if (typeof coins !== 'object' || coins === null || Array.isArray(coins)) {
       throw new ApiError('UNAVAILABLE', 'Malformed DeFiLlama response envelope')
@@ -93,12 +93,13 @@ export class DefiLlamaClient {
     return body as T
   }
 
-  private fetchJson<T>(url: string): Promise<T> {
+  private fetchJson<T>(url: string, signal?: AbortSignal): Promise<T> {
     return fetchJsonWithRetry<T>(url, {
       service: 'DeFiLlama',
       rateLimiter: this.rateLimiter,
       onRetry: this.onRetry,
-      ...this.requestOptions
+      ...this.requestOptions,
+      ...(signal ? { signal } : {})
     })
   }
 }

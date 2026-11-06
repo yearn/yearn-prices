@@ -30,6 +30,12 @@ export {
   OnchainSpotSource
 } from './source'
 export { WRAPPED_NATIVE } from './tokens'
+export {
+  resolveCurrentFallback,
+  type CurrentFallbackQuote,
+  type CurrentFallbackResult,
+  type CurrentFallbackTarget
+} from './current-fallback'
 export type {
   MarketPriceResolver,
   RecursivePriceAdapter,

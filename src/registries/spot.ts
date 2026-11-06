@@ -1,6 +1,6 @@
 import { getChainClient } from '../clients/rpc'
 import { ApiError } from '../http/errors'
-import { createEnsoSpotSource } from '../sources'
+import { createDefiLlamaSpotSource, createEnsoSpotSource } from '../sources'
 import { createOnchainSpotSource } from '../sources/onchain'
 import type { SpotPrice, SpotPriceSource } from '../sources/types'
 import type { Env } from '../types'
@@ -24,7 +24,7 @@ export function createSpotSources(env: Env): SpotPriceSource[] {
     throw new ApiError('INTERNAL_ERROR', 'ENSO_API_KEY is not configured')
   }
 
-  const marketSources = [createEnsoSpotSource(env.ENSO_API_KEY)]
+  const marketSources = [createEnsoSpotSource(env.ENSO_API_KEY), createDefiLlamaSpotSource()]
 
   return [
     ...marketSources,

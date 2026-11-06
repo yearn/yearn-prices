@@ -32,3 +32,4 @@ export function createPool(connectionString: string): Pool {
 }
 
 export * from './queries'
+export * from './repair-queue'

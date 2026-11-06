@@ -1,6 +1,6 @@
 # price-service
 
-Cloudflare Worker that serves Enso spot prices and historical prices from Neon Postgres. Historical rows are written by offline warmup and backfill jobs, not by the worker.
+Cloudflare Worker that serves spot prices through Enso, DeFiLlama and on-chain derivation, and historical prices from Neon Postgres.
 
 ## Requirements
 
@@ -105,16 +105,16 @@ Full route reference, request/response shapes, error codes, and caching behavior
 
 ## Price sources
 
-- **Spot prices**: Enso (live prices for any token on supported chains)
-- **Historical prices**: read from `token_prices` only. No historical route calls an upstream provider; a row that is not in the table returns `404` (single token) or is omitted from the response (batch, range), and stays that way until an offline job writes it.
+- **Spot prices**: Enso first, then batched DeFiLlama current prices, then recursive on-chain derivation. Underlying tokens use the same market sources. Spot results are not written to historical storage.
+- **Historical prices**: stored prices with batched DeFiLlama read-through. Closed-day gaps and provisional observations enter a durable repair queue; validated graph reconstruction finalizes them offline. Today is fetched live and remains provisional.
 
 Chain 4663 (Robinhood) has no DefiLlama coverage. Warmup writes WETH/USDG/USDC/USDT from Chainlink (`bun run warmup -- --chain 4663`).
 
-Historical rows are written by `scripts/warmup-prices.ts` (hourly: DefiLlama, Chainlink, Curve, derived; daily `--graph` run at 00:30 UTC adds onchain adapters for closed days), `scripts/backfill-historical-gaps.ts` and `scripts/backfill-defillama-day-alignment.ts`. One-off migrations (`scripts/backfill-token-address-checksums.ts`) copy existing rows and add no new prices. `docs/routes.md` lists which job writes each `source` value.
+Historical repair now runs through `scripts/repair-historical-prices.ts`: bounded due work every 15 minutes and daily discovery reconciliation. Existing warmup and backfill commands remain available for manual operations. See the [targeted repair runbook](docs/historical-pricing/targeted-repair.md).
 
 ### Adding a new price source
 
-Sources are pluggable adapters under `src/sources/`. Spot sources register in `src/registries/spot.ts` and are served live. Historical sources register in `src/registries/historical.ts` and are filled by the warmup and backfill jobs; the exact route alone falls back to one DeFiLlama call for the current day on a table miss. See [`src/sources/README.md`](src/sources/README.md).
+Sources are pluggable adapters under `src/sources/`. Spot sources register in `src/registries/spot.ts` and are served live. Historical graph repair uses its own market-source list and on-chain adapters; adding a historical registry entry alone does not wire it into repair. See [`src/sources/README.md`](src/sources/README.md).
 
 ## Authentication
 
@@ -151,7 +151,11 @@ Also update Doppler so the next deploy does not revert it. There is no Actions U
 
 ## Deployment
 
-Pushing to `main` runs `.github/workflows/deploy.yml`: migrate, then the SHA-pinned `yearn/yearn-gha` Cloudflare deploy (needs migrate). Warmup starts after migrate and does not block deploy. Migration `drizzle/0001_finalize_token_prices.sql` (applied by `bun run migrate`) must finish before deploying the updated worker or starting updated warmup jobs because they use the `finalized` and observation-provenance columns. It has no manual trigger: the reusable deploy rejects anything but a push to `main`. `.github/workflows/warmup.yml` runs the warmup script hourly and on dispatch. `.github/workflows/weekly-audit.yml` runs `audit:prices:backfill` Mondays 06:30 UTC and on dispatch (Doppler `yearn-price` / `warmup`). The audit requires `defillama` for every vault and underlying and a separate `derived` row for each vault that is not retired or hidden and has TVL above zero in Kong, deduplicated by chain/token/day/source. Other sources do not satisfy those requirements. Unsupported provider targets and vaults younger than the window remain visible source gaps; they are not silently waived. JSON includes the complete `missing` tuple list and counts by chain and source. Missing `RPC_URL_<id>` configuration fails the audit and skips warmup until configured. The job then pings `$UPTIME_URL` on success or `$UPTIME_URL/fail` on failure (healthchecks.io scheme); add `UPTIME_URL` to that Doppler config. If unset the heartbeat is skipped with a warning. `.github/workflows/pr.yml` runs typecheck and tests on every PR.
+Pushing to `main` runs `.github/workflows/deploy.yml`: migrations first, then the SHA-pinned Cloudflare deploy and a reconciliation/repair job. The repair-queue migration must finish before repair jobs start. `.github/workflows/warmup.yml` now drains due repair targets every 15 minutes and reconciles target discovery daily at 00:30 UTC. Deployment, repair and weekly audit jobs share the historical-maintenance concurrency group.
+
+The weekly audit reconciles first and checks accepted finalized prices for active Yearn vaults and their underlying tokens over the last seven closed days. Any accepted source can satisfy coverage. Missing RPC configuration and unresolved coverage remain audit failures. The heartbeat still uses `$UPTIME_URL` and `$UPTIME_URL/fail`. Manual `warmup` and `audit:prices:backfill` commands remain available, but scheduled jobs no longer launch broad warmup. See the [repair runbook](docs/historical-pricing/targeted-repair.md).
+
+`.github/workflows/pr.yml` runs typecheck and tests on every PR.
 
 ## Testing
 

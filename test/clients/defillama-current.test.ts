@@ -31,6 +31,15 @@ describe('DefiLlamaClient.getCurrent', () => {
       `https://coins.llama.fi/prices/current/${WETH},${OTHER}`
     )
   })
+
+  it('passes an optional abort signal to /prices/current', async () => {
+    const fetchMock = stubFetch({ coins: {} })
+    const controller = new AbortController()
+
+    await new DefiLlamaClient().getCurrent([WETH], controller.signal)
+
+    expect((fetchMock.mock.calls[0][1] as RequestInit).signal).toBe(controller.signal)
+  })
 })
 
 describe('fetchCurrentPrices', () => {

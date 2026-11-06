@@ -70,10 +70,10 @@ Price routes accept an optional `source` query parameter. Supported values are:
 `source` filters the stored price rows only. Rows reach the table from the offline jobs:
 
 - `defillama`: `scripts/warmup-prices.ts`, `scripts/backfill-historical-gaps.ts` (alias hits are stored as `defillama`) and `scripts/backfill-defillama-day-alignment.ts` (re-aligns existing rows).
-- `curve`, `derived`, `chainlink`: `scripts/warmup-prices.ts`; `derived` also from `scripts/backfill-historical-graph.ts`, which the daily `warmup --graph` run (00:30 UTC) applies to closed-day underlyings no other source priced (e.g. Velodrome LPs).
+- `curve`, `derived`, `chainlink`: `scripts/warmup-prices.ts`; `derived` also from graph backfill and the targeted historical repair worker. Scheduled work now drains a durable queue rather than running broad warmup.
 - `defillama-alias`: no writer. Only rows stored before the request-path registry was removed can match.
 - `on-chain-oracle`, `bobs-api`: no writer in this repo.
-- `enso`: spot only; the spot route never writes `token_prices`, so no historical row carries this source.
+- `enso`: the spot route never writes `token_prices`. Today's historical read-through may persist a provisional Enso fallback observation when configured; it is not a finalized historical close.
 
 Filtering on a source with no stored rows returns `404` for the single-token route and `200` with an empty `coins` object for `batchHistorical` and `rangeHistorical`.
 
@@ -161,11 +161,11 @@ When no stored row exists, the route returns:
 
 ## `GET /api/prices/spot`
 
-Proxies the latest spot price for one or more tokens from [Enso](https://docs.enso.build/api-reference/tokens/token-price). The request and response shapes mirror `batchHistorical`.
+Resolves the latest spot price for one or more tokens through [Enso](https://docs.enso.build/api-reference/tokens/token-price), batched DeFiLlama current prices, then recursive on-chain derivation, in that order. Underlying tokens use the same market sources. The request and response shapes mirror `batchHistorical`.
 
-This is a stateless proxy: it validates, fetches from Enso, and returns. It does **not** write to `token_prices`. Spot is a latest-price use case served by the edge cache; persisting a mid-day spot price as that day's historical close would pollute the price history (see the [Cache-Control](#cache-control) section for the edge TTL).
+The route validates, resolves prices, and returns. It does **not** write to `token_prices`. Spot is a latest-price use case served by the edge cache; persisting a mid-day spot price as that day's historical close would pollute the price history (see the [Cache-Control](#cache-control) section for the edge TTL).
 
-Each returned `timestamp` is the price's own time in Unix seconds — Enso reports a millisecond timestamp, which is converted to seconds (or the current time is used when Enso omits it). Unlike the historical routes, spot timestamps are not normalized to a UTC day-end.
+Each returned `timestamp` is the price's own time in Unix seconds — Enso reports a millisecond timestamp, which is converted to seconds (or the current time is used when Enso omits it). DeFiLlama observation timestamps are preserved; stale and future-skewed observations are rejected. Derived prices retain their dependency observation times. Unlike the historical routes, spot timestamps are not normalized to a UTC day-end.
 
 Requires the `ENSO_API_KEY` worker secret (`wrangler secret put ENSO_API_KEY`).
 
@@ -395,7 +395,7 @@ Price responses set cache headers based on the requested timestamps and whether 
 - Historical not found responses: `public, s-maxage=300, max-age=300`
 - Spot: `public, s-maxage=120, stale-while-revalidate=600`
 
-A historical `404`, or a pair omitted from a partial batch or range, means the row is not in `token_prices` yet. It self-heals only for what the hourly warmup covers (Kong `origin=yearn` vault and underlying tokens, trailing 7 days); anything else waits on a manually run backfill. The 300s negative TTL applies to a `404` and to a partial batch or range made entirely of closed days — it is kept below the warmup cadence so a covered consumer sees the row soon after a job lands it. A batch or range that touches today's UTC day takes the today policy instead, so a missing closed day in that response carries the 1h browser `max-age` and 4h `stale-while-revalidate`.
+Unfiltered historical requests can fill missing prices through DeFiLlama read-through. Closed-day targets without accepted finalized coverage are admitted to the durable repair queue on a best-effort basis, including provisional observations. Queue failures do not discard an otherwise successful response. Source-filtered requests retain stored-row-only semantics. Daily reconciliation catches targets that request admission misses and observations whose day has since closed. Repair retries use persistent backoff; cache expiry alone does not guarantee a price will become available. See the [targeted repair runbook](historical-pricing/targeted-repair.md).
 
 ## Edge caching
 

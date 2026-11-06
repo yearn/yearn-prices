@@ -16,9 +16,9 @@ describe('source wiring', () => {
   it('never lets the spot child resolver see the on-chain source', () => {
     const sources = createSpotSources(env)
 
-    expect(sources.map((source) => source.name)).toContain('derived')
+    expect(sources.map((source) => source.name)).toEqual(['enso', 'defillama', 'derived'])
     expect(spy).toHaveBeenCalledTimes(1)
-    expect(spy.mock.calls[0][0].map((source) => source.name)).not.toContain('derived')
+    expect(spy.mock.calls[0][0].map((source) => source.name)).toEqual(['enso', 'defillama'])
   })
 
   it('exposes chainlink in the historical registry and to the child resolver', () => {

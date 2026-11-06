@@ -40,7 +40,7 @@ jobs:
       project: yearn-price
       identity-id: ${{ vars.DOPPLER_PRODUCTION_IDENTITY_ID }}
 
-  warmup:
+  repair:
     needs: migrate
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -61,5 +61,7 @@ jobs:
           doppler-project: yearn-price
           doppler-config: warmup
           inject-env-vars: true
-      - name: Warm price cache
-        run: bun run warmup
+      - name: Reconcile historical repair targets
+        run: bun run repair:historical --reconcile --write
+      - name: Repair due targets
+        run: bun run repair:historical --write --limit 100 --budget-seconds 600

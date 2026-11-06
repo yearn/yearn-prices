@@ -15,6 +15,20 @@
       "when": 1793725360480,
       "tag": "0001_finalize_token_prices",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793972956170,
+      "tag": "0002_historical_repair_queue",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793973110520,
+      "tag": "0003_partial_repair_due_index",
+      "breakpoints": true
     }
   ]
 }

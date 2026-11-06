@@ -278,6 +278,63 @@ describe('handleHistorical', () => {
       await expect(response.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 2425.5 } } })
     })
 
+    it('admits a stale stored today row to the bounded fallback and preserves its provenance', async () => {
+      const currentFallback = vi.fn(async (targets: Array<{ chainId: number; chain: string; token: string }>) => {
+        expect(targets).toEqual([{ chainId: 1, chain: 'ethereum', token: CHECKSUM_ADDR }])
+        return {
+          prices: new Map([
+            [
+              TOKEN_KEY,
+              {
+                price: 2401,
+                timestamp: nowSeconds() - 10,
+                symbol: 'WETH',
+                confidence: 0.8,
+                source: 'chainlink' as const,
+                observationEndpoint: 'onchain.chainlink.latestRoundData'
+              }
+            ]
+          ]),
+          failed: false
+        }
+      })
+      const db = pool([])
+      const result = await readThrough(
+        db,
+        ENV,
+        [
+          { chain: 'ethereum', token: CHECKSUM_ADDR, timestamp: today },
+          { chain: 'ethereum', token: CHECKSUM_ADDR, timestamp: TIMESTAMP }
+        ],
+        [
+          {
+            chain: 'ethereum',
+            token: CHECKSUM_ADDR,
+            timestamp: today,
+            price: 1,
+            symbol: 'WETH',
+            confidence: 0.9,
+            source: 'defillama',
+            observedTimestamp: nowSeconds() - 100,
+            observationEndpoint: '/prices/current'
+          }
+        ],
+        undefined,
+        upstreamOf({ current: currentWith(null), currentFallback })
+      )
+
+      expect(currentFallback).toHaveBeenCalledTimes(1)
+      expect(currentFallback.mock.calls[0][0]).toHaveLength(1)
+      expect(result.rows).toContainEqual(
+        expect.objectContaining({
+          timestamp: today,
+          price: 2401,
+          source: 'chainlink',
+          observationEndpoint: 'onchain.chainlink.latestRoundData'
+        })
+      )
+    })
+
     it('serves the table row when live has no price for today', async () => {
       const db = pool([tableRow(today, '1')])
       const response = await handleHistorical(
@@ -487,6 +544,54 @@ describe('handleHistorical', () => {
           upstreamOf({ historical: vi.fn(async () => ({ prices: [], failed: true })) })
         )
       ).rejects.toMatchObject({ code: 'UNAVAILABLE', status: 503 })
+    })
+
+    it('queues a closed-day provisional row for repair without treating it as finalized', async () => {
+      const db = {
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('tp.finalized = TRUE')) return { rows: [] }
+          if (sql.includes('INSERT INTO historical_price_repair_queue')) return { rows: [] }
+          return { rows: [tableRow(TIMESTAMP, '123.45')] }
+        })
+      } as unknown as Pool
+
+      const response = await handleHistorical(
+        request(),
+        ENV,
+        db,
+        String(TIMESTAMP),
+        TOKEN_KEY,
+        upstreamOf()
+      )
+
+      expect(response.status).toBe(200)
+      expect(
+        vi.mocked(db.query).mock.calls.some(([sql]) => String(sql).includes('INSERT INTO historical_price_repair_queue'))
+      ).toBe(true)
+    })
+
+    it('keeps serving a read-through price when the repair queue is unavailable', async () => {
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const db = {
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('INSERT INTO historical_price_repair_queue')) throw new Error('queue unavailable')
+          if (sql.includes('tp.finalized = TRUE')) return { rows: [] }
+          if (sql.includes('INSERT INTO token_prices')) return { rows: [] }
+          return { rows: [] }
+        })
+      } as unknown as Pool
+
+      const response = await handleHistorical(
+        request(),
+        ENV,
+        db,
+        String(TIMESTAMP),
+        TOKEN_KEY,
+        upstreamOf({ historical: closedWith() })
+      )
+
+      expect(response.status).toBe(200)
+      expect(String(error.mock.calls[0]?.[0])).toContain('read-through-failed')
     })
 
     it('returns UNAVAILABLE when the historical call throws', async () => {

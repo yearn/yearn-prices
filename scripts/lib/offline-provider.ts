@@ -6,6 +6,8 @@ export interface OfflineProviderOptions {
   timeoutMs?: number
   onRetry?: () => void
   allowIntraday?: boolean
+  retryRateLimits?: boolean
+  signal?: AbortSignal
 }
 
 export function createOfflineDefiLlamaClient(rps: number, options: OfflineProviderOptions = {}) {
@@ -14,8 +16,9 @@ export function createOfflineDefiLlamaClient(rps: number, options: OfflineProvid
   return new DefiLlamaClient(rateLimiter, () => options.onRetry?.(), {
     timeoutMs: options.timeoutMs ?? 10000,
     honorRetryAfter: true,
-    retryRateLimits: true,
-    retryAfterCapMs: 600_000,
+    retryRateLimits: options.retryRateLimits ?? true,
+    retryAfterCapMs: Number.MAX_SAFE_INTEGER,
+    signal: options.signal,
     onRateLimit: (retryAfterMs) => rateLimiter.extendCooldown(retryAfterMs ?? 60_000)
   })
 }

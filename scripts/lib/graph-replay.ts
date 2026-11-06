@@ -10,6 +10,10 @@ import type { HistoricalPriceSource } from '../../src/sources/types'
 import { chainIdToName } from '../../src/utils/chains'
 import type { BatchedHistoricalClient } from './batched-historical-client'
 
+function throwIfAborted(signal?: AbortSignal): void {
+  signal?.throwIfAborted()
+}
+
 export async function replayGraph(options: {
   targets: RecursivePriceTarget[]
   stored?: {
@@ -22,20 +26,24 @@ export async function replayGraph(options: {
   concurrency: number
   maxNodes: number
   clean: (message: string) => string
+  signal?: AbortSignal
 }) {
-  const { targets, sources, provider, out, concurrency, maxNodes, clean } = options
+  const { targets, sources, provider, out, concurrency, maxNodes, clean, signal } = options
+  throwIfAborted(signal)
   const marketAttempts = new Map<string, unknown[]>()
   const budgets = new Map<string, ReturnType<typeof createReadBudget>>()
   let lastProgress = 0
   const json = (value: unknown) =>
     JSON.stringify(value, (_, value) => (typeof value === 'bigint' ? value.toString() : value))
   const graph = await resolveHistoricalGraph({
-    roots: targets,
+    roots: signal ? targets.map((target) => ({ ...target, signal })) : targets,
     concurrency,
     maxNodes,
     prefetch: async (targets) => {
+      throwIfAborted(signal)
       await options.stored?.prefetch(targets)
-      if (provider)
+      throwIfAborted(signal)
+      if (provider) {
         await provider.prefetch(
           targets
             .filter((target) => !options.stored?.get(target))
@@ -44,8 +52,11 @@ export async function replayGraph(options: {
               timestamp: target.timestamp!
             }))
         )
+        throwIfAborted(signal)
+      }
     },
     market: async (target) => {
+      throwIfAborted(signal)
       const stored = options.stored?.get(target)
       if (stored) return stored
       const attempts: unknown[] = []
@@ -55,11 +66,14 @@ export async function replayGraph(options: {
         priority: source.priority,
         supports: (chainId: number) => source.supports(chainId),
         async getHistoricalPrice(chainId: number, token: string, timestamp: number) {
+          throwIfAborted(signal)
           try {
             const quote = await source.getHistoricalPrice(chainId, token, timestamp)
+            throwIfAborted(signal)
             attempts.push({ chainId, token, timestamp, source: source.name, quote })
             return quote
           } catch (error) {
+            throwIfAborted(signal)
             attempts.push({ chainId, token, timestamp, source: source.name, error: clean(String(error)) })
             throw error
           }
@@ -70,33 +84,44 @@ export async function replayGraph(options: {
         traced,
         (chain, token, timestamp) => registry.resolve(chain, token, timestamp!),
         { requireTimestamp: true }
-      )(target)
+      )(target).then((result) => {
+        throwIfAborted(signal)
+        return result
+      })
     },
     adapters: (target) => {
+      throwIfAborted(signal)
       const client = getChainClient(target.chainId)
       if (!client) throw new Error(`RPC_URL_${target.chainId} is not configured`)
       const budget = createReadBudget(400)
       budgets.set(graphKey(target), budget)
       const metered = budget.meter(client)
-      return createOnchainPriceAdapters({
+      const adapters = createOnchainPriceAdapters({
         clientForChain: (chainId) => (chainId === target.chainId ? metered : null),
         blockContextCache: new Map()
       })
+      throwIfAborted(signal)
+      return adapters
     },
     onProgress(depth, stage, done, total) {
+      throwIfAborted(signal)
       const now = Date.now()
       if (stage === 'resolved' && done < total && now - lastProgress < 15_000) return
       lastProgress = now
       console.log(json({ stage: `graph-${stage}`, depth, done, total, batching: provider?.stats ?? null }))
+      throwIfAborted(signal)
     },
     onFrontier(depth, nodes) {
+      throwIfAborted(signal)
       appendFileSync(
         out,
         `${json({ type: 'graph-frontier', depth, nodes: nodes.length, batching: provider?.stats ?? null })}\n`
       )
       console.log(json({ stage: 'graph-frontier', depth, nodes: nodes.length, batching: provider?.stats ?? null }))
+      throwIfAborted(signal)
     }
   })
+  throwIfAborted(signal)
   const byKey = new Map(graph.nodes.map((node) => [node.key, node]))
   for (const node of graph.nodes) {
     for (const attempt of node.attempts) attempt.error = clean(attempt.error)

@@ -1,13 +1,19 @@
 import type { Pool } from '@neondatabase/serverless'
 import { DefiLlamaClient } from '../../clients/defillama'
-import { finalizeTokenPrices, insertProvisionalTokenPrices } from '../../db'
+import { enqueueClosedRepairTargets, finalizeTokenPrices, insertProvisionalTokenPrices } from '../../db'
 import { plausibleWrites, storedCurveLpGuard } from '../../prices/curve-lp-guard'
 import { ACCEPTED_PRICE_SQL } from '../../prices/rejections'
 import { type CurrentPriceTarget, currentPriceKey, fetchCurrentPrices } from '../../sources/defillama/current'
 import { createDefiLlamaHistoricalSource } from '../../sources/defillama/historical'
 import type { PlausibleQuote } from '../../sources/defillama/lp-guard'
 import type { HistoricalBatchPrice, HistoricalPriceResult, HistoricalPriceTarget } from '../../sources/types'
+import {
+  resolveCurrentFallback,
+  type CurrentFallbackResult,
+  type CurrentFallbackTarget
+} from '../../sources/onchain/current-fallback'
 import type { Env, ExactPriceRecord, HistoricalRequestTuple, PriceSource, TokenPriceWrite } from '../../types'
+import type { RepairTarget } from '../../db/repair-queue'
 import { chainIdToName, chainNameToId } from '../../utils/chains'
 import { currentUtcDayEnd, isClosedDay, isTodayNormalized } from '../../utils/time'
 
@@ -15,12 +21,20 @@ const UPSTREAM_TIMEOUT_MS = 2_500
 // ponytail: 200 closed-day misses per request bounds subrequests and latency;
 // the rest stay missing until warmup or a later read fills them.
 export const MAX_READ_THROUGH_TARGETS = 200
+// Current fallback is intentionally smaller than the historical read-through:
+// Chainlink and recursive RPC reads are per-token and must stay inside the
+// request deadline.
+export const MAX_CURRENT_FALLBACK_TARGETS = 8
 // ponytail: at most 8 guard checks (one lp-guard wave) per read, each a pool discovery, a block estimate,
 // a get_virtual_price read and one DB read; a known Curve LP's quotes past the cap stay missing for a later read.
 export const MAX_GUARDED_RECORDS = 8
 
 export interface ReadThroughUpstream {
   current: (targets: CurrentPriceTarget[]) => Promise<Map<string, HistoricalPriceResult>>
+  currentFallback?: (
+    targets: CurrentFallbackTarget[],
+    cached: Map<string, HistoricalPriceResult>
+  ) => Promise<CurrentFallbackResult>
   historical: (targets: HistoricalPriceTarget[]) => Promise<{ prices: HistoricalBatchPrice[]; failed: boolean }>
   guard?: PlausibleQuote
 }
@@ -45,7 +59,7 @@ const defaultUpstream: ReadThroughUpstream = {
 
 const exactKey = (chain: string, token: string, timestamp: number) => `${chain}:${token.toLowerCase()}:${timestamp}`
 
-function logFailure(stage: 'current' | 'historical', error: unknown): void {
+function logFailure(stage: 'current' | 'historical' | 'current-fallback' | 'repair-queue', error: unknown): void {
   console.error(JSON.stringify({ message: 'read-through-failed', stage, error: String(error) }))
 }
 
@@ -64,6 +78,29 @@ async function knownCurveLps(pool: Pool, records: ExactPriceRecord[]): Promise<S
 }
 
 const lpKey = (chain: string, token: string) => `${chain}:${token.toLowerCase()}`
+
+async function queueClosedDayRepairs(pool: Pool, requests: HistoricalRequestTuple[]): Promise<void> {
+  const closed = [
+    ...new Map(
+      requests
+        .filter((request) => isClosedDay(request.timestamp))
+        .map((request) => [exactKey(request.chain, request.token, request.timestamp), request])
+    ).values()
+  ].slice(0, MAX_READ_THROUGH_TARGETS)
+  if (closed.length === 0) return
+
+  try {
+    // A provisional row is intentionally not sufficient here. The shared
+    // helper checks accepted finalized observations and preserves retry state.
+    const targets: RepairTarget[] = closed.flatMap((request) => {
+      const chainId = chainNameToId(request.chain)
+      return chainId === undefined ? [] : [{ chainId, token: request.token, timestamp: request.timestamp }]
+    })
+    await enqueueClosedRepairTargets(pool, targets)
+  } catch (error) {
+    logFailure('repair-queue', error)
+  }
+}
 
 export async function readThrough(
   pool: Pool,
@@ -91,7 +128,10 @@ export async function readThrough(
     const chainId = chainNameToId(request.chain)
     return chainId === undefined ? [] : [{ chainId, token: request.token, timestamp: request.timestamp }]
   })
-  if (todayTargets.size === 0 && closedTargets.length === 0) return { rows, upstreamFailed: false }
+  if (todayTargets.size === 0 && closedTargets.length === 0) {
+    await queueClosedDayRepairs(pool, requests)
+    return { rows, upstreamFailed: false }
+  }
 
   let upstreamFailed = false
   const [live, closed] = await Promise.all([
@@ -117,6 +157,31 @@ export async function readThrough(
         )
   ])
 
+  const fallbackTargets = [...todayTargets.entries()]
+    .filter(([key]) => !live.has(key))
+    .slice(0, MAX_CURRENT_FALLBACK_TARGETS)
+  let fallback: CurrentFallbackResult = { prices: new Map(), failed: false }
+  if (fallbackTargets.length > 0 && (upstream.currentFallback || upstream === defaultUpstream)) {
+    const targets: CurrentFallbackTarget[] = fallbackTargets.map(([, target]) => ({
+      chainId: chainNameToId(target.chain) ?? 0,
+      chain: target.chain,
+      token: target.token
+    }))
+    try {
+      fallback = upstream.currentFallback
+        ? await upstream.currentFallback(targets, live)
+        : await resolveCurrentFallback(
+            env,
+            targets.filter((target) => target.chainId > 0),
+            live
+          )
+      if (fallback.failed) upstreamFailed = true
+    } catch (error) {
+      upstreamFailed = true
+      logFailure('current-fallback', error)
+    }
+  }
+
   const todayRecords: ExactPriceRecord[] = []
   const closedRecords: ExactPriceRecord[] = []
   const toRecord = (
@@ -124,7 +189,8 @@ export async function readThrough(
     token: string,
     timestamp: number,
     price: HistoricalPriceResult,
-    endpoint: string
+    endpoint: string,
+    source: PriceSource = 'defillama'
   ): ExactPriceRecord => ({
     chain,
     token,
@@ -132,7 +198,7 @@ export async function readThrough(
     price: price.price,
     symbol: price.symbol,
     confidence: price.confidence,
-    source: 'defillama',
+    source,
     observedTimestamp: price.timestamp,
     observationEndpoint: endpoint
   })
@@ -143,6 +209,23 @@ export async function readThrough(
     const observed = stored.get(exactKey(chain, token, todayEnd))?.observedTimestamp
     if (observed != null && observed > price.timestamp) continue
     todayRecords.push(toRecord(chain, token, todayEnd, price, '/prices/current'))
+  }
+
+  for (const [, { chain, token }] of fallbackTargets) {
+    const price = fallback.prices.get(currentPriceKey(chain, token))
+    if (!price) continue
+    const observed = stored.get(exactKey(chain, token, todayEnd))?.observedTimestamp
+    if (observed != null && observed >= price.timestamp) continue
+    todayRecords.push(
+      toRecord(
+        chain,
+        token,
+        todayEnd,
+        price,
+        price.observationEndpoint,
+        price.source
+      )
+    )
   }
 
   for (const { target, price } of closed) {
@@ -176,6 +259,11 @@ export async function readThrough(
   } catch (error) {
     console.error(JSON.stringify({ message: 'read-through-persist-failed', error: String(error) }))
   }
+
+  // Queue after the read-through so a successful request can be persisted
+  // before the repair worker sees the target. Existing provisional closed-day
+  // rows are still admitted because the queue helper requires finalization.
+  await queueClosedDayRepairs(pool, requests)
 
   return {
     rows: [...rows.filter((row) => !replaced.has(exactKey(row.chain, row.token, row.timestamp))), ...fetched],

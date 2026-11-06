@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Targeted historical repair — review</title>
+<style>body{background:#eff3f7;color:#19283b;font:16px/1.65 system-ui;margin:0}main{max-width:960px;margin:40px auto;background:white;padding:36px;border-radius:16px}h1{font-size:38px;line-height:1.15}h2{margin-top:32px}table{border-collapse:collapse;width:100%}td,th{padding:12px;text-align:left;border-bottom:1px solid #dce2ea}th{background:#f3f6fa}.flow{padding:18px;border-radius:8px;background:#e7f4ef;font-weight:650}.note{border-left:4px solid #b47f27;padding:15px;background:#fff8e9}code{background:#edf1f7;padding:2px 5px}a{color:#245eb2}@media(max-width:650px){main{padding:20px;margin:0}h1{font-size:29px}table{font-size:13px}}</style>
+<main>
+<p>Price service · Historical maintenance</p>
+<h1>Repair the gaps that are due</h1>
+<p>Replace scheduled broad hourly warmup with persisted repair targets, bounded workers, and retry backoff. Live spot and today's historical observations continue to resolve on request.</p>
+<p class="flow">Request or daily reconciliation → durable token/day queue → due worker → validated finalization</p>
+<table><thead><tr><th>Before</th><th>After</th></tr></thead><tbody>
+<tr><td>Hourly inventory warmup</td><td>Every 15 minutes, drain only due targets within a configured limit and budget.</td></tr>
+<tr><td>Unresolved gaps retried each broad run</td><td>Persist attempt count, outcome and next retry time; repeated requests preserve backoff.</td></tr>
+<tr><td>Hourly and graph jobs can overlap</td><td>Scheduled repair, deployment reconciliation and audit share a concurrency group.</td></tr>
+<tr><td>Yesterday's provisional row can satisfy an existence check</td><td>Repair requires finalized accepted evidence at root, dependency and final-write checks.</td></tr>
+<tr><td>A failed process loses its work state</td><td>Leased targets become reclaimable after expiry; old owners cannot settle new claims.</td></tr>
+</tbody></table>
+<h2>What remains protected</h2>
+<ul><li>Current API quotes never fill past dates.</li><li>Historical graph validation, observation windows and Curve plausibility checks remain required.</li><li>Provider errors remain retryable failures, separate from confirmed missing observations.</li><li>Queue admission failures do not discard a valid API response.</li><li>Completion means an accepted finalized price exists for the target; it does not require a separate row from every provider.</li></ul>
+<p>Today's DeFiLlama misses can use a bounded on-demand Chainlink/on-chain fallback, with Enso when configured. Fallback quotes retain their source, remain provisional, and refresh on request even when a previous quote is stored.</p>
+<h2>Operation</h2>
+<p>Daily reconciliation discovers recent closed-day Yearn targets, provisional history and existing gap inventory. Weekly audit checks finalized closed-day coverage without launching broad warmup. Manual warmup commands remain available.</p>
+<p><a href="targeted-repair.md">Read the repair runbook and commands</a></p>
+<h2>Validation and rollout</h2>
+<p id="validation">TypeScript checking passes. Independent code review checked leases, finalized-only reads, failure classification and bounded discovery. Current-day fallback review checked refresh behavior, source provenance and its shared 2.5-second deadline. Focused tests were added but remain unrun, along with lint, under the repository's Astra instruction.</p>
+<p class="note">The migration is prepared, not applied. These changes are local and have not been deployed. Database execution, live coverage improvement and repair latency remain unmeasured. GitHub schedules do not provide immediate or guaranteed-time delivery.</p>
+</main>
+</html>
