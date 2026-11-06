@@ -72,6 +72,14 @@ export class SlidingWindowRateLimiter {
 export class SharedCooldownRateLimiter extends SlidingWindowRateLimiter {
   private cooldownUntil = 0
 
+  constructor(
+    limit: number,
+    intervalMs: number,
+    private readonly maxCooldownWaitMs = Number.POSITIVE_INFINITY
+  ) {
+    super(limit, intervalMs)
+  }
+
   extendCooldown(delayMs: number): void {
     if (!Number.isFinite(delayMs) || delayMs <= 0) return
     this.cooldownUntil = Math.max(this.cooldownUntil, Date.now() + delayMs)
@@ -81,6 +89,12 @@ export class SharedCooldownRateLimiter extends SlidingWindowRateLimiter {
     while (true) {
       throwIfAborted(signal)
       const cooldownWait = this.cooldownUntil - Date.now()
+      if (cooldownWait > this.maxCooldownWaitMs) {
+        throw new ApiError(
+          'UNAVAILABLE',
+          `Provider cooldown of ${Math.ceil(cooldownWait / 1000)}s exceeds request budget`
+        )
+      }
       if (cooldownWait > 0) {
         await sleepWithSignal(cooldownWait, signal)
       }

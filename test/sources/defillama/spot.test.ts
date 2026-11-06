@@ -246,6 +246,30 @@ describe('createDefiLlamaSpotSource', () => {
     }
   })
 
+  it('fails fast when the shared cooldown exceeds the batch budget', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchMock = vi.fn()
+      vi.stubGlobal('fetch', fetchMock)
+      fetchMock.mockResolvedValueOnce(new Response(null, { status: 429, headers: { 'retry-after': '600' } }))
+      await vi.advanceTimersByTimeAsync(3_000)
+
+      const first = createDefiLlamaSpotSource().getSpotPrice(1, WETH)
+      const firstRejected = expect(first).rejects.toMatchObject({ code: 'INTERNAL_ERROR' })
+      await vi.advanceTimersByTimeAsync(5)
+      await firstRejected
+
+      const second = createDefiLlamaSpotSource().getSpotPrice(1, OTHER)
+      const secondRejected = expect(second).rejects.toMatchObject({ code: 'UNAVAILABLE' })
+      await vi.advanceTimersByTimeAsync(100)
+      await secondRejected
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
   it('does not call DeFiLlama for unsupported chains', async () => {
     const getCurrentMock = vi.fn(async () => ({ coins: {} }))
     const source = createDefiLlamaSpotSource({

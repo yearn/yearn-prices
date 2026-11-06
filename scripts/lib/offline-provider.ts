@@ -1,3 +1,4 @@
+import { CHART_RETRY_AFTER_CAP_MS } from '../../src/backfill/constants'
 import { DefiLlamaClient } from '../../src/clients/defillama'
 import { SharedCooldownRateLimiter } from '../../src/clients/http-client'
 import { BatchedHistoricalClient } from './batched-historical-client'
@@ -17,7 +18,7 @@ export function createOfflineDefiLlamaClient(rps: number, options: OfflineProvid
     timeoutMs: options.timeoutMs ?? 10000,
     honorRetryAfter: true,
     retryRateLimits: options.retryRateLimits ?? true,
-    retryAfterCapMs: Number.MAX_SAFE_INTEGER,
+    retryAfterCapMs: CHART_RETRY_AFTER_CAP_MS,
     signal: options.signal,
     onRateLimit: (retryAfterMs) => rateLimiter.extendCooldown(retryAfterMs ?? 60_000)
   })
