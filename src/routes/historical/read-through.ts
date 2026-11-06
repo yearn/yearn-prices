@@ -152,11 +152,11 @@ export async function readThrough(
     closedRecords.push(toRecord(request.chain, request.token, request.timestamp, price, '/batchHistorical'))
   }
 
-  // Discover pools for every live quote; closed-day repair retains its bounded known-LP checks.
+  // ponytail: only known Curve LPs (an accepted `curve` row exists) are guarded, to avoid an RPC per fetched token.
   // Unguarded closed days are stored provisional, so warmup/backfill re-resolve them through the guard.
   const lps = await knownCurveLps(pool, [...todayRecords, ...closedRecords])
-  const candidates = closedRecords.filter((record) => lps.has(lpKey(record.chain, record.token)))
-  const checked = [...todayRecords, ...candidates.slice(0, MAX_GUARDED_RECORDS)]
+  const candidates = [...todayRecords, ...closedRecords].filter((record) => lps.has(lpKey(record.chain, record.token)))
+  const checked = candidates.slice(0, MAX_GUARDED_RECORDS)
   const guarded = new Set<object>(checked)
   const dropped = new Set<object>(candidates.slice(MAX_GUARDED_RECORDS))
   if (checked.length > 0) {
@@ -168,9 +168,7 @@ export async function readThrough(
   const writes: TokenPriceWrite[] = fetched
     .filter((record) => !closedWrites.includes(record))
     .map((record) => ({ ...record, finalizationIntent: 'provisional' }))
-  const replaced = new Set(
-    [...fetched, ...todayRecords].map((record) => exactKey(record.chain, record.token, record.timestamp))
-  )
+  const replaced = new Set(fetched.map((record) => exactKey(record.chain, record.token, record.timestamp)))
 
   try {
     await insertProvisionalTokenPrices(pool, writes)

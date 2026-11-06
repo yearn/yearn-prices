@@ -1,4 +1,4 @@
-import { type Address, type PublicClient, erc20Abi, parseAbi } from 'viem'
+import { type Address, erc20Abi, type PublicClient, parseAbi } from 'viem'
 import { estimateBlockByTimestamp } from '../../clients/rpc'
 import { resolveCurvePoolCoins } from '../onchain/adapters/curve'
 import { type ClientForChain, maybe } from '../onchain/context'

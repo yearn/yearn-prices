@@ -1,12 +1,12 @@
-import { writeDown } from '../../prices/write-downs'
 import type { Pool } from '@neondatabase/serverless'
 import { CACHE_CONTROL_NO_STORE, cacheControlForRange } from '../../cache'
 import { getRangeHistoricalPrices } from '../../db'
 import { jsonResponse } from '../../http'
+import { writeDown } from '../../prices/write-downs'
 import type { Env } from '../../types'
 import { normalizedDaysInRange, parseOptionalSource, parseRangeCoins } from '../../utils'
 import { type ReadThroughUpstream, readThrough } from './read-through'
-import { buildOriginalKeyMap, groupRowsByToken, toExactKey } from './shared'
+import { buildOriginalKeyMap, groupRowsByToken } from './shared'
 
 export async function handleRangeHistorical(
   request: Request,

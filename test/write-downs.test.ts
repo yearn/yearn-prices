@@ -1,14 +1,14 @@
-import { createCurveLpGuard } from '../src/sources/defillama/lp-guard'
-import { fakeClient } from './sources/onchain/helpers'
 import type { Pool } from '@neondatabase/serverless'
 import { describe, expect, it, vi } from 'vitest'
 import { canonicalCacheKey, HISTORICAL_CACHE_REVISION } from '../src/cache/edge'
 import { writeDown } from '../src/prices/write-downs'
+import { SpotSourceRegistry } from '../src/registries/spot'
 import { handleBatchHistorical } from '../src/routes/historical/batch'
 import { handleHistorical } from '../src/routes/historical/exact'
 import { handleRangeHistorical } from '../src/routes/historical/range'
 import { handleSpot } from '../src/routes/spot'
-import { SpotSourceRegistry } from '../src/registries/spot'
+import { createCurveLpGuard } from '../src/sources/defillama/lp-guard'
+import { fakeClient } from './sources/onchain/helpers'
 
 const token = '0xc4c319e2d4d66cca4464c0c2b32c9bd23ebe784e'
 const key = `ethereum:${token}`

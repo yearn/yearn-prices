@@ -1,7 +1,7 @@
-import { createCurveLpGuard, type PlausibleQuote } from '../sources/defillama/lp-guard'
 import { getChainClient } from '../clients/rpc'
 import { ApiError } from '../http/errors'
 import { createEnsoSpotSource } from '../sources'
+import { createCurveLpGuard, type PlausibleQuote } from '../sources/defillama/lp-guard'
 import { createOnchainSpotSource } from '../sources/onchain'
 import type { SpotPrice, SpotPriceSource } from '../sources/types'
 import type { Env } from '../types'
