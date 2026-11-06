@@ -264,6 +264,13 @@ describe('createDefiLlamaSpotSource', () => {
       await vi.advanceTimersByTimeAsync(100)
       await secondRejected
       expect(fetchMock).toHaveBeenCalledTimes(1)
+
+      fetchMock.mockResolvedValueOnce(Response.json({ coins: { [`ethereum:${OTHER}`]: { price: 1, timestamp: NOW } } }))
+      await vi.advanceTimersByTimeAsync(60_000)
+      const third = createDefiLlamaSpotSource().getSpotPrice(1, OTHER)
+      await vi.advanceTimersByTimeAsync(10)
+      await expect(third).resolves.toMatchObject({ price: 1 })
+      expect(fetchMock).toHaveBeenCalledTimes(2)
     } finally {
       vi.unstubAllGlobals()
       vi.useRealTimers()

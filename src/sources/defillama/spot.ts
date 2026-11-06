@@ -43,13 +43,12 @@ type Batch = {
 // One limiter and one client are shared by all request registries in this
 // isolate. The source still coalesces only within a registry, while this gate
 // protects the provider across concurrent requests and honors a Retry-After
-// response for every subsequent batch. A cooldown longer than one batch budget
-// fails fast so the registry moves on to the next source.
+// response, capped at the client default, for every subsequent batch. A cooldown
+// longer than one batch budget fails fast so the registry moves on to the next source.
 const sharedLimiter = new SharedCooldownRateLimiter(10, 1_000, DEFI_LLAMA_SPOT_TIMEOUT_MS)
 const defaultClient = new DefiLlamaClient(sharedLimiter, undefined, {
   timeoutMs: DEFI_LLAMA_SPOT_TIMEOUT_MS,
   honorRetryAfter: true,
-  retryAfterCapMs: Number.MAX_SAFE_INTEGER,
   // A failed batch is reported to every token in that batch. Retrying one
   // token at a time would multiply provider traffic and defeat coalescing.
   retryRateLimits: false,

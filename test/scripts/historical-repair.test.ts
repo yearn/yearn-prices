@@ -34,6 +34,26 @@ describe('historical repair discovery', () => {
     expect(String(query.mock.calls[0][0])).toContain('historical_price_repair_queue')
   })
 
+  it('skips a misaligned provisional row instead of aborting discovery', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    const previousDay = currentUtcDayEnd(nowUnix()) - 86_400
+    const { db } = dbFor([
+      {
+        rows: [
+          { chain_id: '1', chain: 'ethereum', token: EXTRA, timestamp: new Date((previousDay - 7_200) * 1000) },
+          { chain_id: '1', chain: 'ethereum', token: EXTRA, timestamp: new Date(previousDay * 1000) }
+        ]
+      },
+      { rows: [] },
+      { rows: [] }
+    ])
+
+    const result = await discoverRepairTargets(db, [], 1)
+
+    expect(result.misalignedSkipped).toBe(1)
+    expect(result.targets).toEqual([{ chainId: 1, token: normalizeTokenAddress(EXTRA), timestamp: previousDay }])
+  })
+
   it('removes targets already covered by an accepted finalized observation', async () => {
     const previousDay = currentUtcDayEnd(nowUnix()) - 86_400
     const { db } = dbFor([

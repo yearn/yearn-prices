@@ -98,6 +98,7 @@ async function reconcile(db: RepairQueueDb, write: boolean, recentDays: number) 
     enqueued,
     provisionalSelected: found.provisionalSelected,
     inventorySelected: found.inventorySelected,
+    misalignedSkipped: found.misalignedSkipped,
     discoveryLimit: found.discoveryLimit
   }
 }
@@ -256,7 +257,11 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   mkdirSync(outputDir, { recursive: true })
   const pool = createPool(databaseUrl)
   const started = Date.now()
+  let reported = false
   const controller = new AbortController()
+  const budgetExhausted = new Promise<{ aborted: true }>((resolve) =>
+    controller.signal.addEventListener('abort', () => resolve({ aborted: true }), { once: true })
+  )
   const deadlineTimer = setTimeout(
     () => controller.abort(new Error('Historical repair runtime budget exhausted')),
     budgetSeconds * 1000
@@ -269,7 +274,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       console.error(
         JSON.stringify({ message: 'repair-hard-deadline', durationMs: Date.now() - started, recovery: 'lease-expiry' })
       )
-      process.exit(2)
+      process.exit(reported ? 0 : 2)
     },
     (budgetSeconds + 30) * 1000
   )
@@ -279,7 +284,9 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       mode: values.write ? 'write' : 'dry-run',
       reconcile: values.reconcile
     }
-    if (values.reconcile) report.reconcileResult = await reconcile(pool, values.write ?? false, recentDays)
+    if (values.reconcile) {
+      report.reconcileResult = await Promise.race([reconcile(pool, values.write ?? false, recentDays), budgetExhausted])
+    }
     const dueBefore = Number(
       (
         await pool.query<{ count: string }>(
@@ -300,7 +307,6 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
         signal: controller.signal
       })
       report.workerResult = result
-      if (result.errors > 0) process.exitCode = 1
     } else if (!values.reconcile) {
       report.claimed = 0
       report.workerResult = { completed: 0, missing: 0, unresolved: 0, invalid: 0, errors: 0, deferred: dueBefore }
@@ -309,6 +315,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     report.finishedAt = new Date().toISOString()
     report.durationMs = Date.now() - started
     process.stdout.write(`${JSON.stringify(report)}\n`)
+    reported = true
   } finally {
     try {
       await pool.end()

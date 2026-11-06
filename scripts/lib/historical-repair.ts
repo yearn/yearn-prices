@@ -38,6 +38,7 @@ export async function discoverRepairTargets(
   finalized: number
   provisionalSelected: number
   inventorySelected: number
+  misalignedSkipped: number
   discoveryLimit: number
 }> {
   if (!Number.isSafeInteger(recentClosedDays) || recentClosedDays < 1 || recentClosedDays > 365) {
@@ -49,6 +50,7 @@ export async function discoverRepairTargets(
   type Row = { chain_id: number | string; token: string; timestamp: string | Date }
   const extras: RepairTarget[] = []
   const counts: number[] = []
+  let misalignedSkipped = 0
   for (const kind of ['provisional', 'inventory'] as const) {
     // Both alternatives are fixed SQL. User input is passed only as parameters.
     const candidates =
@@ -80,11 +82,21 @@ export async function discoverRepairTargets(
     )
     counts.push(result.rows.length)
     for (const row of result.rows) {
-      extras.push({
-        chainId: Number(row.chain_id),
-        token: normalizeTokenAddress(row.token),
-        timestamp: Math.floor(new Date(row.timestamp).getTime() / 1000)
-      })
+      const timestamp = Math.floor(new Date(row.timestamp).getTime() / 1000)
+      if (timestamp % 86_400 !== 86_399) {
+        misalignedSkipped += 1
+        console.error(
+          JSON.stringify({
+            message: 'repair-discovery-misaligned',
+            kind,
+            chainId: row.chain_id,
+            token: row.token,
+            timestamp
+          })
+        )
+        continue
+      }
+      extras.push({ chainId: Number(row.chain_id), token: normalizeTokenAddress(row.token), timestamp })
     }
   }
   const targets = dedupeRepairTargets([...recent, ...extras])
@@ -94,6 +106,7 @@ export async function discoverRepairTargets(
     finalized: finalized.size,
     provisionalSelected: counts[0],
     inventorySelected: counts[1],
+    misalignedSkipped,
     discoveryLimit: REPAIR_DISCOVERY_LIMIT
   }
 }

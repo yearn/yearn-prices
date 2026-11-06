@@ -15,6 +15,7 @@ import type { Env } from '../src/types'
 import { chainIdToName, chainNameToId, normalizeTokenAddress } from '../src/utils/chains'
 import { nowUnix } from '../src/utils/time'
 import { fetchYearnVaults } from './lib/kong-vaults'
+import { clean } from './lib/redact'
 
 loadEnv({ quiet: true })
 
@@ -248,7 +249,7 @@ function outcomeFromError(started: number, error: unknown): SpotCoverageOutcome 
     ageSeconds: null,
     latencyMs: Math.round((performance.now() - started) * 100) / 100,
     errorCode: code,
-    error: error instanceof Error ? error.message : String(error)
+    error: clean(error instanceof Error ? error.message : String(error))
   }
 }
 

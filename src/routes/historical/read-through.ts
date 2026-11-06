@@ -14,7 +14,7 @@ import {
 import type { HistoricalBatchPrice, HistoricalPriceResult, HistoricalPriceTarget } from '../../sources/types'
 import type { Env, ExactPriceRecord, HistoricalRequestTuple, PriceSource, TokenPriceWrite } from '../../types'
 import { chainIdToName, chainNameToId } from '../../utils/chains'
-import { currentUtcDayEnd, isClosedDay, isTodayNormalized } from '../../utils/time'
+import { currentUtcDayEnd, isClosedDay, isTodayNormalized, nowUnix } from '../../utils/time'
 
 const UPSTREAM_TIMEOUT_MS = 2_500
 // ponytail: 200 closed-day misses per request bounds subrequests and latency;
@@ -132,9 +132,13 @@ export async function readThrough(
         )
   ])
 
-  const fallbackTargets = [...todayTargets.entries()]
-    .filter(([key]) => !live.has(key))
-    .slice(0, MAX_CURRENT_FALLBACK_TARGETS)
+  const todayMisses = [...todayTargets.entries()].filter(([key]) => !live.has(key))
+  // Rotate the window by the minute so repeated requests eventually cover every miss past the cap.
+  const start = todayMisses.length > MAX_CURRENT_FALLBACK_TARGETS ? Math.floor(nowUnix() / 60) % todayMisses.length : 0
+  const fallbackTargets = [...todayMisses.slice(start), ...todayMisses.slice(0, start)].slice(
+    0,
+    MAX_CURRENT_FALLBACK_TARGETS
+  )
   let fallback: CurrentFallbackResult = { prices: new Map(), failed: false }
   if (fallbackTargets.length > 0 && (upstream.currentFallback || upstream === defaultUpstream)) {
     const targets: CurrentFallbackTarget[] = fallbackTargets.map(([, target]) => ({
@@ -190,7 +194,7 @@ export async function readThrough(
     const price = fallback.prices.get(currentPriceKey(chain, token))
     if (!price) continue
     const observed = stored.get(exactKey(chain, token, todayEnd))?.observedTimestamp
-    if (observed != null && observed >= price.timestamp) continue
+    if (observed != null && observed > price.timestamp) continue
     todayRecords.push(toRecord(chain, token, todayEnd, price, price.observationEndpoint, price.source))
   }
 

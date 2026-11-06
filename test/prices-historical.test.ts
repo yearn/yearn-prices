@@ -335,6 +335,69 @@ describe('handleHistorical', () => {
       )
     })
 
+    it('rotates the current fallback window so misses past the cap are eventually attempted', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date(Math.floor(Date.now() / 60_000) * 60_000 + 60_000))
+      try {
+        const tokens = Array.from({ length: 9 }, (_, index) => `0x${String(index + 1).padStart(40, '0')}`)
+        const currentFallback = vi.fn(async () => ({ prices: new Map(), failed: false }))
+        await readThrough(
+          pool([]),
+          ENV,
+          tokens.map((token) => ({ chain: 'ethereum', token, timestamp: today })),
+          [],
+          undefined,
+          upstreamOf({ currentFallback })
+        )
+        const start = Math.floor(Date.now() / 60_000) % tokens.length
+        const expected = [...tokens.slice(start), ...tokens.slice(0, start)].slice(0, 8)
+        expect(currentFallback.mock.calls[0][0].map((target: { token: string }) => target.token)).toEqual(expected)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('replaces a stored today row when a fallback quote shares its observation time', async () => {
+      const observed = nowSeconds() - 10
+      const currentFallback = vi.fn(async () => ({
+        prices: new Map([
+          [
+            TOKEN_KEY,
+            {
+              price: 2500,
+              timestamp: observed,
+              symbol: 'WETH',
+              confidence: 0.8,
+              source: 'derived' as const,
+              observationEndpoint: 'onchain.derived'
+            }
+          ]
+        ]),
+        failed: false
+      }))
+      const result = await readThrough(
+        pool([]),
+        ENV,
+        [{ chain: 'ethereum', token: CHECKSUM_ADDR, timestamp: today }],
+        [
+          {
+            chain: 'ethereum',
+            token: CHECKSUM_ADDR,
+            timestamp: today,
+            price: 1,
+            symbol: 'WETH',
+            confidence: 0.9,
+            source: 'derived',
+            observedTimestamp: observed,
+            observationEndpoint: 'onchain.derived'
+          }
+        ],
+        undefined,
+        upstreamOf({ currentFallback })
+      )
+      expect(result.rows).toContainEqual(expect.objectContaining({ timestamp: today, price: 2500 }))
+    })
+
     it('serves the table row when live has no price for today', async () => {
       const db = pool([tableRow(today, '1')])
       const response = await handleHistorical(

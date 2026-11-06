@@ -39,6 +39,31 @@ describe('historical repair queue', () => {
     expect(database.query).toHaveBeenCalledTimes(1)
   })
 
+  it('reopens a completed row when its finalized evidence is gone', async () => {
+    const database = db([{ rows: [] }, { rows: [], rowCount: 1 }])
+    await expect(
+      enqueueRepairTargets(database, [{ chainId: 1, token: TOKEN, timestamp: DAY }], DAY + 10)
+    ).resolves.toBe(1)
+    const sql = String(database.query.mock.calls[1][0])
+    expect(sql).toContain('ON CONFLICT (token, "timestamp", chain_id) DO UPDATE')
+    for (const column of [
+      'completed_at',
+      'attempts',
+      'next_attempt_at',
+      'lease_owner',
+      'lease_token',
+      'lease_expires_at',
+      'last_outcome',
+      'last_error'
+    ]) {
+      expect(sql).toMatch(
+        new RegExp(
+          `${column} = CASE WHEN historical_price_repair_queue.completed_at IS NOT NULL THEN (NULL|0|NOW\\(\\))`
+        )
+      )
+    }
+  })
+
   it('claims due work with a lease token and skips locked rows', async () => {
     const database = db([
       {
