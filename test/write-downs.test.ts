@@ -1,3 +1,5 @@
+import * as rpc from '../src/clients/rpc'
+import { spotSourceRegistry } from '../src/registries'
 import type { Pool } from '@neondatabase/serverless'
 import { describe, expect, it, vi } from 'vitest'
 import { canonicalCacheKey, HISTORICAL_CACHE_REVISION } from '../src/cache/edge'
@@ -135,3 +137,59 @@ for (const scenario of ['empty', 'absurd', 'rpc-error']) {
     )
   })
 }
+
+it('keeps maximum range queries at one SQL tuple per token', async () => {
+  const coins = Object.fromEntries(
+    Array.from({ length: 50 }, (_, index) => [
+      `ethereum:0x${(index + 1).toString(16).padStart(40, '0')}`,
+      [timestamp - 365 * 86400, timestamp]
+    ])
+  )
+  const query = vi.fn(async () => ({ rows: [] }))
+  await handleRangeHistorical(request('rangeHistorical', coins), env, { query } as unknown as Pool, {
+    current: async () => new Map(),
+    historical: async () => ({ prices: [], failed: false })
+  })
+  expect((query.mock.calls[0] as unknown[])[1]).toHaveLength(200)
+})
+
+it('rejects invalid spot source filters', async () => {
+  const url = new URL(request('spot', [key]).url)
+  url.searchParams.set('source', 'banana')
+  await expect(handleSpot(new Request(url), env, new SpotSourceRegistry([]))).rejects.toMatchObject({
+    code: 'INVALID_INPUT'
+  })
+})
+
+it('does not fall through to another provider for an explicit spot source', async () => {
+  const getSpotPrice = vi.fn(async () => ({ price: 10, timestamp, symbol: null, confidence: null }))
+  const registry = new SpotSourceRegistry([{ name: 'derived', priority: 1, supports: () => true, getSpotPrice }])
+  const url = new URL(request('spot', [key]).url)
+  url.searchParams.set('source', 'enso')
+  const response = await handleSpot(new Request(url), env, registry)
+  expect(await response.json()).toMatchObject({ coins: { [key]: { error: { code: 'NOT_FOUND' } } } })
+  expect(getSpotPrice).not.toHaveBeenCalled()
+})
+
+it('production registry forwards env and guards Enso without an injected guard', async () => {
+  const client = fakeClient({
+    [token]: {
+      N_COINS: 2n,
+      coins: ['0x056fd409e1d7a124bd7017459dfea2f387b6d5cd', '0xf939e0a03fb07f59a73314e73794be0e57ac1b4e'],
+      totalSupply: 0n
+    }
+  })
+  const clientSpy = vi.spyOn(rpc, 'getChainClient').mockReturnValue(client)
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => new Response(JSON.stringify({ price: 5.7e20, decimals: 18 }), { status: 200 }))
+  )
+  try {
+    const registry = spotSourceRegistry(env)
+    await expect(registry.resolve(1, token, undefined, 'enso')).rejects.toMatchObject({ code: 'NOT_FOUND' })
+    expect(clientSpy).toHaveBeenCalledWith(1, env)
+  } finally {
+    vi.unstubAllGlobals()
+    clientSpy.mockRestore()
+  }
+})

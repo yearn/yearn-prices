@@ -13,8 +13,8 @@ import { SourceRegistry } from './source-registry'
  * Prices an on-chain adapter's child tokens with the market sources only. It
  * never sees the on-chain source, so recursion cannot loop back into itself.
  */
-function marketPriceResolver(marketSources: SpotPriceSource[]) {
-  const registry = new SpotSourceRegistry(marketSources)
+function marketPriceResolver(marketSources: SpotPriceSource[], env: Env) {
+  const registry = new SpotSourceRegistry(marketSources, undefined, env)
   return createMarketPriceResolver(marketSources, (chainId, token, _timestamp, signal) =>
     registry.resolve(chainId, token, signal)
   )
@@ -30,24 +30,36 @@ export function createSpotSources(env: Env): SpotPriceSource[] {
   return [
     ...marketSources,
     createOnchainSpotSource({
-      marketPrice: marketPriceResolver(marketSources),
+      marketPrice: marketPriceResolver(marketSources, env),
       env,
       clientForChain: (chainId) => getChainClient(chainId, env)
     })
   ]
 }
 
-export class SpotSourceRegistry extends SourceRegistry<SpotPriceSource, [signal?: AbortSignal]> {
+export class SpotSourceRegistry extends SourceRegistry<SpotPriceSource, [signal?: AbortSignal, source?: string]> {
   constructor(sources: SpotPriceSource[], guard?: PlausibleQuote, env?: Env) {
+    const timestamp = Math.floor(Date.now() / 1000)
+    const blocks = new Map<number, Promise<bigint>>()
     const plausible =
       guard ??
       createCurveLpGuard({
         clientForChain: (chainId) => getChainClient(chainId, env),
+        blockForTimestamp: (client, chainId) => {
+          let block = blocks.get(chainId)
+          if (!block) {
+            block = client.getBlockNumber()
+            blocks.set(chainId, block)
+            block.catch(() => blocks.delete(chainId))
+          }
+          return block
+        },
         coinPrices: async (chainId, coins) =>
           Promise.all(
             coins.map(async (coin) => {
               for (const source of sources) {
-                if (!['enso', 'defillama'].includes(source.name) || !source.supports(chainId)) continue
+                if (!(source.name === 'enso' || source.name.startsWith('defillama')) || !source.supports(chainId))
+                  continue
                 const quote = await source.getSpotPrice(chainId, coin)
                 if (quote) return quote.price
               }
@@ -58,12 +70,14 @@ export class SpotSourceRegistry extends SourceRegistry<SpotPriceSource, [signal?
     super(
       sources,
       'spot',
-      async (source, chainId, token, signal) => {
+      async (source, chainId, token, signal, selectedSource) => {
+        if (selectedSource && source.name !== selectedSource) return null
+        signal?.throwIfAborted()
         const price = await source.getSpotPrice(chainId, token, signal)
         if (
           price &&
           (source.name === 'enso' || source.name.startsWith('defillama')) &&
-          !(await plausible(chainId, token, Math.floor(Date.now() / 1000), price.price))
+          !(await plausible(chainId, token, timestamp, price.price))
         )
           return null
         return price
@@ -72,7 +86,7 @@ export class SpotSourceRegistry extends SourceRegistry<SpotPriceSource, [signal?
     )
   }
 
-  override resolve(chainId: number, token: string, signal?: AbortSignal): Promise<SpotPrice> {
-    return super.resolve(chainId, token, signal)
+  override resolve(chainId: number, token: string, signal?: AbortSignal, source?: string): Promise<SpotPrice> {
+    return super.resolve(chainId, token, signal, source)
   }
 }

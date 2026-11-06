@@ -4,7 +4,7 @@ import { writeDown } from '../prices/write-downs'
 import { type SpotSourceRegistry, spotSourceRegistry } from '../registries'
 import type { SpotPrice } from '../sources'
 import type { Env, SpotRequest, SpotResponseCoin } from '../types'
-import { chainNameToId, parseSpotCoins } from '../utils'
+import { chainNameToId, parseOptionalSource, parseSpotCoins } from '../utils'
 
 const SPOT_RESOLUTION_DEADLINE_MS = 15_000
 
@@ -12,7 +12,8 @@ async function resolveWithSignal(
   registry: SpotSourceRegistry,
   chainId: number,
   token: string,
-  signal: AbortSignal
+  signal: AbortSignal,
+  source?: string
 ): Promise<SpotPrice> {
   let rejectOnAbort: ((reason: unknown) => void) | undefined
   const aborted = new Promise<never>((_, reject) => {
@@ -28,7 +29,7 @@ async function resolveWithSignal(
     if (signal.aborted) {
       return await aborted
     }
-    return await Promise.race([registry.resolve(chainId, token, signal), aborted])
+    return await Promise.race([registry.resolve(chainId, token, signal, source), aborted])
   } finally {
     signal.removeEventListener('abort', onAbort)
   }
@@ -42,6 +43,7 @@ export async function handleSpot(
   env: Env,
   registry: SpotSourceRegistry = spotSourceRegistry(env)
 ): Promise<Response> {
+  const source = parseOptionalSource(new URL(request.url).searchParams.get('source'))
   const requests = parseSpotCoins(new URL(request.url).searchParams.get('coins'))
   const controller = new AbortController()
   const cancelFromRequest = () => controller.abort(request.signal.reason)
@@ -60,12 +62,8 @@ export async function handleSpot(
         ensure(chainId !== undefined, 'INVALID_INPUT', `Unsupported chain: ${req.chain}`)
 
         const spot =
-          writeDown(
-            chainId,
-            req.token,
-            Math.floor(Date.now() / 1000),
-            new URL(request.url).searchParams.get('source')
-          ) ?? (await resolveWithSignal(registry, chainId, req.token.toLowerCase(), controller.signal))
+          writeDown(chainId, req.token, Math.floor(Date.now() / 1000), source) ??
+          (await resolveWithSignal(registry, chainId, req.token.toLowerCase(), controller.signal, source))
 
         return {
           req,

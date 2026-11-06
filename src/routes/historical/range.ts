@@ -6,7 +6,7 @@ import { writeDown } from '../../prices/write-downs'
 import type { Env } from '../../types'
 import { normalizedDaysInRange, parseOptionalSource, parseRangeCoins } from '../../utils'
 import { type ReadThroughUpstream, readThrough } from './read-through'
-import { buildOriginalKeyMap, groupRowsByToken } from './shared'
+import { buildOriginalKeyMap, groupRowsByToken, toExactKey } from './shared'
 
 export async function handleRangeHistorical(
   request: Request,
@@ -27,17 +27,15 @@ export async function handleRangeHistorical(
     return price ? [{ ...entry, ...price }] : []
   })
   const pending = expectedRequests.filter((entry) => !writeDown(entry.chain, entry.token, entry.timestamp, source))
+  const pendingRanges = requests.flatMap((entry) => {
+    const days = pending.filter((day) => day.chain === entry.chain && day.token === entry.token)
+    return days.length ? [{ ...entry, endTimestamp: days[days.length - 1].timestamp }] : []
+  })
   const { rows, upstreamFailed } = await readThrough(
     pool,
     env,
     pending,
-    pending.length
-      ? await getRangeHistoricalPrices(
-          pool,
-          pending.map((entry) => ({ ...entry, startTimestamp: entry.timestamp, endTimestamp: entry.timestamp })),
-          source
-        )
-      : [],
+    await getRangeHistoricalPrices(pool, pendingRanges, source),
     source,
     upstream
   )
@@ -46,9 +44,7 @@ export async function handleRangeHistorical(
 
   const grouped = groupRowsByToken(responseRows, originalKeyMap)
 
-  const resolvedTimestamps = new Set(
-    [...rows, ...overrides].map((entry) => `${entry.chain}:${entry.token}:${entry.timestamp}`)
-  )
+  const resolvedTimestamps = new Set([...rows, ...overrides].map((entry) => toExactKey(entry)))
   const allResolved = resolvedTimestamps.size === expectedRequests.length
 
   return jsonResponse(

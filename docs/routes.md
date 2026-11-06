@@ -412,3 +412,5 @@ consumers must use to bypass previously delivered immutable responses. The new
 cache policy cannot retroactively evict a browser response that is never re-requested.
 
 Write-down overrides serve depleted alETH/ETH and msETH/ETH LPs at zero from their incident cutoffs, without storing zero rows. Explicit source filters bypass overrides. Spot and historical edge keys use `2026-11-curve-write-down-v3`. Market quotes for discovered Curve pools reject zero supply and retain the 4x virtual-price bound; RPC failures remain fail-open.
+
+Spot `source` filters are validated and restrict resolution to the named provider; unavailable providers return NOT_FOUND. Valid explicit filters bypass write-downs as on historical routes. The production spot registry currently registers Enso and on-chain sources, not a DeFiLlama spot source. Curve discovery remains enabled for every market quote; each registry pins its live checks to one timestamp and shares a latest-block lookup per chain. Distinct-token discovery still adds RPC work and has not been latency-benchmarked.
