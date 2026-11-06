@@ -1,0 +1,2 @@
+DROP INDEX "historical_price_repair_queue_due_idx";--> statement-breakpoint
+CREATE INDEX "historical_price_repair_queue_due_idx" ON "historical_price_repair_queue" USING btree ("next_attempt_at","updated_at") WHERE completed_at IS NULL;

@@ -1,6 +1,6 @@
 import { getChainClient } from '../clients/rpc'
 import { ApiError } from '../http/errors'
-import { createEnsoSpotSource } from '../sources'
+import { createDefiLlamaSpotSource, createEnsoSpotSource } from '../sources'
 import { createCurveLpGuard, type PlausibleQuote } from '../sources/defillama/lp-guard'
 import { createOnchainSpotSource } from '../sources/onchain'
 import type { SpotPrice, SpotPriceSource } from '../sources/types'
@@ -9,7 +9,7 @@ import type { Env } from '../types'
 import { createMarketPriceResolver } from './market-price'
 import { SourceRegistry } from './source-registry'
 
-const isGuardedSource = (source: SpotPriceSource) => source.name === 'enso'
+const isGuardedSource = (source: SpotPriceSource) => source.name === 'enso' || source.name === 'defillama'
 
 /**
  * Prices an on-chain adapter's child tokens with the market sources only. It
@@ -27,7 +27,7 @@ export function createSpotSources(env: Env): SpotPriceSource[] {
     throw new ApiError('INTERNAL_ERROR', 'ENSO_API_KEY is not configured')
   }
 
-  const marketSources = [createEnsoSpotSource(env.ENSO_API_KEY)]
+  const marketSources = [createEnsoSpotSource(env.ENSO_API_KEY), createDefiLlamaSpotSource()]
 
   return [
     ...marketSources,

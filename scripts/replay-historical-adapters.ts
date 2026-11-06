@@ -22,6 +22,7 @@ import type { CoinTarget } from './lib/batched-historical-client'
 import { replayGraph } from './lib/graph-replay'
 import { prefetchHistoricalFrontiers } from './lib/historical-frontiers'
 import { offlineProvider } from './lib/offline-provider'
+import { clean } from './lib/redact'
 
 // Diagnostic only: no database client, persistence API, or production write mode.
 config({ quiet: true })
@@ -107,16 +108,6 @@ if (provider && values['prefetch-evidence']) {
     }
   }
 }
-const secrets = Object.entries(process.env)
-  .filter(([key, value]) => /KEY|TOKEN|SECRET|PASSWORD|URL|URI/.test(key) && value && value.length >= 8)
-  .map(([, value]) => value as string)
-
-function clean(message: string): string {
-  let result = message.replace(/https?:\/\/[^\s"'<>]+/g, '[redacted-url]')
-  for (const secret of secrets) result = result.replaceAll(secret, '[redacted]')
-  return result.slice(0, 4000)
-}
-
 function failureEvidence(failure: PriceResolutionFailure): unknown {
   return {
     reason: failure.reason,

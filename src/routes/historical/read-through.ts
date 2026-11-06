@@ -6,21 +6,34 @@ import { ACCEPTED_PRICE_SQL } from '../../prices/rejections'
 import { type CurrentPriceTarget, currentPriceKey, fetchCurrentPrices } from '../../sources/defillama/current'
 import { createDefiLlamaHistoricalSource } from '../../sources/defillama/historical'
 import type { PlausibleQuote } from '../../sources/defillama/lp-guard'
+import {
+  type CurrentFallbackResult,
+  type CurrentFallbackTarget,
+  resolveCurrentFallback
+} from '../../sources/onchain/current-fallback'
 import type { HistoricalBatchPrice, HistoricalPriceResult, HistoricalPriceTarget } from '../../sources/types'
 import type { Env, ExactPriceRecord, HistoricalRequestTuple, PriceSource, TokenPriceWrite } from '../../types'
 import { chainIdToName, chainNameToId } from '../../utils/chains'
-import { currentUtcDayEnd, isClosedDay, isTodayNormalized } from '../../utils/time'
+import { currentUtcDayEnd, isClosedDay, isTodayNormalized, nowUnix } from '../../utils/time'
 
 const UPSTREAM_TIMEOUT_MS = 2_500
 // ponytail: 200 closed-day misses per request bounds subrequests and latency;
-// the rest stay missing until warmup or a later read fills them.
+// the rest stay missing until reconciliation or a later read fills them.
 export const MAX_READ_THROUGH_TARGETS = 200
+// Current fallback is intentionally smaller than the historical read-through:
+// Chainlink and recursive RPC reads are per-token and must stay inside the
+// request deadline.
+export const MAX_CURRENT_FALLBACK_TARGETS = 8
 // ponytail: at most 8 guard checks (one lp-guard wave) per read, each a pool discovery, a block estimate,
 // a get_virtual_price read and one DB read; a known Curve LP's quotes past the cap stay missing for a later read.
 export const MAX_GUARDED_RECORDS = 8
 
 export interface ReadThroughUpstream {
   current: (targets: CurrentPriceTarget[]) => Promise<Map<string, HistoricalPriceResult>>
+  currentFallback?: (
+    targets: CurrentFallbackTarget[],
+    cached: Map<string, HistoricalPriceResult>
+  ) => Promise<CurrentFallbackResult>
   historical: (targets: HistoricalPriceTarget[]) => Promise<{ prices: HistoricalBatchPrice[]; failed: boolean }>
   guard?: PlausibleQuote
 }
@@ -45,7 +58,7 @@ const defaultUpstream: ReadThroughUpstream = {
 
 const exactKey = (chain: string, token: string, timestamp: number) => `${chain}:${token.toLowerCase()}:${timestamp}`
 
-function logFailure(stage: 'current' | 'historical', error: unknown): void {
+function logFailure(stage: 'current' | 'historical' | 'current-fallback', error: unknown): void {
   console.error(JSON.stringify({ message: 'read-through-failed', stage, error: String(error) }))
 }
 
@@ -91,7 +104,9 @@ export async function readThrough(
     const chainId = chainNameToId(request.chain)
     return chainId === undefined ? [] : [{ chainId, token: request.token, timestamp: request.timestamp }]
   })
-  if (todayTargets.size === 0 && closedTargets.length === 0) return { rows, upstreamFailed: false }
+  if (todayTargets.size === 0 && closedTargets.length === 0) {
+    return { rows, upstreamFailed: false }
+  }
 
   let upstreamFailed = false
   const [live, closed] = await Promise.all([
@@ -117,6 +132,35 @@ export async function readThrough(
         )
   ])
 
+  const todayMisses = [...todayTargets.entries()].filter(([key]) => !live.has(key))
+  // Rotate the window by the minute so repeated requests eventually cover every miss past the cap.
+  const start = todayMisses.length > MAX_CURRENT_FALLBACK_TARGETS ? Math.floor(nowUnix() / 60) % todayMisses.length : 0
+  const fallbackTargets = [...todayMisses.slice(start), ...todayMisses.slice(0, start)].slice(
+    0,
+    MAX_CURRENT_FALLBACK_TARGETS
+  )
+  let fallback: CurrentFallbackResult = { prices: new Map(), failed: false }
+  if (fallbackTargets.length > 0 && (upstream.currentFallback || upstream === defaultUpstream)) {
+    const targets: CurrentFallbackTarget[] = fallbackTargets.map(([, target]) => ({
+      chainId: chainNameToId(target.chain) ?? 0,
+      chain: target.chain,
+      token: target.token
+    }))
+    try {
+      fallback = upstream.currentFallback
+        ? await upstream.currentFallback(targets, live)
+        : await resolveCurrentFallback(
+            env,
+            targets.filter((target) => target.chainId > 0),
+            live
+          )
+      if (fallback.failed) upstreamFailed = true
+    } catch (error) {
+      upstreamFailed = true
+      logFailure('current-fallback', error)
+    }
+  }
+
   const todayRecords: ExactPriceRecord[] = []
   const closedRecords: ExactPriceRecord[] = []
   const toRecord = (
@@ -124,7 +168,8 @@ export async function readThrough(
     token: string,
     timestamp: number,
     price: HistoricalPriceResult,
-    endpoint: string
+    endpoint: string,
+    source: PriceSource = 'defillama'
   ): ExactPriceRecord => ({
     chain,
     token,
@@ -132,7 +177,7 @@ export async function readThrough(
     price: price.price,
     symbol: price.symbol,
     confidence: price.confidence,
-    source: 'defillama',
+    source,
     observedTimestamp: price.timestamp,
     observationEndpoint: endpoint
   })
@@ -143,6 +188,14 @@ export async function readThrough(
     const observed = stored.get(exactKey(chain, token, todayEnd))?.observedTimestamp
     if (observed != null && observed > price.timestamp) continue
     todayRecords.push(toRecord(chain, token, todayEnd, price, '/prices/current'))
+  }
+
+  for (const [, { chain, token }] of fallbackTargets) {
+    const price = fallback.prices.get(currentPriceKey(chain, token))
+    if (!price) continue
+    const observed = stored.get(exactKey(chain, token, todayEnd))?.observedTimestamp
+    if (observed != null && observed > price.timestamp) continue
+    todayRecords.push(toRecord(chain, token, todayEnd, price, price.observationEndpoint, price.source))
   }
 
   for (const { target, price } of closed) {

@@ -30,8 +30,10 @@ jobs:
           doppler-project: yearn-price
           doppler-config: warmup
           inject-env-vars: true
-      - name: Audit, backfill, re-audit
-        run: bun run audit:prices:backfill
+      - name: Reconcile historical repair targets
+        run: bun run repair:historical --reconcile --write
+      - name: Audit finalized history
+        run: bun run audit:prices
       - name: Heartbeat
         if: success()
         continue-on-error: true

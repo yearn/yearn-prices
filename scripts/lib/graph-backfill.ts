@@ -28,6 +28,10 @@ export interface GraphBackfillSummary {
   rejectedImplausible: number
 }
 
+function throwIfAborted(signal?: AbortSignal): void {
+  signal?.throwIfAborted()
+}
+
 export async function runGraphBackfill(options: {
   pool: ReturnType<typeof createPool>
   manifest: ParsedManifest
@@ -36,8 +40,11 @@ export async function runGraphBackfill(options: {
   concurrency: number
   providerRps: number
   provider?: ReturnType<typeof offlineProvider>
+  finalizedOnly?: boolean
+  signal?: AbortSignal
 }): Promise<GraphBackfillSummary> {
   const { pool, manifest, out, write } = options
+  throwIfAborted(options.signal)
   const emit = (record: unknown) => appendFileSync(out, JSON.stringify(record) + '\n')
   const log = (stage: string, detail: Record<string, unknown> = {}) => console.log(JSON.stringify({ stage, ...detail }))
   writeFileSync(
@@ -55,9 +62,13 @@ export async function runGraphBackfill(options: {
   )
   let settled = 0
   try {
+    throwIfAborted(options.signal)
     log('preflight', { targets: manifest.targets.length })
     await preflightTokenCasings(pool, manifest.targets, EXACT_READ_CHUNK_SIZE)
-    const priced = await readPricedKeys(pool, manifest.targets, EXACT_READ_CHUNK_SIZE)
+    throwIfAborted(options.signal)
+    const priced = await readPricedKeys(pool, manifest.targets, EXACT_READ_CHUNK_SIZE, {
+      finalizedOnly: options.finalizedOnly
+    })
     const pending = manifest.targets.filter(
       (target) => !priced.has(priceKey(target.chain, target.token, target.eodTimestamp))
     )
@@ -74,6 +85,7 @@ export async function runGraphBackfill(options: {
       rejectedImplausible: 0
     }
     if (pending.length) {
+      throwIfAborted(options.signal)
       const pendingFile = out + '.manifest.json'
       const replayFile = out + '.replay.jsonl'
       writeFileSync(pendingFile, JSON.stringify({ version: 1, targets: pending }), { flag: 'wx' })
@@ -90,19 +102,22 @@ export async function runGraphBackfill(options: {
           createChainlinkHistoricalSource(),
           createDefiLlamaAliasHistoricalSource(provider)
         ],
-        stored: storedHistoricalPrices(pool),
+        stored: storedHistoricalPrices(pool, { finalizedOnly: options.finalizedOnly }),
         provider,
         out: replayFile,
         concurrency: options.concurrency,
         maxNodes: 32000,
-        clean: () => 'Pricing source failed; consult structured failure reason'
+        clean: () => 'Pricing source failed; consult structured failure reason',
+        signal: options.signal
       })
+      throwIfAborted(options.signal)
       const graphBytes = readFileSync(replayFile + '.graph.json')
       const graph = JSON.parse(graphBytes.toString()) as { roots: string[]; nodes: GraphNode[] }
       if (graph.roots.length !== pending.length) throw new Error('Graph did not return all requested roots')
       const byKey = new Map(graph.nodes.map((node) => [node.key, node]))
       const finalTargets: FinalizationTarget[] = []
       for (const [index, target] of pending.entries()) {
+        throwIfAborted(options.signal)
         const root = byKey.get(graph.roots[index])
         if (!root) throw new Error('Missing graph root')
         if (!root.path) {
@@ -132,10 +147,16 @@ export async function runGraphBackfill(options: {
         ])
       )
       log('finalizing', { eligible: finalTargets.length, unresolvedOrRejected: pending.length - finalTargets.length })
+      throwIfAborted(options.signal)
       const result = await finalizeBackfillTargets(pool, finalTargets, {
         dryRun: !write,
+        finalizedOnly: options.finalizedOnly ?? false,
         isPlausible: storedTargetGuard(pool),
+        onBatchStart() {
+          throwIfAborted(options.signal)
+        },
         onBatchSettled(batch) {
+          throwIfAborted(options.signal)
           settled += batch.results.length
           log('finalized-batch', { settled, of: finalTargets.length })
           for (const result of batch.results) {
@@ -160,6 +181,7 @@ export async function runGraphBackfill(options: {
           })
         }
       })
+      throwIfAborted(options.signal)
       summary = {
         inserted: write ? result.inserted : 0,
         wouldInsert: write ? 0 : result.inserted,

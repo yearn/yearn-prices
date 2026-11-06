@@ -9,7 +9,8 @@ export function priceKey(chain: string, token: string, timestamp: number): strin
 export async function readPricedKeys(
   pool: QueryExecutor,
   targets: Array<{ chain: string; token: string; eodTimestamp: number }>,
-  readChunkSize: number
+  readChunkSize: number,
+  options: { finalizedOnly?: boolean } = {}
 ): Promise<Set<string>> {
   const priced = new Set<string>()
   const requests: HistoricalRequestTuple[] = targets.map((target) => ({
@@ -19,7 +20,7 @@ export async function readPricedKeys(
   }))
 
   for (const requestChunk of chunk(requests, readChunkSize)) {
-    const rows = await getBatchHistoricalPrices(pool, requestChunk)
+    const rows = await getBatchHistoricalPrices(pool, requestChunk, undefined, options)
     for (const row of rows) {
       priced.add(priceKey(row.chain, row.token, row.timestamp))
     }

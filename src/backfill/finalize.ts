@@ -56,6 +56,8 @@ export interface FinalizationTargetResult {
 
 export interface FinalizationOptions {
   dryRun?: boolean
+  /** Treat provisional rows as unresolved so a repair pass can finalize them. */
+  finalizedOnly?: boolean
   batchSize?: number
   lockRetryLimit?: number
   lockTimeout?: string
@@ -184,9 +186,10 @@ async function applyBatch(
   client: BackfillClient,
   batch: FinalizationTarget[],
   readChunkSize: number,
-  write: boolean
+  write: boolean,
+  finalizedOnly: boolean
 ): Promise<FinalizationTargetResult[]> {
-  const priced = await readPricedKeys(client, batch, readChunkSize)
+  const priced = await readPricedKeys(client, batch, readChunkSize, { finalizedOnly })
 
   const concurrent: FinalizationTarget[] = []
   const resolved: FinalizationTarget[] = []
@@ -215,7 +218,7 @@ async function applyBatch(
     (target) => !insertedKeys.has(priceKey(target.chain, target.token, target.eodTimestamp))
   )
   const contestedPriced =
-    contested.length > 0 ? await readPricedKeys(client, contested, readChunkSize) : new Set<string>()
+    contested.length > 0 ? await readPricedKeys(client, contested, readChunkSize, { finalizedOnly }) : new Set<string>()
 
   const results: FinalizationTargetResult[] = [
     ...concurrent.map((target) => toResult(target, 'skipped_concurrent_existing'))
@@ -269,7 +272,7 @@ async function finalizeBatch(
       const lockRequestedAt = Date.now()
       await client.query('LOCK TABLE token_prices IN SHARE ROW EXCLUSIVE MODE')
       const lockAcquiredAt = Date.now()
-      const results = await applyBatch(client, batch, options.readChunkSize, true)
+      const results = await applyBatch(client, batch, options.readChunkSize, true, options.finalizedOnly)
       await client.query('COMMIT')
       committed = true
       return {
@@ -302,11 +305,12 @@ async function finalizeBatch(
 async function finalizeDryRun(
   pool: BackfillClientPool,
   batch: FinalizationTarget[],
-  readChunkSize: number
+  readChunkSize: number,
+  finalizedOnly: boolean
 ): Promise<FinalizationTargetResult[]> {
   const client = await pool.connect()
   try {
-    return await applyBatch(client, batch, readChunkSize, false)
+    return await applyBatch(client, batch, readChunkSize, false, finalizedOnly)
   } finally {
     client.release()
   }
@@ -322,7 +326,8 @@ export async function finalizeBackfillTargets(
     lockRetryLimit: options.lockRetryLimit ?? FINALIZATION_LOCK_RETRY_LIMIT,
     lockTimeout: options.lockTimeout ?? DEFAULT_LOCK_TIMEOUT,
     statementTimeout: options.statementTimeout ?? DEFAULT_STATEMENT_TIMEOUT,
-    readChunkSize: options.readChunkSize ?? EXACT_READ_CHUNK_SIZE
+    readChunkSize: options.readChunkSize ?? EXACT_READ_CHUNK_SIZE,
+    finalizedOnly: options.finalizedOnly ?? false
   }
 
   const results: FinalizationTargetResult[] = []
@@ -358,7 +363,9 @@ export async function finalizeBackfillTargets(
       )
     options.onBatchStart?.(batch.length)
     if (options.dryRun) {
-      const dryResults = remap(await finalizeDryRun(pool, batch, transactionOptions.readChunkSize))
+      const dryResults = remap(
+        await finalizeDryRun(pool, batch, transactionOptions.readChunkSize, transactionOptions.finalizedOnly)
+      )
       results.push(...dryResults)
       await options.onBatchSettled?.({ batch, results: dryResults, lockRetries: 0, lockWaitMs: 0, lockHoldMs: 0 })
       continue

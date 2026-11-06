@@ -261,7 +261,7 @@ it('trims a range straddling a write-down cutoff and merges both halves', async 
   })
 })
 
-it('production registry forwards env and guards Enso without an injected guard', async () => {
+it('production registry forwards env and guards Enso and DeFiLlama without an injected guard', async () => {
   const client = fakeClient({
     [lpToken]: {
       N_COINS: 2n,
@@ -272,7 +272,18 @@ it('production registry forwards env and guards Enso without an injected guard',
   const clientSpy = vi.spyOn(rpc, 'getChainClient').mockReturnValue(client)
   vi.stubGlobal(
     'fetch',
-    vi.fn(async () => new Response(JSON.stringify({ price: 5.7e20, decimals: 18 }), { status: 200 }))
+    vi.fn(async (url: string | URL) =>
+      String(url).includes('coins.llama.fi')
+        ? new Response(
+            JSON.stringify({
+              coins: {
+                [`ethereum:${lpToken}`]: { price: 570, decimals: 18, timestamp: Math.floor(Date.now() / 1000) }
+              }
+            }),
+            { status: 200 }
+          )
+        : new Response(JSON.stringify({ price: 5.7e20, decimals: 18 }), { status: 200 })
+    )
   )
   try {
     const registry = spotSourceRegistry(env)

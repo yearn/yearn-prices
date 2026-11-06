@@ -1,0 +1,1 @@
+CREATE INDEX "idx_token_prices_lower_token" ON "token_prices" USING btree ("chain",lower("token"),"timestamp");

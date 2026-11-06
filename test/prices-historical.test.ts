@@ -278,6 +278,126 @@ describe('handleHistorical', () => {
       await expect(response.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 2425.5 } } })
     })
 
+    it('admits a stale stored today row to the bounded fallback and preserves its provenance', async () => {
+      const currentFallback = vi.fn(async (targets: Array<{ chainId: number; chain: string; token: string }>) => {
+        expect(targets).toEqual([{ chainId: 1, chain: 'ethereum', token: CHECKSUM_ADDR }])
+        return {
+          prices: new Map([
+            [
+              TOKEN_KEY,
+              {
+                price: 2401,
+                timestamp: nowSeconds() - 10,
+                symbol: 'WETH',
+                confidence: 0.8,
+                source: 'chainlink' as const,
+                observationEndpoint: 'onchain.chainlink.latestRoundData'
+              }
+            ]
+          ]),
+          failed: false
+        }
+      })
+      const db = pool([])
+      const result = await readThrough(
+        db,
+        ENV,
+        [
+          { chain: 'ethereum', token: CHECKSUM_ADDR, timestamp: today },
+          { chain: 'ethereum', token: CHECKSUM_ADDR, timestamp: TIMESTAMP }
+        ],
+        [
+          {
+            chain: 'ethereum',
+            token: CHECKSUM_ADDR,
+            timestamp: today,
+            price: 1,
+            symbol: 'WETH',
+            confidence: 0.9,
+            source: 'defillama',
+            observedTimestamp: nowSeconds() - 100,
+            observationEndpoint: '/prices/current'
+          }
+        ],
+        undefined,
+        upstreamOf({ current: currentWith(null), currentFallback })
+      )
+
+      expect(currentFallback).toHaveBeenCalledTimes(1)
+      expect(currentFallback.mock.calls[0][0]).toHaveLength(1)
+      expect(result.rows).toContainEqual(
+        expect.objectContaining({
+          timestamp: today,
+          price: 2401,
+          source: 'chainlink',
+          observationEndpoint: 'onchain.chainlink.latestRoundData'
+        })
+      )
+    })
+
+    it('rotates the current fallback window so misses past the cap are eventually attempted', async () => {
+      vi.useFakeTimers()
+      vi.setSystemTime(new Date(Math.floor(Date.now() / 60_000) * 60_000 + 60_000))
+      try {
+        const tokens = Array.from({ length: 9 }, (_, index) => `0x${String(index + 1).padStart(40, '0')}`)
+        const currentFallback = vi.fn(async () => ({ prices: new Map(), failed: false }))
+        await readThrough(
+          pool([]),
+          ENV,
+          tokens.map((token) => ({ chain: 'ethereum', token, timestamp: today })),
+          [],
+          undefined,
+          upstreamOf({ currentFallback })
+        )
+        const start = Math.floor(Date.now() / 60_000) % tokens.length
+        const expected = [...tokens.slice(start), ...tokens.slice(0, start)].slice(0, 8)
+        expect(currentFallback.mock.calls[0][0].map((target: { token: string }) => target.token)).toEqual(expected)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('replaces a stored today row when a fallback quote shares its observation time', async () => {
+      const observed = nowSeconds() - 10
+      const currentFallback = vi.fn(async () => ({
+        prices: new Map([
+          [
+            TOKEN_KEY,
+            {
+              price: 2500,
+              timestamp: observed,
+              symbol: 'WETH',
+              confidence: 0.8,
+              source: 'derived' as const,
+              observationEndpoint: 'onchain.derived'
+            }
+          ]
+        ]),
+        failed: false
+      }))
+      const result = await readThrough(
+        pool([]),
+        ENV,
+        [{ chain: 'ethereum', token: CHECKSUM_ADDR, timestamp: today }],
+        [
+          {
+            chain: 'ethereum',
+            token: CHECKSUM_ADDR,
+            timestamp: today,
+            price: 1,
+            symbol: 'WETH',
+            confidence: 0.9,
+            source: 'derived',
+            observedTimestamp: observed,
+            observationEndpoint: 'onchain.derived'
+          }
+        ],
+        undefined,
+        upstreamOf({ currentFallback })
+      )
+      expect(result.rows).toContainEqual(expect.objectContaining({ timestamp: today, price: 2500 }))
+    })
+
     it('serves the table row when live has no price for today', async () => {
       const db = pool([tableRow(today, '1')])
       const response = await handleHistorical(
@@ -487,6 +607,46 @@ describe('handleHistorical', () => {
           upstreamOf({ historical: vi.fn(async () => ({ prices: [], failed: true })) })
         )
       ).rejects.toMatchObject({ code: 'UNAVAILABLE', status: 503 })
+    })
+
+    it('serves a stored closed-day row without admitting it to the repair queue', async () => {
+      const db = {
+        query: vi.fn(async () => ({ rows: [tableRow(TIMESTAMP, '123.45')] }))
+      } as unknown as Pool
+
+      const response = await handleHistorical(request(), ENV, db, String(TIMESTAMP), TOKEN_KEY, upstreamOf())
+
+      expect(response.status).toBe(200)
+      expect(db.query).toHaveBeenCalledTimes(1)
+      await expect(response.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 123.45 } } })
+      expect(
+        vi.mocked(db.query).mock.calls.some(([sql]) => String(sql).includes('historical_price_repair_queue'))
+      ).toBe(false)
+    })
+
+    it('serves a read-through price without admitting the provisional row to the repair queue', async () => {
+      const db = {
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('tp.finalized = TRUE')) return { rows: [] }
+          if (sql.includes('INSERT INTO token_prices')) return { rows: [] }
+          return { rows: [] }
+        })
+      } as unknown as Pool
+
+      const response = await handleHistorical(
+        request(),
+        ENV,
+        db,
+        String(TIMESTAMP),
+        TOKEN_KEY,
+        upstreamOf({ historical: closedWith() })
+      )
+
+      expect(response.status).toBe(200)
+      await expect(response.json()).resolves.toMatchObject({ coins: { [TOKEN_KEY]: { price: 1800.25 } } })
+      expect(
+        vi.mocked(db.query).mock.calls.some(([sql]) => String(sql).includes('historical_price_repair_queue'))
+      ).toBe(false)
     })
 
     it('returns UNAVAILABLE when the historical call throws', async () => {

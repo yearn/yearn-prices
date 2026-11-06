@@ -7,7 +7,7 @@ const key = (target: RecursivePriceTarget) => target.chainId + ':' + target.toke
 
 /** Existing rows are accepted database prices. Their EOD storage key is not
  * represented as a newly observed provider timestamp; that limitation is explicit. */
-export function storedHistoricalPrices(pool: QueryExecutor) {
+export function storedHistoricalPrices(pool: QueryExecutor, options: { finalizedOnly?: boolean } = {}) {
   const cache = new Map<string, ResolvedPricePath | null>()
   return {
     get: (target: RecursivePriceTarget) => cache.get(key(target)) ?? null,
@@ -22,7 +22,9 @@ export function storedHistoricalPrices(pool: QueryExecutor) {
             chain: chainIdToName(target.chainId)!,
             token: target.token,
             timestamp: target.timestamp!
-          }))
+          })),
+          undefined,
+          options
         )
         for (const target of group) {
           const row = rows.find(

@@ -13,6 +13,12 @@ export { wstEthAdapter } from './adapters/wsteth'
 export { yearnShareAdapter } from './adapters/yearn-share'
 export { yip88LiquidLockerAdapter } from './adapters/yip88-liquid-locker'
 export type { OnchainAdapterOptions } from './context'
+export {
+  type CurrentFallbackQuote,
+  type CurrentFallbackResult,
+  type CurrentFallbackTarget,
+  resolveCurrentFallback
+} from './current-fallback'
 export { RecursivePriceEngine } from './engine'
 export { InvalidPricingError, isRetryablePricingError, RetryablePricingError } from './errors'
 export {

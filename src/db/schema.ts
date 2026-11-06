@@ -56,6 +56,52 @@ export const historicalPriceGapInventory = pgTable(
   ]
 )
 
+/**
+ * Durable work queue for closed-day targets that do not yet have an accepted
+ * finalized observation. Rows remain until a worker settles them successfully;
+ * a lease token prevents a late worker from overwriting a reclaimed attempt.
+ */
+export const historicalPriceRepairQueue = pgTable(
+  'historical_price_repair_queue',
+  {
+    chainId: bigint('chain_id', { mode: 'number' }).notNull(),
+    token: varchar({ length: 60 }).notNull(),
+    timestamp: timestamp({ withTimezone: true, mode: 'string' }).notNull(),
+    attempts: bigint({ mode: 'number' }).default(0).notNull(),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+    leaseOwner: text('lease_owner'),
+    leaseToken: text('lease_token'),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true, mode: 'string' }),
+    lastOutcome: varchar('last_outcome', { length: 20 }),
+    lastError: text('last_error'),
+    createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+    completedAt: timestamp('completed_at', { withTimezone: true, mode: 'string' })
+  },
+  (table) => [
+    primaryKey({
+      columns: [table.token, table.timestamp, table.chainId],
+      name: 'historical_price_repair_queue_pkey'
+    }),
+    index('historical_price_repair_queue_due_idx')
+      .using('btree', table.nextAttemptAt, table.updatedAt)
+      .where(sql`completed_at IS NULL`),
+    index('historical_price_repair_queue_lease_idx').using('btree', table.leaseExpiresAt),
+    check('historical_price_repair_queue_chain_id_check', sql`chain_id > 0`),
+    check('historical_price_repair_queue_token_check', sql`(token)::text ~ '^0x[0-9a-f]{40}$'::text`),
+    check('historical_price_repair_queue_token_check1', sql`(token)::text = lower((token)::text)`),
+    check(
+      'historical_price_repair_queue_timestamp_check',
+      sql`mod((EXTRACT(epoch FROM "timestamp"))::bigint, (86400)::bigint) = 86399`
+    ),
+    check('historical_price_repair_queue_attempts_check', sql`attempts >= 0`),
+    check(
+      'historical_price_repair_queue_outcome_check',
+      sql`last_outcome IS NULL OR last_outcome IN ('missing', 'retryable', 'invalid')`
+    )
+  ]
+)
+
 export const defillamaRepairRatio = pgTable(
   'defillama_repair_ratio',
   {
@@ -109,6 +155,7 @@ export const tokenPrices = pgTable(
       table.token.asc().nullsLast(),
       table.timestamp.asc().nullsLast()
     ),
+    index('idx_token_prices_lower_token').using('btree', table.chain, sql`lower(${table.token})`, table.timestamp),
     primaryKey({ columns: [table.token, table.timestamp, table.source, table.chain], name: 'token_prices_pkey' }),
     check('token_prices_price_finite_positive', sql`price > 0 AND price::text NOT IN ('NaN', 'Infinity', '-Infinity')`)
   ]

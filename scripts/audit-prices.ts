@@ -19,7 +19,9 @@ if (!databaseUrl) {
 
 const { values } = parseArgs({ options: { backfill: { type: 'boolean' } } })
 const pool = createPool(databaseUrl)
-const end = normalizeToEndOfDay(nowUnix())
+// Current-day observations are served live and remain provisional. Scheduled
+// coverage audits measure finalized history, not whether someone requested today.
+const end = normalizeToEndOfDay(nowUnix()) - 86_400
 const start = normalizeToEndOfDay(end - 6 * 86_400)
 const timestamps = normalizedDaysInRange(start, end)
 
@@ -28,7 +30,8 @@ async function audit(vaults: NormalizedVault[]) {
   const priced = await readPricedKeys(
     pool,
     expected.map((tuple) => ({ chain: tuple.chain, token: tuple.token, eodTimestamp: tuple.timestamp })),
-    EXACT_READ_CHUNK_SIZE
+    EXACT_READ_CHUNK_SIZE,
+    { finalizedOnly: true }
   )
   return auditCoverage(expected, priced)
 }

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DeFiLlama spot fallback — implementation review</title>
+<style>
+body{margin:0;background:#f3f5f8;color:#152333;font:16px/1.6 system-ui,sans-serif}main{max-width:940px;margin:48px auto;padding:32px;background:white;border-radius:16px}h1{line-height:1.15;font-size:36px}h2{margin-top:32px}code{background:#edf2f7;padding:2px 5px;border-radius:4px}table{border-collapse:collapse;width:100%}td,th{padding:12px;text-align:left;border-bottom:1px solid #dde4ed}th{background:#f5f7fa}.flow{padding:20px;background:#e7f3f0;border-radius:8px;font-weight:650}.note{padding:16px;border-left:4px solid #c58c28;background:#fff8e9}a{color:#1759a5}@media(max-width:650px){main{margin:0;padding:20px}h1{font-size:28px}table{font-size:13px}}
+</style>
+<main>
+<p>Price service · Phase 1 · Local implementation review</p>
+<h1>More spot prices from the existing resolver</h1>
+<p>When Enso has no usable quote, DeFiLlama can now supply a current USD price before on-chain derivation. The same fallback is available for underlying tokens, allowing a new constituent price to unlock a vault or pool.</p>
+<p class="flow">Enso (10) → DeFiLlama current (15) → On-chain derivation (20)</p>
+<h2>Behavior to review</h2>
+<table><thead><tr><th>Area</th><th>Implementation</th></tr></thead><tbody>
+<tr><td>Source precedence</td><td>Successful Enso quotes remain preferred. DeFiLlama can replace a previously derived quote; the benchmark reports source changes and disagreements.</td></tr>
+<tr><td>Batching</td><td>Concurrent lookups coalesce, duplicate token lookups share results, and provider batches have bounded concurrency.</td></tr>
+<tr><td>Provider failures</td><td>Malformed envelopes, rate limits and transport failures remain errors. A failed batch is not retried token by token.</td></tr>
+<tr><td>Rate limits</td><td>A shared cooldown within the Worker isolate honors the full Retry-After. This is not a cross-isolate quota coordinator.</td></tr>
+<tr><td>Observations</td><td>Preserve provider timestamps. Match the existing current-price policy: at most six hours old and five minutes ahead.</td></tr>
+<tr><td>Historical storage</td><td>Spot quotes are not persisted as historical closes. Historical sources and backfill behavior are unchanged.</td></tr>
+</tbody></table>
+<h2>Coverage comparison</h2>
+<p><a href="spot-coverage-benchmark.md">Benchmark instructions</a> describe how to compare Enso + derivation against Enso + DeFiLlama + derivation. Both graphs share market observations; each target gets an independent derivation budget.</p>
+<ul><li>JSON and optional HTML reports show priced, missing and error outcomes.</li><li>Direct and derived recoveries are distinguishable, as are recovery from absence and recovery from provider failure.</li><li>Source changes and price disagreements remain visible even when both graphs return prices.</li></ul>
+<h2>Validation and limits</h2>
+<p id="validation">TypeScript checking passes. Tests and lint run in GitHub CI; they are not run locally under the repository's Astra instruction. The cache regression now checks that both Enso and DeFiLlama are retried on the next request after transient failures. Independent code review checked batching, cancellation, source wiring and benchmark cache behavior.</p>
+<p class="note">No live coverage gain has been measured in this change. The benchmark uses live provider/RPC access even with a saved target file. Its cached comparison timings are not production latency measurements.</p>
+<h2>Next additions</h2>
+<p>Use measured unresolved dependencies to prioritize Curve coin prices, Sugar Oracle, Gamma, and Pendle PT/YT/SY. Those integrations and wider discovery are later phases.</p>
+<p>Revise the warming strategy toward targeted repair of missing and provisional historical rows. Current spot and today's historical read-through already resolve live. Keep scheduled historical reconciliation until targeted repair can replace its finalization duties; this change does not alter job schedules.</p>
+</main>
+</html>
