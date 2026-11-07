@@ -54,7 +54,6 @@ export async function runGraphBackfill(options: {
   run?: GraphBackfillRun
 }): Promise<GraphBackfillSummary> {
   const { pool, manifest, out, write } = options
-  const run = options.run ?? createGraphBackfillRun(pool, options.finalizedOnly)
   throwIfAborted(options.signal)
   const emit = (record: unknown) => appendFileSync(out, JSON.stringify(record) + '\n')
   const log = (stage: string, detail: Record<string, unknown> = {}) => console.log(JSON.stringify({ stage, ...detail }))
@@ -96,6 +95,7 @@ export async function runGraphBackfill(options: {
       rejectedImplausible: 0
     }
     if (pending.length) {
+      const run = options.run ?? createGraphBackfillRun(pool, options.finalizedOnly)
       throwIfAborted(options.signal)
       const pendingFile = out + '.manifest.json'
       const replayFile = out + '.replay.jsonl'
