@@ -195,11 +195,21 @@ export async function enqueueClosedRepairTargets(
 /** Atomically claim due work. Expired leases are safely reclaimable. */
 export async function claimRepairQueue(
   db: RepairQueueDb,
-  options: { limit: number; owner: string; leaseSeconds: number; leaseToken?: string }
+  options: {
+    limit: number
+    owner: string
+    leaseSeconds: number
+    leaseToken?: string
+    recentDays?: number
+    recentOnly?: boolean
+  }
 ): Promise<RepairLease[]> {
   if (!Number.isInteger(options.limit) || options.limit < 1) throw new Error('repair queue limit must be positive')
   if (!Number.isFinite(options.leaseSeconds) || options.leaseSeconds <= 0)
     throw new Error('leaseSeconds must be positive')
+  const recentDays = options.recentDays ?? 7
+  if (!Number.isSafeInteger(recentDays) || recentDays < 1 || recentDays > 365)
+    throw new Error('recentDays must be an integer from 1 through 365')
   const token = options.leaseToken ?? randomLeaseToken()
   const result = await db.query<Record<string, unknown>>(
     `
@@ -210,7 +220,11 @@ export async function claimRepairQueue(
           AND "timestamp" < to_timestamp(floor(extract(epoch FROM NOW()) / 86400)::bigint * 86400 + 86399)
           AND next_attempt_at <= NOW()
           AND (lease_expires_at IS NULL OR lease_expires_at <= NOW())
-        ORDER BY next_attempt_at, updated_at, chain_id, token, "timestamp"
+          AND (NOT $6::boolean OR "timestamp" >= to_timestamp(
+            floor(extract(epoch FROM NOW()) / 86400)::bigint * 86400 - $5::bigint * 86400))
+        ORDER BY ("timestamp" >= to_timestamp(
+          floor(extract(epoch FROM NOW()) / 86400)::bigint * 86400 - $5::bigint * 86400)) DESC,
+          next_attempt_at, updated_at, chain_id, token, "timestamp"
         FOR UPDATE SKIP LOCKED
         LIMIT $1
       )
@@ -223,7 +237,7 @@ export async function claimRepairQueue(
       WHERE queue.chain_id = due.chain_id AND queue.token = due.token AND queue."timestamp" = due."timestamp"
       RETURNING queue.*
     `,
-    [options.limit, options.owner, token, options.leaseSeconds]
+    [options.limit, options.owner, token, options.leaseSeconds, recentDays, options.recentOnly ?? false]
   )
   return result.rows.map((row) => ({ ...rowToQueueItem(row), leaseOwner: options.owner, leaseToken: token }))
 }

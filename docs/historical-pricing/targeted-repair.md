@@ -71,7 +71,7 @@ bun run repair:historical --write --limit 100 --budget-seconds 600
 ```
 
 Without `--write`, the worker reports queue depth without claiming targets.
-`--recent-days` controls recent Yearn discovery. `--out <directory>` retains graph
+`--recent-days` controls recent Yearn discovery and the priority window (default seven closed UTC days). Due targets in that window are selected before older backlog; retry cooldowns and active leases still apply. `--recent-only` restricts claims to that window. The weekly audit uses it for a bounded 40-minute repair pass before checking coverage; remaining gaps still fail the audit. `--out <directory>` retains graph
 evidence at a selected path; otherwise evidence goes to a temporary directory.
 Structured summaries report discovery, claimed/completed/missing/unresolved/invalid/
 error/deferred counts, duration and budget exhaustion. Expected unresolved graphs and a clean

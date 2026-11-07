@@ -199,7 +199,7 @@ Cloudflare entry point requires authentication even for health requests.
 
 Pushing to `main` runs `.github/workflows/deploy.yml`: migrations first, then the SHA-pinned Cloudflare deploy and a reconciliation/repair job. The repair-queue migration must finish before repair jobs start. `.github/workflows/warmup.yml` now drains due repair targets every 15 minutes and reconciles target discovery daily at 00:30 UTC. Deployment, repair and weekly audit jobs share the historical-maintenance concurrency group.
 
-The weekly audit reconciles first and checks accepted finalized prices for active Yearn vaults and their underlying tokens over the last seven closed days. Any accepted source can satisfy coverage. Missing RPC configuration and unresolved coverage remain audit failures. The heartbeat still uses `$UPTIME_URL` and `$UPTIME_URL/fail`. Manual `warmup` and `audit:prices:backfill` commands remain available, but scheduled jobs no longer launch broad warmup. See the [repair runbook](docs/historical-pricing/targeted-repair.md).
+The weekly audit reconciles first, repairs due targets in the last seven closed days for up to 40 minutes (at most 10,000 targets), and then checks accepted finalized prices for active Yearn vaults and their underlying tokens over the last seven closed days. Any accepted source can satisfy coverage. Missing RPC configuration and unresolved coverage remain audit failures. The heartbeat still uses `$UPTIME_URL` and `$UPTIME_URL/fail`. Manual `warmup` and `audit:prices:backfill` commands remain available, but scheduled jobs no longer launch broad warmup. See the [repair runbook](docs/historical-pricing/targeted-repair.md).
 
 `.github/workflows/pr.yml` runs typecheck and tests on every PR.
 

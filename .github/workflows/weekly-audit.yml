@@ -32,7 +32,10 @@ jobs:
           inject-env-vars: true
       - name: Reconcile historical repair targets
         run: bun run repair:historical --reconcile --write
+      - name: Repair recent audit window
+        run: bun run repair:historical --write --recent-only --recent-days 7 --limit 10000 --budget-seconds 2400 --lease-seconds 3000
       - name: Audit finalized history
+        if: ${{ !cancelled() }}
         run: bun run audit:prices
       - name: Heartbeat
         if: success()
