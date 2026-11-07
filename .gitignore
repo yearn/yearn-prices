@@ -17,3 +17,4 @@ backfill-retry*.json
 /docs/historical-pricing/*.json
 !/docs/historical-pricing/backfill-manifest.json
 !/docs/historical-pricing/yearn-vault-feed-audit.json
+!/docs/historical-pricing/underlying-gap-results.json

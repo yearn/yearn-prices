@@ -55,3 +55,40 @@ bun scripts/explain-price-gaps.ts --manifest targets.json \
 The report validates root count, chain, token and day against the manifest.
 Only constrained application-authored error messages are copied; unknown errors
 retain their failure category without exposing connection strings or payloads.
+
+## Verified outcome
+
+The [review document](underlying-gap-review.html) and
+[complete outcome ledger](underlying-gap-results.json) account for every one of
+the original 358 missing rows. The final accepted/finalized database readback
+found 42 newly stored prices: seven days each for pxETH, CHI/DAI LP and
+hyUSDe/eUSD LP, plus their 21 corresponding vault-day prices.
+
+The remaining 158 underlying-day gaps (and 158 catalogued vault dependencies)
+are explicit:
+
+| Reason | Underlying/day gaps |
+| --- | ---: |
+| No independent historical price anchor / supported conversion | 56 |
+| Quote liquidity below the existing $20,000 floor | 48 |
+| Curve swap depth fails the existing valuation bound | 29 |
+| Zero LP supply | 14 |
+| Recorded reserves exceed actual token holdings | 11 |
+
+The ledger lists the precise dependency addresses and per-day amounts/refusals.
+The two lvlUSD dates remain below the quote-liquidity floor ($18,411 and
+$18,401). HBTC's historical Curve pool held 0.00381466–0.00522381 WBTC and
+exposed no supported `price_oracle()`; old yCRV's pool has zero LP supply;
+the yBAL Balancer pool contains only dust. These cases need independent price
+or lifecycle evidence before the audit can count them as priced.
+
+The static Compound wrapper had 74–76 raw principal units of accumulated
+rounding difference against roughly 5.5 trillion units of supply. Its adapter
+allows at most one part per billion of rounding and deducts the actual deficit
+from NAV by converting backed principal and dividing by outstanding supply.
+Material deficits remain invalid. USDC's own historical price is still required.
+
+Validation: GitHub CI passed typecheck, lint, unit tests, integration tests and
+the gateway build for pricing commit `3216b74`. Tests and lint were not run
+locally, following the workspace's Astra instruction. Raw replay graphs remain
+private; their hashes and sanitized outcomes are included in the ledger.
