@@ -3,7 +3,7 @@ import { appendFileSync, readFileSync, writeFileSync } from 'node:fs'
 import { EXACT_READ_CHUNK_SIZE, MAXIMUM_ACCEPTED_OFFSET_SECONDS } from '../../src/backfill/constants'
 import { type FinalizationTarget, finalizeBackfillTargets } from '../../src/backfill/finalize'
 import { validateGraphResolution } from '../../src/backfill/graph-validation'
-import type { ParsedManifest } from '../../src/backfill/manifest'
+import { type ParsedManifest, parseManifest } from '../../src/backfill/manifest'
 import { priceKey, readPricedKeys } from '../../src/backfill/priced-keys'
 import { gitRevision } from '../../src/backfill/provenance'
 import { targetOutcome } from '../../src/backfill/target-outcome'
@@ -17,6 +17,7 @@ import {
 import type { GraphNode } from '../../src/sources/onchain/graph'
 import { preflightTokenCasings } from '../backfill-historical-gaps'
 import { storedTargetGuard } from './curve-lp-guard'
+import { graphGapReport, safePricingFailure } from './graph-gap-report'
 import { createGraphReplaySession, replayGraph } from './graph-replay'
 import { offlineProvider } from './offline-provider'
 import { storedHistoricalPrices } from './stored-historical-prices'
@@ -121,12 +122,17 @@ export async function runGraphBackfill(options: {
         out: replayFile,
         concurrency: options.concurrency,
         maxNodes: 32000,
-        clean: () => 'Pricing source failed; consult structured failure reason',
+        clean: (message) => safePricingFailure(message) ?? 'Pricing source failed; consult structured failure reason',
         signal: options.signal
       })
       throwIfAborted(options.signal)
       const graphBytes = readFileSync(replayFile + '.graph.json')
       const graph = JSON.parse(graphBytes.toString()) as { roots: string[]; nodes: GraphNode[] }
+      writeFileSync(
+        out + '.gaps.json',
+        JSON.stringify(graphGapReport(graph, parseManifest(readFileSync(pendingFile))), null, 2) + '\n',
+        { flag: 'wx' }
+      )
       if (graph.roots.length !== pending.length) throw new Error('Graph did not return all requested roots')
       const byKey = new Map(graph.nodes.map((node) => [node.key, node]))
       const finalTargets: FinalizationTarget[] = []
