@@ -14,7 +14,7 @@ export interface ReadBudget {
  * how many tokens are walked; this bounds what each walk costs, so a wide
  * request cannot blow the Worker subrequest limit and fail as a whole.
  */
-export function createReadBudget(limit: number): ReadBudget {
+export function createReadBudget(limit: number, onRead?: () => void): ReadBudget {
   if (!Number.isInteger(limit) || limit < 1) {
     throw new Error('On-chain read budget must be a positive integer')
   }
@@ -36,6 +36,7 @@ export function createReadBudget(limit: number): ReadBudget {
               throw new ReadBudgetExceededError(`On-chain pricing exceeded its budget of ${limit} reads`)
             }
             spent += 1
+            onRead?.()
             return (value as (...called: unknown[]) => unknown).apply(target, args)
           }
         }

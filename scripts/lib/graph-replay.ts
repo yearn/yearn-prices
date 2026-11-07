@@ -3,7 +3,14 @@ import { getChainClient } from '../../src/clients/rpc'
 import { HistoricalSourceRegistry } from '../../src/registries/historical'
 import { createMarketPriceResolver } from '../../src/registries/market-price'
 import { createOnchainPriceAdapters } from '../../src/sources/onchain/adapters'
-import { type GraphNode, graphKey, resolveHistoricalGraph } from '../../src/sources/onchain/graph'
+import { HistoricalBlockCache } from '../../src/sources/onchain/context'
+import {
+  type GraphNode,
+  graphCacheKey,
+  graphKey,
+  HistoricalGraphCache,
+  resolveHistoricalGraph
+} from '../../src/sources/onchain/graph'
 import { createReadBudget } from '../../src/sources/onchain/read-budget'
 import type { RecursivePriceTarget, ResolvedPricePath } from '../../src/sources/onchain/types'
 import type { HistoricalPriceSource } from '../../src/sources/types'
@@ -13,6 +20,23 @@ import type { BatchedHistoricalClient } from './batched-historical-client'
 function throwIfAborted(signal?: AbortSignal): void {
   signal?.throwIfAborted()
 }
+
+/** One bounded session per repair run, never shared between requests or configurations. */
+export function createGraphReplaySession() {
+  return {
+    graph: new HistoricalGraphCache(),
+    blocks: new HistoricalBlockCache(),
+    adapters: new Map<
+      string,
+      {
+        adapters: ReturnType<typeof createOnchainPriceAdapters>
+        budget: ReturnType<typeof createReadBudget>
+      }
+    >(),
+    onchainReads: 0
+  }
+}
+export type GraphReplaySession = ReturnType<typeof createGraphReplaySession>
 
 export async function replayGraph(options: {
   targets: RecursivePriceTarget[]
@@ -27,9 +51,12 @@ export async function replayGraph(options: {
   maxNodes: number
   clean: (message: string) => string
   signal?: AbortSignal
+  session?: GraphReplaySession
 }) {
   const { targets, sources, provider, out, concurrency, maxNodes, clean, signal } = options
   throwIfAborted(signal)
+  const session = options.session ?? createGraphReplaySession()
+  const readsBefore = session.onchainReads
   const marketAttempts = new Map<string, unknown[]>()
   const budgets = new Map<string, ReturnType<typeof createReadBudget>>()
   let lastProgress = 0
@@ -39,6 +66,7 @@ export async function replayGraph(options: {
     roots: signal ? targets.map((target) => ({ ...target, signal })) : targets,
     concurrency,
     maxNodes,
+    cache: session.graph,
     prefetch: async (targets) => {
       throwIfAborted(signal)
       await options.stored?.prefetch(targets)
@@ -93,13 +121,24 @@ export async function replayGraph(options: {
       throwIfAborted(signal)
       const client = getChainClient(target.chainId)
       if (!client) throw new Error(`RPC_URL_${target.chainId} is not configured`)
-      const budget = createReadBudget(400)
+      const key = graphCacheKey(target)
+      const cached = target.timestamp == null ? undefined : session.adapters.get(key)
+      if (cached) {
+        budgets.set(graphKey(target), cached.budget)
+        return cached.adapters
+      }
+      const budget = createReadBudget(400, () => {
+        session.onchainReads += 1
+      })
       budgets.set(graphKey(target), budget)
       const metered = budget.meter(client)
       const adapters = createOnchainPriceAdapters({
         clientForChain: (chainId) => (chainId === target.chainId ? metered : null),
-        blockContextCache: new Map()
+        blockContextCache: new Map(),
+        historicalBlocks: session.blocks
       })
+      if (target.timestamp != null) session.adapters.set(key, { adapters, budget })
+      if (session.adapters.size > 32_000) session.adapters.delete(session.adapters.keys().next().value!)
       throwIfAborted(signal)
       return adapters
     },
@@ -181,8 +220,18 @@ export async function replayGraph(options: {
       })}\n`
     )
   }
+  const cacheStats = {
+    blockNumbers: session.blocks.numbers.stats,
+    blockTimestamps: session.blocks.timestamps.stats,
+    plans: session.graph.plans.stats,
+    market: session.graph.market.stats,
+    derivations: session.graph.derivations.stats,
+    runOnchainReads: session.onchainReads
+  }
+  console.log(json({ stage: 'graph-cache', ...cacheStats }))
   const evidence = {
     ...graph,
+    cacheStats,
     nodes: graph.nodes.map((node) => ({
       ...node,
       marketAttempts: marketAttempts.get(node.key) ?? [],
@@ -197,7 +246,8 @@ export async function replayGraph(options: {
       (sum, node) => sum + node.routes.reduce((n, route) => n + route.dependencies.length, 0),
       0
     ),
-    onchainReads: [...budgets.values()].reduce((sum, budget) => sum + budget.spent, 0),
+    onchainReads: session.onchainReads - readsBefore,
+    cacheStats,
     evidence: `${out}.graph.json`
   }
 }

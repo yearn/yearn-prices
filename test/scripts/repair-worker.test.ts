@@ -197,3 +197,24 @@ it('leaves attempts unchanged when the drain deadline is reached before new grap
     expect(sql).not.toContain('attempts = attempts + 1')
   }
 })
+
+it('resolves a wider root frontier in one graph without increasing RPC concurrency', async () => {
+  const database = db()
+  mocks.runGraphBackfill.mockReset().mockResolvedValue(undefined)
+  const claims = Array.from({ length: 20 }, (_, i) => lease(`0x${(i + 1).toString(16).padStart(40, '0')}`))
+  mocks.finalizedRepairKeys
+    .mockReset()
+    .mockResolvedValue(new Set(claims.map((claim) => `1:${claim.token}:${claim.timestamp}`)))
+  const result = await processClaims(database, claims, {
+    write: true,
+    deadline: Date.now() + 60_000,
+    concurrency: 2,
+    providerRps: 1,
+    evidenceDir: mkdtempSync(join(tmpdir(), 'repair-worker-')),
+    signal: new AbortController().signal
+  })
+  expect(result.completed).toBe(20)
+  expect(mocks.runGraphBackfill).toHaveBeenCalledTimes(1)
+  expect(mocks.runGraphBackfill.mock.calls[0][0].manifest.targets).toHaveLength(20)
+  expect(mocks.runGraphBackfill.mock.calls[0][0].concurrency).toBe(2)
+})

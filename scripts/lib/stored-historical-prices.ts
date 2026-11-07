@@ -56,6 +56,7 @@ export function storedHistoricalPrices(pool: QueryExecutor, options: { finalized
                 }
               : null
           )
+          if (cache.size > 32_000) cache.delete(cache.keys().next().value!)
         }
       }
     }

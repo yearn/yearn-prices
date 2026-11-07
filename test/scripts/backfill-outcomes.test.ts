@@ -14,6 +14,7 @@ vi.mock('../../src/backfill/priced-keys', () => ({
 }))
 vi.mock('../../scripts/lib/offline-provider', () => ({ offlineProvider: vi.fn() }))
 vi.mock('../../scripts/lib/graph-replay', () => ({
+  createGraphReplaySession: () => ({}),
   replayGraph: async ({
     targets,
     out
