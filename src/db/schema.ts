@@ -13,6 +13,7 @@ import {
   timestamp,
   varchar
 } from 'drizzle-orm/pg-core'
+import type { PriceSource } from '../types'
 
 export const backfillProgress = pgTable('backfill_progress', {
   tokenKey: text('token_key').primaryKey().notNull(),
@@ -141,7 +142,7 @@ export const tokenPrices = pgTable(
     price: numeric().notNull(),
     symbol: text(),
     confidence: numeric(),
-    source: varchar({ length: 50 }).notNull(),
+    source: varchar({ length: 50 }).$type<PriceSource>().notNull(),
     createdAt: timestamp('created_at', { mode: 'string' }).defaultNow(),
     updatedAt: timestamp('updated_at', { mode: 'string' }).defaultNow(),
     finalized: boolean().default(true).notNull(),

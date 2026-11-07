@@ -13,6 +13,7 @@ import {
 } from '../../scripts/backfill-historical-gaps'
 import { groupContiguousRanges } from '../../src/backfill/ranges'
 import { HttpRequestError } from '../../src/clients/http-client'
+import { driverQuery } from '../helpers/drizzle-driver'
 
 const DAY = 86_400
 const EOD = 1_704_153_599
@@ -49,7 +50,7 @@ function fakePool(config: FakePoolConfig = {}): {
   const statements: string[] = []
   const queries: Array<{ sql: string; params?: unknown[] }> = []
 
-  const query = async (sql: string, params?: unknown[]) => {
+  const query = driverQuery(async (sql: string, params?: unknown[]) => {
     statements.push(sql.trim().split('\n')[0].trim())
     queries.push({ sql, params })
 
@@ -75,7 +76,7 @@ function fakePool(config: FakePoolConfig = {}): {
     }
     if (sql.includes('RETURNING')) {
       const rows: Record<string, unknown>[] = []
-      for (let offset = 0; offset < (params ?? []).length; offset += 7) {
+      for (let offset = 0; offset + 9 < (params ?? []).length && typeof params?.[offset] === 'string'; offset += 10) {
         const all = params as unknown[]
         rows.push({
           chain: all[offset],
@@ -86,7 +87,7 @@ function fakePool(config: FakePoolConfig = {}): {
       return { rows }
     }
     return { rows: [] }
-  }
+  })
 
   const pool = {
     query,

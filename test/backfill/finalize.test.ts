@@ -7,6 +7,7 @@ import {
   finalizeBackfillTargets
 } from '../../src/backfill/finalize'
 import { REJECTED_OBSERVATIONS } from '../../src/prices/rejections'
+import { driverQuery } from '../helpers/drizzle-driver'
 
 const TARGET: FinalizationTarget = {
   chainId: 1,
@@ -35,7 +36,7 @@ function fakePool(failOnLock: number): { pool: BackfillClientPool; clients: Fake
       const state: FakeClient = { statements: [], released: 0 }
       clients.push(state)
       const client: BackfillClient = {
-        query: (async (sql: string) => {
+        query: driverQuery((async (sql: string) => {
           state.statements.push(sql.trim().split('\n')[0].trim())
           if (sql.startsWith('LOCK TABLE') && lockFailures < failOnLock) {
             lockFailures += 1
@@ -45,7 +46,7 @@ function fakePool(failOnLock: number): { pool: BackfillClientPool; clients: Fake
             return { rows: [{ chain: 'ethereum', token: TARGET.token, timestamp: new Date(1_704_153_599_000) }] }
           }
           return { rows: [] }
-        }) as BackfillClient['query'],
+        }) as BackfillClient['query']),
         release: () => {
           state.released += 1
         }
@@ -123,7 +124,7 @@ describe('finalizeBackfillTargets client lifecycle', () => {
     const pool: BackfillClientPool = {
       connect: async () => {
         const client: BackfillClient = {
-          query: async (sql: string) => {
+          query: driverQuery(async (sql: string) => {
             if (sql.startsWith('LOCK TABLE')) {
               throw originalError
             }
@@ -131,7 +132,7 @@ describe('finalizeBackfillTargets client lifecycle', () => {
               throw rollbackError
             }
             return { rows: [] }
-          },
+          }),
           release: (error?: unknown) => {
             releaseCalls.push(error)
           }
@@ -140,8 +141,8 @@ describe('finalizeBackfillTargets client lifecycle', () => {
       }
     }
 
-    await expect(finalizeBackfillTargets(pool, [TARGET])).rejects.toBe(originalError)
-    expect(releaseCalls).toEqual([rollbackError])
+    await expect(finalizeBackfillTargets(pool, [TARGET])).rejects.toMatchObject({ cause: originalError })
+    expect(releaseCalls).toEqual([expect.objectContaining({ cause: rollbackError })])
   })
 
   it('opens no transaction in dry-run mode', async () => {
@@ -160,11 +161,11 @@ describe('finalizeBackfillTargets client lifecycle', () => {
     const queries: string[] = []
     const pool: BackfillClientPool = {
       connect: async () => ({
-        query: async (sql: string) => {
+        query: driverQuery(async (sql: string) => {
           queries.push(sql)
           if (sql.includes('INSERT INTO token_prices')) return { rows: [] }
           return { rows: [] }
-        },
+        }),
         release: () => {}
       })
     }

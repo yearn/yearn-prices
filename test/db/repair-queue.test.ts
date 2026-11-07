@@ -11,6 +11,7 @@ import {
   settleRepairFailure,
   settleRepairSuccess
 } from '../../src/db/repair-queue'
+import { driverQuery } from '../helpers/drizzle-driver'
 
 const TOKEN = '0x0000000000000000000000000000000000000001'
 const DAY = 1_700_006_399
@@ -18,7 +19,7 @@ const DAY = 1_700_006_399
 function db(
   responses: Array<{ rows: Record<string, unknown>[]; rowCount?: number }>
 ): RepairQueueDb & { query: ReturnType<typeof vi.fn> } {
-  const query = vi.fn()
+  const query = driverQuery(vi.fn())
   for (const response of responses) query.mockResolvedValueOnce(response)
   return { query } as RepairQueueDb & { query: ReturnType<typeof vi.fn> }
 }
@@ -70,16 +71,16 @@ describe('historical repair queue', () => {
     }
     const parkedDb = db([{ rows: [], rowCount: 1 }])
     await settleRepairFailure(parkedDb, lease, 'invalid', 'rejected')
-    expect(parkedDb.query.mock.calls[0][0]).toContain('completed_at = CASE WHEN $9::boolean THEN NOW() ELSE NULL END')
-    expect(parkedDb.query.mock.calls[0][1][8]).toBe(true)
+    expect(parkedDb.query.mock.calls[0][0]).toContain('completed_at = CASE WHEN $2::boolean THEN NOW() ELSE NULL END')
+    expect(parkedDb.query.mock.calls[0][1][1]).toBe(true)
 
     const retryDb = db([{ rows: [], rowCount: 1 }])
     await settleRepairFailure(retryDb, { ...lease, attempts: 0 }, 'invalid', 'rejected')
-    expect(retryDb.query.mock.calls[0][1][8]).toBe(false)
+    expect(retryDb.query.mock.calls[0][1][1]).toBe(false)
 
     const transientDb = db([{ rows: [], rowCount: 1 }])
     await settleRepairFailure(transientDb, { ...lease, attempts: 99 }, 'retryable', 'timeout')
-    expect(transientDb.query.mock.calls[0][1][8]).toBe(false)
+    expect(transientDb.query.mock.calls[0][1][1]).toBe(false)
   })
 
   it('claims due work with a lease token and skips locked rows', async () => {

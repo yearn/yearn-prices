@@ -1,3 +1,6 @@
+import { sql } from 'drizzle-orm'
+import { database } from '../db/orm'
+import { historicalPriceGapInventory as inventory } from '../db/schema'
 import { chunk } from '../utils/collections'
 import { unixToIsoTimestamp } from '../utils/time'
 
@@ -13,43 +16,32 @@ export interface InventoryKey {
 
 const INVENTORY_KEY_CHUNK_SIZE = 1_000
 
-function buildKeyValues(keys: InventoryKey[]): { valuesSql: string; params: Array<string | number> } {
-  const valuesSql: string[] = []
-  const params: Array<string | number> = []
-  for (const key of keys) {
-    const offset = params.length
-    valuesSql.push(`($${offset + 1}::bigint, $${offset + 2}::varchar, $${offset + 3}::timestamptz)`)
-    params.push(key.chainId, key.tokenLowercase, unixToIsoTimestamp(key.eodTimestamp))
-  }
-  return { valuesSql: valuesSql.join(', '), params }
-}
-
 export async function deleteInventoryRows(db: InventoryQueryable, keys: InventoryKey[]): Promise<void> {
-  for (const keyChunk of chunk(keys, INVENTORY_KEY_CHUNK_SIZE)) {
-    const { valuesSql, params } = buildKeyValues(keyChunk)
-    await db.query(
-      `
-        DELETE FROM historical_price_gap_inventory AS inventory
-        USING (VALUES ${valuesSql}) AS requested(chain_id, token, timestamp)
-        WHERE inventory.chain_id = requested.chain_id
-          AND inventory.token = requested.token
-          AND inventory.timestamp = requested.timestamp
-      `,
-      params
-    )
+  for (const batch of chunk(keys, INVENTORY_KEY_CHUNK_SIZE)) {
+    const requested = sql`(VALUES ${sql.join(
+      batch.map(
+        (key) =>
+          sql`(${key.chainId}::bigint, ${key.tokenLowercase}::varchar, ${unixToIsoTimestamp(key.eodTimestamp)}::timestamptz)`
+      ),
+      sql`, `
+    )}) AS requested(chain_id, token, timestamp)`
+    await database(db)
+      .delete(inventory)
+      .where(sql`(${inventory.chainId}, ${inventory.token}, ${inventory.timestamp}) IN (SELECT * FROM ${requested})`)
   }
 }
 
 export async function upsertInventoryRows(db: InventoryQueryable, keys: InventoryKey[]): Promise<void> {
-  for (const keyChunk of chunk(keys, INVENTORY_KEY_CHUNK_SIZE)) {
-    const { valuesSql, params } = buildKeyValues(keyChunk)
-    await db.query(
-      `
-        INSERT INTO historical_price_gap_inventory (chain_id, token, timestamp)
-        VALUES ${valuesSql}
-        ON CONFLICT (chain_id, token, timestamp) DO NOTHING
-      `,
-      params
-    )
+  for (const batch of chunk(keys, INVENTORY_KEY_CHUNK_SIZE)) {
+    await database(db)
+      .insert(inventory)
+      .values(
+        batch.map((key) => ({
+          chainId: key.chainId,
+          token: key.tokenLowercase,
+          timestamp: unixToIsoTimestamp(key.eodTimestamp)
+        }))
+      )
+      .onConflictDoNothing()
   }
 }

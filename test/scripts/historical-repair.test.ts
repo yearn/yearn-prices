@@ -4,12 +4,13 @@ import { classifyRepairFailure, isExpectedUnresolved } from '../../scripts/repai
 import type { RepairQueueDb } from '../../src/db/repair-queue'
 import { normalizeTokenAddress } from '../../src/utils/chains'
 import { currentUtcDayEnd, nowUnix } from '../../src/utils/time'
+import { driverQuery } from '../helpers/drizzle-driver'
 
 const ROOT = '0x0000000000000000000000000000000000000001'
 const EXTRA = '0xabcd000000000000000000000000000000000000'
 
 function dbFor(results: Array<{ rows: unknown[] }>) {
-  const query = vi.fn(async (_sql: string, _params?: unknown[]) => results.shift() ?? { rows: [] })
+  const query = driverQuery(vi.fn(async (_sql: string, _params?: unknown[]) => results.shift() ?? { rows: [] }))
   return { db: { query } as unknown as RepairQueueDb, query }
 }
 

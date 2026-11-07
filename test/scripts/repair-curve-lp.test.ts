@@ -3,10 +3,13 @@ import { repairCurveLpOutlier } from '../../scripts/lib/repair-curve-lp'
 import type { Queryable, QueryExecutor } from '../../src/db/queries'
 import { REJECTED_OBSERVATIONS } from '../../src/prices/rejections'
 import type { ResolvedPricePath } from '../../src/sources/onchain/types'
+import { driverQuery } from '../helpers/drizzle-driver'
 
 const target = REJECTED_OBSERVATIONS[0]
 function fakePool() {
-  const query = vi.fn(async (sql: string) => ({ rows: sql.includes('RETURNING id') ? [{ id: 1 }] : [], rowCount: 0 }))
+  const query = driverQuery(
+    vi.fn(async (sql: string) => ({ rows: sql.includes('RETURNING id') ? [{ id: 1 }] : [], rowCount: 0 }))
+  )
   return { query, pool: { query } as unknown as Queryable & QueryExecutor }
 }
 

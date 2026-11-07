@@ -4,8 +4,10 @@ import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
 import { config } from 'dotenv'
+import { sql } from 'drizzle-orm'
 import { parseManifest } from '../src/backfill/manifest'
 import { createPool } from '../src/db'
+import { executeSql } from '../src/db/orm'
 import {
   claimRepairQueue,
   enqueueRepairTargets,
@@ -343,8 +345,9 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     }
     const dueBefore = Number(
       (
-        await pool.query<{ count: string }>(
-          `SELECT count(*)::text AS count FROM historical_price_repair_queue WHERE completed_at IS NULL AND next_attempt_at <= now() AND (lease_expires_at IS NULL OR lease_expires_at <= now())`
+        await executeSql<{ count: string }>(
+          pool,
+          sql`SELECT count(*)::text AS count FROM historical_price_repair_queue WHERE completed_at IS NULL AND next_attempt_at <= now() AND (lease_expires_at IS NULL OR lease_expires_at <= now())`
         )
       ).rows[0]?.count ?? 0
     )

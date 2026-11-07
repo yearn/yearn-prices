@@ -1,5 +1,7 @@
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { config as loadEnv } from 'dotenv'
+import { sql } from 'drizzle-orm'
+import { executeSql } from '../src/db/orm'
 
 loadEnv()
 
@@ -181,24 +183,21 @@ export async function preflightTokenCasings(
 
   const offending: Array<{ chain: string; token: string }> = []
   for (const triplesChunk of chunk([...triples.values()], readChunkSize)) {
-    const valuesSql: string[] = []
-    const params: string[] = []
-    for (const [chain, tokenLowercase, canonical] of triplesChunk) {
-      const offset = params.length
-      valuesSql.push(`($${offset + 1}, $${offset + 2}, $${offset + 3})`)
-      params.push(chain, tokenLowercase, canonical)
-    }
+    const valuesSql = triplesChunk.map(
+      ([chain, tokenLowercase, canonical]) =>
+        sql`(${chain}::varchar, ${tokenLowercase}::varchar, ${canonical}::varchar)`
+    )
 
-    const result = await pool.query(
-      `
+    const result = await executeSql(
+      pool,
+      sql`
         SELECT DISTINCT tp.chain, tp.token
         FROM token_prices tp
-        INNER JOIN (VALUES ${valuesSql.join(', ')}) AS requested(chain, token_lower, token_canonical)
+        INNER JOIN (VALUES ${sql.join(valuesSql, sql`, `)}) AS requested(chain, token_lower, token_canonical)
           ON tp.chain = requested.chain
          AND lower(tp.token) = requested.token_lower
         WHERE tp.token <> requested.token_canonical
-      `,
-      params
+      `
     )
 
     for (const row of result.rows) {

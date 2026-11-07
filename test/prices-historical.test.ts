@@ -7,6 +7,7 @@ import { handleHistorical } from '../src/routes/historical/exact'
 import { MAX_GUARDED_RECORDS, type ReadThroughUpstream, readThrough } from '../src/routes/historical/read-through'
 import type { Env } from '../src/types'
 import { normalizeToEndOfDay } from '../src/utils'
+import { driverQuery } from './helpers/drizzle-driver'
 
 vi.mock('@sentry/cloudflare', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@sentry/cloudflare')>()),
@@ -15,7 +16,7 @@ vi.mock('@sentry/cloudflare', async (importOriginal) => ({
 
 vi.mock('../src/db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/db')>()),
-  createPool: () => ({ query: async () => ({ rows: [] }), end: async () => {} })
+  createPool: () => ({ query: driverQuery(async () => ({ rows: [] })), end: async () => {} })
 }))
 
 const RAW_ADDR = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
@@ -30,7 +31,7 @@ function request(source?: string) {
 }
 
 function pool(rows: unknown[]): Pool {
-  return { query: vi.fn(async () => ({ rows })) } as unknown as Pool
+  return { query: driverQuery(vi.fn(async () => ({ rows }))) } as unknown as Pool
 }
 
 describe('handleHistorical', () => {
@@ -157,10 +158,12 @@ describe('handleHistorical', () => {
     })
     const lpPool = (rows: unknown[], isCurveLp: boolean): Pool =>
       ({
-        query: vi.fn(async (sql: string) =>
-          String(sql).includes("tp.source = 'curve'")
-            ? { rows: isCurveLp ? [{ chain: 'ethereum', token: CHECKSUM_ADDR }] : [] }
-            : { rows }
+        query: driverQuery(
+          vi.fn(async (sql: string) =>
+            String(sql).includes("tp.source = 'curve'")
+              ? { rows: isCurveLp ? [{ chain: 'ethereum', token: CHECKSUM_ADDR }] : [] }
+              : { rows }
+          )
         )
       }) as unknown as Pool
     const insertCalls = (db: Pool) =>
@@ -184,7 +187,7 @@ describe('handleHistorical', () => {
       expect(upstream.historical).not.toHaveBeenCalled()
       const [call] = insertCalls(db)
       expect(call[1]).toContain('/prices/current')
-      expect(call[1]).toContain(2425.5)
+      expect(call[1]).toContain('2425.5')
       expect(call[1]).toContain(false)
       await expect(response.json()).resolves.toEqual({
         coins: {
@@ -428,7 +431,7 @@ describe('handleHistorical', () => {
 
       expect(guard).toHaveBeenCalledWith(1, CHECKSUM_ADDR, today, 554.6)
       expect(result.rows).toHaveLength(0)
-      expect(insertCalls(db).flatMap(([, params]) => params)).not.toContain(554.6)
+      expect(insertCalls(db).flatMap(([, params]) => params)).not.toContain('554.6')
     })
 
     it('serves the table row when live has no price for today', async () => {
@@ -508,7 +511,7 @@ describe('handleHistorical', () => {
       ])
       const [call] = insertCalls(db)
       expect(call[1]).toContain('/batchHistorical')
-      expect(call[1]).toContain(1800.25)
+      expect(call[1]).toContain('1800.25')
       expect(call[1]).toContain(false)
       expect(call[1]).not.toContain(true)
       expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_HISTORICAL)
@@ -534,7 +537,7 @@ describe('handleHistorical', () => {
       expect(guard).toHaveBeenCalledTimes(1)
       const [call] = insertCalls(db)
       expect(call[1]).toContain(true)
-      expect(call[1]).not.toContain(false)
+      expect(call[1]?.[7]).toBe(true)
     })
 
     it('bounds guard checks per read and drops the unchecked Curve LP quotes', async () => {
@@ -604,10 +607,12 @@ describe('handleHistorical', () => {
     it('still serves the price when persisting the read-through fails', async () => {
       const error = vi.spyOn(console, 'error').mockImplementation(() => {})
       const db = {
-        query: vi.fn(async (sql: string) => {
-          if (sql.includes('INSERT INTO token_prices')) throw new Error('db down')
-          return { rows: [] }
-        })
+        query: driverQuery(
+          vi.fn(async (sql: string) => {
+            if (sql.includes('INSERT INTO token_prices')) throw new Error('db down')
+            return { rows: [] }
+          })
+        )
       } as unknown as Pool
       const response = await handleHistorical(
         request(),
@@ -644,7 +649,7 @@ describe('handleHistorical', () => {
 
     it('serves a stored closed-day row without admitting it to the repair queue', async () => {
       const db = {
-        query: vi.fn(async () => ({ rows: [tableRow(TIMESTAMP, '123.45')] }))
+        query: driverQuery(vi.fn(async () => ({ rows: [tableRow(TIMESTAMP, '123.45')] })))
       } as unknown as Pool
 
       const response = await handleHistorical(request(), ENV, db, String(TIMESTAMP), TOKEN_KEY, upstreamOf())
@@ -659,11 +664,13 @@ describe('handleHistorical', () => {
 
     it('serves a read-through price without admitting the provisional row to the repair queue', async () => {
       const db = {
-        query: vi.fn(async (sql: string) => {
-          if (sql.includes('tp.finalized = TRUE')) return { rows: [] }
-          if (sql.includes('INSERT INTO token_prices')) return { rows: [] }
-          return { rows: [] }
-        })
+        query: driverQuery(
+          vi.fn(async (sql: string) => {
+            if (sql.includes('tp.finalized = TRUE')) return { rows: [] }
+            if (sql.includes('INSERT INTO token_prices')) return { rows: [] }
+            return { rows: [] }
+          })
+        )
       } as unknown as Pool
 
       const response = await handleHistorical(

@@ -11,6 +11,7 @@ import { handleRangeHistorical } from '../src/routes/historical/range'
 import { MAX_READ_THROUGH_TARGETS, type ReadThroughUpstream } from '../src/routes/historical/read-through'
 import type { Env } from '../src/types'
 import { normalizeToEndOfDay } from '../src/utils'
+import { driverQuery } from './helpers/drizzle-driver'
 
 const RAW_ADDR = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
 const CHECKSUM_ADDR = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'
@@ -73,15 +74,17 @@ function inserts(queryPool: Pool) {
 }
 
 function pool(rows: unknown[]): Pool {
-  return { query: vi.fn(async () => ({ rows, rowCount: rows.length })) } as unknown as Pool
+  return { query: driverQuery(vi.fn(async () => ({ rows, rowCount: rows.length }))) } as unknown as Pool
 }
 
 function curveLpPool(rows: unknown[], lpTokens: string[]): Pool {
   return {
-    query: vi.fn(async (sql: string) =>
-      String(sql).includes("tp.source = 'curve'")
-        ? { rows: lpTokens.map((token) => ({ chain: 'ethereum', token })) }
-        : { rows, rowCount: rows.length }
+    query: driverQuery(
+      vi.fn(async (sql: string) =>
+        String(sql).includes("tp.source = 'curve'")
+          ? { rows: lpTokens.map((token) => ({ chain: 'ethereum', token })) }
+          : { rows, rowCount: rows.length }
+      )
     )
   } as unknown as Pool
 }

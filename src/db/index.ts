@@ -31,5 +31,6 @@ export function createPool(connectionString: string): Pool {
   return new Pool({ connectionString })
 }
 
+export { type DatabaseConnection, database, executeSql } from './orm'
 export * from './queries'
 export * from './repair-queue'

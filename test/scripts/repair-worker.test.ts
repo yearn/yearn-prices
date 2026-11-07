@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { processClaims } from '../../scripts/repair-historical-prices'
 import type { RepairLease, RepairQueueDb } from '../../src/db/repair-queue'
+import { driverQuery } from '../helpers/drizzle-driver'
 
 const mocks = vi.hoisted(() => ({
   finalizedRepairKeys: vi.fn(),
@@ -35,7 +36,7 @@ function lease(token: string): RepairLease {
 }
 
 function db(): RepairQueueDb & { query: ReturnType<typeof vi.fn> } {
-  const query = vi.fn(async () => ({ rows: [], rowCount: 1 }))
+  const query = driverQuery(vi.fn(async () => ({ rows: [], rowCount: 1 })))
   return { query } as RepairQueueDb & { query: ReturnType<typeof vi.fn> }
 }
 
@@ -119,7 +120,7 @@ describe('historical repair worker', () => {
     expect(String(database.query.mock.calls[0][0])).toContain('completed_at = NOW()')
     expect(database.query.mock.calls[0][1][1]).toBe(TOKEN_A)
     expect(String(database.query.mock.calls[1][0])).toContain('attempts = attempts + 1')
-    expect(database.query.mock.calls[1][1][1]).toBe(TOKEN_B)
+    expect(database.query.mock.calls[1][1][5]).toBe(TOKEN_B)
   })
 
   it('releases a group when cancellation arrives after graph completion', async () => {

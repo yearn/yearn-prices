@@ -31,6 +31,21 @@ Point `DATABASE_URL` in `.env` and `.dev.vars` at `postgres://postgres:postgres@
 bun run dev
 ```
 
+## Database access
+
+Drizzle handles migrations and runtime database access. The table definitions in
+`src/db/schema.ts` are shared by Drizzle Kit and the Neon runtime adapter in
+`src/db/orm.ts`. Use `database(connection)` for typed query builders and
+``executeSql(connection, sql`...`)`` for PostgreSQL-specific bulk operations,
+queue claims, and maintenance statements. Bind values with the Drizzle SQL tag;
+bind array values with `sql.param(array)` and escape identifiers with
+`sql.identifier(name)`.
+
+`createPool` owns Neon transport configuration and connection cleanup. Inside a
+transaction, pass the checked-out client to every database operation so the
+entire transaction runs on one connection. Direct driver queries belong only in
+transport-level tests and database fixtures.
+
 ## Scripts
 
 | Command | Purpose |

@@ -1,3 +1,5 @@
+import { sql } from 'drizzle-orm'
+import { executeSql } from '../../src/db/orm'
 import { type RepairQueueDb, type RepairTarget, readFinalizedRepairKeys } from '../../src/db/repair-queue'
 import { NOT_REJECTED_PRICE_SQL } from '../../src/prices/rejections'
 import { CHAIN_ID_TO_NAME, chainIdToName, normalizeTokenAddress } from '../../src/utils/chains'
@@ -55,15 +57,16 @@ export async function discoverRepairTargets(
     // Both alternatives are fixed SQL. User input is passed only as parameters.
     const candidates =
       kind === 'provisional'
-        ? `SELECT DISTINCT c.chain_id, c.chain, lower(p.token) AS token, p.timestamp
+        ? sql`SELECT DISTINCT c.chain_id, c.chain, lower(p.token) AS token, p.timestamp
          FROM token_prices p JOIN chains c ON p.chain = c.chain
-         WHERE p.finalized = FALSE AND p.timestamp < to_timestamp($2)`
-        : `SELECT c.chain_id, c.chain, i.token, i.timestamp
+         WHERE p.finalized = FALSE AND p.timestamp < to_timestamp(${todayEnd})`
+        : sql`SELECT c.chain_id, c.chain, i.token, i.timestamp
          FROM historical_price_gap_inventory i JOIN chains c ON i.chain_id = c.chain_id
-         WHERE i.timestamp < to_timestamp($2)`
-    const result = await db.query<Row>(
-      `WITH chains AS (
-         SELECT key::bigint AS chain_id, value AS chain FROM jsonb_each_text($1::jsonb)
+         WHERE i.timestamp < to_timestamp(${todayEnd})`
+    const result = await executeSql<Row>(
+      db,
+      sql`WITH chains AS (
+         SELECT key::bigint AS chain_id, value AS chain FROM jsonb_each_text(${JSON.stringify(CHAIN_ID_TO_NAME)}::jsonb)
        ), candidates AS (${candidates})
        SELECT r.chain_id, r.token, r.timestamp FROM candidates r
        WHERE NOT EXISTS (
@@ -77,8 +80,7 @@ export async function discoverRepairTargets(
            AND tp.price::text NOT IN ('NaN', 'Infinity', '-Infinity')
            AND ${NOT_REJECTED_PRICE_SQL}
        )
-       ORDER BY r.timestamp, r.chain_id, r.token LIMIT $3`,
-      [JSON.stringify(CHAIN_ID_TO_NAME), todayEnd, REPAIR_DISCOVERY_LIMIT]
+       ORDER BY r.timestamp, r.chain_id, r.token LIMIT ${REPAIR_DISCOVERY_LIMIT}`
     )
     counts.push(result.rows.length)
     for (const row of result.rows) {

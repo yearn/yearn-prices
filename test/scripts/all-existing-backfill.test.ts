@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
+import { driverQuery } from '../helpers/drizzle-driver'
 
 const mocks = vi.hoisted(() => ({
   values: {} as Record<string, unknown>,
@@ -12,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   finalize: vi.fn()
 }))
 vi.mock('node:util', () => ({ parseArgs: () => ({ values: mocks.values }) }))
-vi.mock('../../src/db', () => ({ createPool: () => ({ query: mocks.query, end: mocks.end }) }))
+vi.mock('../../src/db', () => ({ createPool: () => ({ query: driverQuery(mocks.query), end: mocks.end }) }))
 vi.mock('../../scripts/backfill-historical-gaps', () => ({ preflightTokenCasings: vi.fn() }))
 vi.mock('../../src/backfill/priced-keys', () => ({
   priceKey: () => 'stored',

@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Drizzle runtime migration review</title>
+<style>body{font:17px/1.65 system-ui,sans-serif;max-width:900px;margin:60px auto;padding:0 24px;color:#172438;background:#f8fafc}h1,h2{line-height:1.2}h1{font-size:36px}section{background:white;border:1px solid #dce3ec;border-radius:12px;padding:20px 28px;margin:20px 0}code{background:#edf2f7;padding:2px 5px;border-radius:4px}li{margin:8px 0}.status{color:#166534;font-weight:650}</style>
+<h1>Drizzle runtime migration</h1>
+<p>Runtime price reads, writes, backfills, repair queues, guards, and operational scripts now execute through Drizzle. Neon remains the database transport, and Drizzle Kit continues to own migrations.</p>
+<section><h2>What changed</h2><ul>
+<li><code>src/db/orm.ts</code> binds the existing pool or checked-out connection to the shared schema. Adapters are reused per connection.</li>
+<li>Exact, range, provisional, and price-write operations use typed Drizzle builders. Inventory and backfill writes use the same schema.</li>
+<li>Atomic queue claims, quarantine operations, maintenance DDL, and bulk data corrections use composed Drizzle SQL with bound parameters. No direct driver query calls remain in <code>src</code> or <code>scripts</code>.</li>
+<li>Rejection and accepted-price predicates are composable Drizzle SQL expressions.</li>
+<li>The checksum backfill now keeps each transaction on a dedicated connection and releases that connection in a finally block.</li>
+</ul></section>
+<section><h2>Behavior preserved</h2><p>Source precedence, exact timestamp matching, repair token casing, immutable finalized prices, provisional updates, rejection filters, lock timeout retries, queue leases, and transaction rollback remain part of the implementation. Price inserts are split into batches of 5,000 rows to stay below PostgreSQL's parameter limit.</p><p>The schema change adds a TypeScript source type only; this change does not require a new database migration.</p></section>
+<section><h2>Validation</h2><p class="status">Application and gateway TypeScript checks pass.</p><p>Static inspection confirms no direct driver query calls remain in application and operational script files. Diff whitespace checks pass. Tests and lint were not run under the user's Astra instruction. No live database queries, migrations, or deployments were executed.</p><p>Runtime and integration behavior still requires verification in an environment where running tests is authorized. Existing database fixtures now adapt Drizzle query configuration objects and array-mode results. SQL assertions and wrapped-error expectations were updated without executing the tests.</p></section>
+<section><h2>References</h2><p><a href="https://orm.drizzle.team/docs/connect-neon">Drizzle Neon adapter</a> · <a href="https://orm.drizzle.team/docs/sql">Drizzle SQL composition</a></p></section>
+</html>

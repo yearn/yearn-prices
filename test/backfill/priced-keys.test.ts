@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { priceKey, readPricedKeys } from '../../src/backfill/priced-keys'
 import type { QueryExecutor } from '../../src/db/queries'
 import { pgTimestampToUnix } from '../../src/utils/time'
+import { driverQuery } from '../helpers/drizzle-driver'
 
 const EOD = 1_704_153_599
 
@@ -12,10 +13,10 @@ function target(token: string, chain = 'ethereum', eodTimestamp = EOD) {
 function fakePool(isPriced: (chain: string, token: string, timestamp: number) => boolean) {
   const calls: number[] = []
   const pool: QueryExecutor = {
-    query: async (_sql: string, params: unknown[] = []) => {
+    query: driverQuery(async (_sql: string, params: unknown[] = []) => {
       const rows: Record<string, unknown>[] = []
       let requestCount = 0
-      for (let index = 0; index < params.length; index += 3) {
+      for (let index = 0; index + 2 < params.length && /^\d{4}-/.test(String(params[index + 2])); index += 3) {
         requestCount += 1
         const chain = params[index] as string
         const token = params[index + 1] as string
@@ -34,7 +35,7 @@ function fakePool(isPriced: (chain: string, token: string, timestamp: number) =>
       }
       calls.push(requestCount)
       return { rows }
-    }
+    })
   }
   return { pool, calls }
 }

@@ -1,4 +1,6 @@
+import { sql } from 'drizzle-orm'
 import { getChainClient } from '../clients/rpc'
+import { executeSql } from '../db/orm'
 import type { QueryExecutor } from '../db/queries'
 import { createCurveLpGuard, type PlausibleQuote } from '../sources/defillama/lp-guard'
 import { SOURCE_PRIORITY, type TokenPriceWrite } from '../types'
@@ -12,12 +14,12 @@ export function storedCurveLpGuard(pool: QueryExecutor, env?: Record<string, str
       const chain = chainIdToName(chainId)
       if (!chain) return coins.map(() => null)
       const tokens = coins.map((coin) => normalizeTokenAddress(coin))
-      const { rows } = await pool.query<{ token: string; price: string | number }>(
-        `SELECT DISTINCT ON (token) token, price FROM token_prices tp
-         WHERE chain = $1 AND token = ANY($2::text[]) AND timestamp = $3::timestamptz
+      const { rows } = await executeSql<{ token: string; price: string | number }>(
+        pool,
+        sql`SELECT DISTINCT ON (token) token, price FROM token_prices tp
+         WHERE chain = ${chain} AND token = ANY(${sql.param(tokens)}::text[]) AND timestamp = ${unixToIsoTimestamp(timestamp)}::timestamptz
            AND ${ACCEPTED_PRICE_SQL}
-         ORDER BY token, source LIKE 'defillama%', array_position($4::text[], source)`,
-        [chain, tokens, unixToIsoTimestamp(timestamp), [...SOURCE_PRIORITY]]
+         ORDER BY token, source LIKE 'defillama%', array_position(${sql.param([...SOURCE_PRIORITY])}::text[], source)`
       )
       return tokens.map((token) => {
         const row = rows.find((r) => r.token.toLowerCase() === token.toLowerCase())
