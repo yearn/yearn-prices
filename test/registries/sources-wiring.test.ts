@@ -16,9 +16,16 @@ describe('source wiring', () => {
   it('never lets the spot child resolver see the on-chain source', () => {
     const sources = createSpotSources(env)
 
-    expect(sources.map((source) => source.name)).toEqual(['enso', 'defillama', 'derived'])
+    expect(sources.map((source) => source.name)).toEqual(['enso', 'defillama', 'chainlink', 'derived'])
     expect(spy).toHaveBeenCalledTimes(1)
-    expect(spy.mock.calls[0][0].map((source) => source.name)).toEqual(['enso', 'defillama'])
+    expect(spy.mock.calls[0][0].map((source) => source.name)).toEqual(['enso', 'defillama', 'chainlink'])
+  })
+
+  it('keeps independent spot sources available without an Enso key', () => {
+    const sources = createSpotSources({} as Env)
+
+    expect(sources.map((source) => source.name)).toEqual(['defillama', 'chainlink', 'derived'])
+    expect(spy.mock.calls[0][0].map((source) => source.name)).toEqual(['defillama', 'chainlink'])
   })
 
   it('exposes chainlink in the historical registry and to the child resolver', () => {
@@ -37,6 +44,22 @@ describe('source wiring', () => {
       'derived',
       'defillama-alias'
     ])
+  })
+
+  it('adds the optional block-priced source to historical roots and market leaves', () => {
+    const sources = createHistoricalSources({
+      ...env,
+      YPRICEAPI_SIGNER: 'signer',
+      YPRICEAPI_SIGNATURE: 'signature'
+    })
+    expect(new HistoricalSourceRegistry(sources).all().map((source) => source.name)).toEqual([
+      'defillama',
+      'chainlink',
+      'bobs-api',
+      'derived',
+      'defillama-alias'
+    ])
+    expect(spy.mock.calls[0][0].map((source) => source.name)).toContain('bobs-api')
   })
 
   it('never lets the historical child resolver see the on-chain source', () => {

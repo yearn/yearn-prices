@@ -9,7 +9,8 @@ import { createMarketPriceResolver } from '../src/registries/market-price'
 import {
   createChainlinkHistoricalSource,
   createDefiLlamaAliasHistoricalSource,
-  createDefiLlamaHistoricalSource
+  createDefiLlamaHistoricalSource,
+  createOptionalBobsHistoricalSource
 } from '../src/sources'
 import { createOnchainPriceAdapters } from '../src/sources/onchain/adapters'
 import { RecursivePriceEngine } from '../src/sources/onchain/engine'
@@ -70,9 +71,11 @@ const provider = values['no-defillama']
         providerRetries += 1
       }
     })
+const bobs = createOptionalBobsHistoricalSource()
 const marketSources = [
   ...(provider ? [createDefiLlamaHistoricalSource(provider)] : []),
   createChainlinkHistoricalSource(),
+  ...(bobs ? [bobs] : []),
   ...(provider ? [createDefiLlamaAliasHistoricalSource(provider)] : [])
 ]
 const prefetchTargets: CoinTarget[] = manifest.targets.map((target) => ({

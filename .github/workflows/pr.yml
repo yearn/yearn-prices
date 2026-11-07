@@ -4,6 +4,20 @@ on:
   pull_request:
 
 jobs:
+  gateway-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.4.4'
+      - run: bun install --frozen-lockfile
+      - run: bun run gateway:build
+      - run: docker build --platform linux/amd64 -f Dockerfile.gateway -t yearn-prices-gateway:pr .
+
   typecheck:
     runs-on: ubuntu-latest
     steps:

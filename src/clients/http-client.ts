@@ -1,4 +1,5 @@
 import { ApiError, type ErrorCode } from '../http/errors'
+import type { ProviderTransport } from './provider-transport'
 
 const MAX_TIMER_DELAY_MS = 2_147_483_647
 
@@ -85,6 +86,11 @@ export class SharedCooldownRateLimiter extends SlidingWindowRateLimiter {
     this.cooldownUntil = Math.max(this.cooldownUntil, Date.now() + delayMs)
   }
 
+  /** Whether waiting for the provider gate still fits this limiter's budget. */
+  cooldownWithinBudget(): boolean {
+    return this.cooldownUntil - Date.now() <= this.maxCooldownWaitMs
+  }
+
   override async waitTurn(signal?: AbortSignal): Promise<void> {
     while (true) {
       throwIfAborted(signal)
@@ -133,6 +139,17 @@ export interface FetchJsonConfig {
   onRetry?: (attempt: number, delayMs: number, url: string, status: number) => void
   // Called for every 429 response, including a terminal response that will not be retried.
   onRateLimit?: (retryAfterMs: number | null, url: string, status: number) => void
+  // Called for provider responses that ask all callers to cool down. Unlike
+  // onRateLimit, this also includes 5xx gateway/provider responses and receives the uncapped
+  // Retry-After delay so a shared gate can preserve the provider's full wait.
+  onCooldown?: (retryAfterMs: number | null, url: string, status: number) => void
+  // Default shared cooldown when a rate-limit response omits Retry-After.
+  // Live provider clients set this to a conservative minute; generic callers
+  // leave it unset to preserve the historical retry behavior.
+  defaultCooldownMs?: number
+  // Optional runtime-specific transport (for example a Bun proxy or an
+  // authenticated relay in a Worker). It must preserve the upstream response.
+  transport?: ProviderTransport
   // When true, a 404 becomes a typed NOT_FOUND ApiError instead of a retryable/internal error.
   notFoundAsError?: boolean
   // Opt-in hardening. Every field below is off by default so existing callers keep identical behavior.
@@ -152,6 +169,11 @@ export interface FetchJsonConfig {
 const RETRY_DELAYS = [1000, 2000, 4000]
 
 export const DEFAULT_RETRY_AFTER_CAP_MS = 60_000
+
+/** A finite upper bound used only to avoid numeric overflow while retaining
+ * provider-supplied waits. Per-attempt retry delays still use retryAfterCapMs.
+ */
+const MAX_RETRY_AFTER_MS = Number.MAX_SAFE_INTEGER
 
 export function parseRetryAfter(value: string | null, capMs: number, now = Date.now()): number | null {
   if (value === null) {
@@ -186,9 +208,32 @@ function requestInit(config: FetchJsonConfig): RequestInit | undefined {
   }
 }
 
+function sanitizeMessage(message: string): string {
+  return message.replace(/https?:\/\/[^\s)]+/gi, '[provider-url]')
+}
+
 function isAbortError(error: unknown): boolean {
   const name = (error as { name?: string } | null)?.name
   return name === 'AbortError' || name === 'TimeoutError'
+}
+
+/**
+ * A caller cancellation must not poison the route that another request may be
+ * using. A timeout/deadline cancellation is different: it means the provider
+ * route failed to deliver the body within its budget and should be reported
+ * to the transport for quarantine. AbortSignal.timeout() exposes that
+ * distinction through its TimeoutError reason.
+ */
+function isCallerCancellation(signal: AbortSignal | undefined, error: unknown): boolean {
+  if (!signal?.aborted) return false
+  const reasonName = (signal.reason as { name?: string } | null | undefined)?.name
+  if (reasonName === 'TimeoutError') return false
+  if (reasonName === 'AbortError') return true
+  // An explicit non-timeout reason (including a caller's Error) is a caller
+  // cancellation. If a runtime supplies no reason, preserve the historical
+  // AbortError distinction and treat only non-timeout errors as cancellation.
+  if (signal.reason !== undefined) return true
+  return (error as { name?: string } | null)?.name !== 'TimeoutError'
 }
 
 function isJsonParseError(error: unknown): boolean {
@@ -204,7 +249,8 @@ export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig
 
     const scheduleRetry = async (delayMs: number, status: number): Promise<void> => {
       config.onRetry?.(attempt + 1, delayMs, url, status)
-      console.warn(`${config.service} request failed (${status}), retrying in ${delayMs}ms: ${url}`)
+      // Do not put token/query strings (or relay credentials) into Worker logs.
+      console.warn(`${config.service} request failed (${status}), retrying in ${delayMs}ms`)
       await sleepWithSignal(delayMs, config.signal)
     }
 
@@ -218,7 +264,7 @@ export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig
       if (attempt === lastAttempt) {
         throw new HttpRequestError(
           'INTERNAL_ERROR',
-          `${config.service} request failed: ${(error as Error).message}`,
+          `${config.service} request failed: ${sanitizeMessage((error as Error).message)}`,
           diagnosticCode,
           attempt + 1,
           null
@@ -231,8 +277,12 @@ export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig
     let response: Response
     try {
       throwIfAborted(config.signal)
-      response = await fetch(url, requestInit(config))
+      response = config.transport
+        ? await config.transport.fetch(url, requestInit(config))
+        : await fetch(url, requestInit(config))
     } catch (error) {
+      // The transport knows which proxy was selected and quarantines that
+      // route itself; reporting here would lose the route identity.
       await failOrRetryTransport(error)
       continue
     }
@@ -241,8 +291,10 @@ export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig
       try {
         const value = (await response.json()) as T
         throwIfAborted(config.signal)
+        config.transport?.report(response, 'success')
         return value
       } catch (error) {
+        if (!isCallerCancellation(config.signal, error)) config.transport?.report(response, 'failure')
         // A timeout or reset while the body streams rejects here, not at fetch.
         if (!isJsonParseError(error)) {
           await failOrRetryTransport(error)
@@ -268,15 +320,30 @@ export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig
       }
     }
 
+    // Error payloads are not used. Release their streams before another
+    // attempt so repeated failures do not occupy connections indefinitely.
+    void response.body?.cancel().catch(() => {})
     if (config.notFoundAsError && response.status === 404) {
-      throw new ApiError('NOT_FOUND', `${config.service} has no price for ${url}`)
+      throw new ApiError('NOT_FOUND', `${config.service} has no price for the requested target`)
     }
 
+    const retryAfterHeader = response.headers?.get('retry-after') ?? null
     const retryAfter = config.honorRetryAfter
-      ? parseRetryAfter(response.headers.get('retry-after'), config.retryAfterCapMs ?? DEFAULT_RETRY_AFTER_CAP_MS)
+      ? parseRetryAfter(retryAfterHeader, config.retryAfterCapMs ?? DEFAULT_RETRY_AFTER_CAP_MS)
       : null
+    const cooldown = config.honorRetryAfter ? parseRetryAfter(retryAfterHeader, MAX_RETRY_AFTER_MS) : null
     if (response.status === 429) {
       config.onRateLimit?.(retryAfter, url, response.status)
+    }
+    if (response.status === 429 || response.status === 502 || response.status === 503 || response.status === 504) {
+      // A shared limiter is the provider-wide gate even when a caller did not
+      // install an explicit callback. This intentionally uses the uncapped
+      // delay; retryAfterCapMs only bounds one request's retry sleep.
+      const sharedCooldown = cooldown ?? (response.status === 429 ? (config.defaultCooldownMs ?? null) : null)
+      if (sharedCooldown !== null && config.rateLimiter instanceof SharedCooldownRateLimiter) {
+        config.rateLimiter.extendCooldown(sharedCooldown)
+      }
+      config.onCooldown?.(cooldown, url, response.status)
     }
 
     const shouldRetry = (response.status === 429 && config.retryRateLimits !== false) || response.status >= 500
@@ -290,6 +357,9 @@ export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig
       )
     }
 
+    if (config.rateLimiter instanceof SharedCooldownRateLimiter && !config.rateLimiter.cooldownWithinBudget()) {
+      throw new ApiError('UNAVAILABLE', `${config.service} provider cooldown exceeds request budget`)
+    }
     await scheduleRetry(Math.max(retryAfter ?? 0, RETRY_DELAYS[attempt]), response.status)
   }
 

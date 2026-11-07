@@ -17,7 +17,7 @@ cp .env.example .dev.vars   # wrangler dev reads secrets from .dev.vars
 cp .env.example .env        # scripts (warmup, backfill, migrate) read from .env via dotenv
 ```
 
-Fill in `.dev.vars` and `.env` with real values: a `DATABASE_URL`, one `API_KEY_*` per consumer, `ENSO_API_KEY`, and an `RPC_URL_<chainId>` per supported chain. Both files are gitignored — never commit them.
+Fill in `.dev.vars` and `.env` with real values: a `DATABASE_URL`, one `API_KEY_*` per consumer, and an `RPC_URL_<chainId>` per supported chain. `ENSO_API_KEY` enables the optional Enso source. Both files are gitignored — never commit them.
 
 Local Neon (Postgres 16 + serverless HTTP proxy, no cloud project):
 
@@ -93,8 +93,8 @@ version-1 child request set (requests only; no prices imported). Use
 delays all provider work; 429 responses share the full `Retry-After` cooldown
 (minimum 60 seconds, maximum 12 hours). Output files must not already exist.
 
-Use `--no-defillama` for an independent run using only Chainlink and the existing
-on-chain adapters. This disables direct DeFiLlama requests, aliases, and its cache;
+Use `--no-defillama` for an independent run using Chainlink, the existing
+on-chain adapters, and ypriceAPI when its credentials are configured. This disables direct DeFiLlama requests, aliases, and its cache;
 it does not add feed mappings, peg assumptions, or spot fallbacks. Returned prices
 are candidates, not certified EOD prices. Raw observation times and dependency
 paths remain available for review.
@@ -105,12 +105,16 @@ Full route reference, request/response shapes, error codes, and caching behavior
 
 ## Price sources
 
-- **Spot prices**: Enso first, then batched DeFiLlama current prices, then recursive on-chain derivation. Underlying tokens use the same market sources. Spot results are not written to historical storage.
+- **Spot prices**: Enso when configured, then batched DeFiLlama current prices, Chainlink feeds, and recursive on-chain derivation. Underlying tokens use the same market sources. Spot results are not written to historical storage.
 - **Historical prices**: stored prices with batched DeFiLlama read-through. Daily reconciliation admits recent Yearn gaps and closed provisional observations to a durable repair queue; validated graph reconstruction finalizes them offline. API reads do not enqueue arbitrary misses. Today is fetched live and remains provisional.
 
 Chain 4663 (Robinhood) has no DefiLlama coverage. Warmup writes WETH/USDG/USDC/USDT from Chainlink (`bun run warmup -- --chain 4663`).
 
 Historical repair now runs through `scripts/repair-historical-prices.ts`: bounded due work every 15 minutes and daily discovery reconciliation. Existing warmup and backfill commands remain available for manual operations. See the [targeted repair runbook](docs/historical-pricing/targeted-repair.md).
+
+Provider cooldowns, proxy rotation, archive RPC failover, optional ypriceAPI
+configuration, and the research behind these choices are described in the
+[reliability review](docs/historical-pricing/provider-reliability-review.html).
 
 ### Adding a new price source
 
@@ -150,6 +154,48 @@ wrangler secret put API_KEY_<CLIENT_ID>
 Also update Doppler so the next deploy does not revert it. There is no Actions UI redeploy: the reusable Cloudflare workflow only accepts a push to `main`.
 
 ## Deployment
+
+### Optional proxy gateway
+
+The pricing Worker can use a separate Bun gateway for rotating HTTP CONNECT
+proxies. `gateway/wrangler.toml` deploys it as a Cloudflare Container on the same
+account, with one named instance so callers share provider cooldowns and proxy
+health. This requires Workers Paid, Containers enabled, and a deploy token with
+Workers, Durable Objects and Containers deployment access. Gateway state is in
+memory and resets on container replacement; multiple independent deployments do
+not share cooldowns. Leave the gateway disabled to keep using direct providers.
+
+1. Create Doppler config `yearn-price/prd_gateway` with a random
+   `PRICE_GATEWAY_TOKEN` of at least 32 characters, the intended HTTPS
+   `PRICE_GATEWAY_URL` (the gateway Worker's URL), and any of
+   `PRICE_PROXY_URLS`, `PRICE_PROXY_LIST_URLS`, `PRICE_PROXY_PUBLIC_LIST=true`.
+   Public lists are opt-in; operator-managed proxies can be supplied instead.
+2. Create a Doppler OIDC identity restricted to this repository's default-branch
+   pushes, with access to that config and
+   `webops-shared-prod/cloudflare-deploy-configs`. Set its ID as the Actions
+   variable `DOPPLER_GATEWAY_IDENTITY_ID` and set
+   `PRICE_GATEWAY_DEPLOY_ENABLED=true` when the account and config are ready.
+3. Put the same `PRICE_GATEWAY_URL` and `PRICE_GATEWAY_TOKEN` in
+   `yearn-price/prd` to route Worker provider requests through it. Keep proxy
+   lists on the gateway. Bun repair jobs can either use those two gateway
+   settings in `yearn-price/warmup` or use native proxies directly.
+
+On a push to `main`, CI builds the gateway image before loading credentials,
+syncs only its four runtime settings, deploys the gateway Worker and container,
+and waits up to five minutes for authenticated `/healthz`. The pricing Worker
+deploy waits for gateway success, or skips this dependency when the gateway is
+disabled. PR checks build the gateway Worker and Linux image without credentials.
+Enso credentials are forwarded per request and are not stored on the gateway.
+
+`bun run gateway:build` bundles the gateway Worker without deploying;
+`bun run gateway:deploy` deploys it with the local pinned Wrangler and a running
+Docker engine. For an existing host, build `Dockerfile.gateway` and publish port
+8788 behind HTTPS, or run `bun run gateway:start` behind a reverse proxy. The
+standalone process binds to localhost by default; set `PRICE_GATEWAY_BIND` only
+when needed. `/healthz` in the standalone process is local readiness; the
+Cloudflare entry point requires authentication even for health requests.
+
+### Pricing Worker and repair jobs
 
 Pushing to `main` runs `.github/workflows/deploy.yml`: migrations first, then the SHA-pinned Cloudflare deploy and a reconciliation/repair job. The repair-queue migration must finish before repair jobs start. `.github/workflows/warmup.yml` now drains due repair targets every 15 minutes and reconciles target discovery daily at 00:30 UTC. Deployment, repair and weekly audit jobs share the historical-maintenance concurrency group.
 

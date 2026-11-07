@@ -8,6 +8,8 @@ import { toHistoricalPrice } from './coin'
 import { DEFILLAMA_UNSUPPORTED_CHAINS } from './historical'
 
 export const DEFI_LLAMA_CURRENT_BATCH = 50
+/** Bound concurrent current-price batches to avoid synchronized provider bursts. */
+export const DEFI_LLAMA_CURRENT_CONCURRENCY = 2
 export const CURRENT_MAX_AGE_SECONDS = DEFI_LLAMA_SEARCH_WIDTH_SECONDS
 export const CURRENT_MAX_FUTURE_SKEW_SECONDS = 5 * 60
 
@@ -35,8 +37,11 @@ export async function fetchCurrentPrices(
   }
 
   const prices = new Map<string, HistoricalPriceResult>()
-  await Promise.all(
-    chunk([...coinKeys], DEFI_LLAMA_CURRENT_BATCH).map(async (keys) => {
+  const batches = chunk([...coinKeys], DEFI_LLAMA_CURRENT_BATCH)
+  let nextBatch = 0
+  const fetchBatch = async (): Promise<void> => {
+    while (nextBatch < batches.length) {
+      const keys = batches[nextBatch++]
       const response = await client.getCurrent(keys)
       for (const key of keys) {
         const price = toHistoricalPrice(
@@ -52,7 +57,9 @@ export async function fetchCurrentPrices(
         )
         if (price) prices.set(key, price)
       }
-    })
-  )
+    }
+  }
+  const workerCount = Math.min(DEFI_LLAMA_CURRENT_CONCURRENCY, batches.length)
+  await Promise.all(Array.from({ length: workerCount }, () => fetchBatch()))
   return prices
 }

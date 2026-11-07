@@ -16,3 +16,4 @@ backfill-retry*.json
 # Local diagnostic inventory snapshots
 /docs/historical-pricing/*.json
 !/docs/historical-pricing/backfill-manifest.json
+!/docs/historical-pricing/yearn-vault-feed-audit.json

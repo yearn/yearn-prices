@@ -2,9 +2,10 @@ import type { Env } from './types'
 import { CHAIN_ID_TO_NAME } from './utils/chains'
 
 function supportedChains(env: Env): Array<{ id: number; name: string }> {
-  return Object.keys(env)
-    .filter((key) => key.startsWith('RPC_URL_'))
-    .map((key) => Number(key.slice('RPC_URL_'.length)))
+  const configured = Object.keys(env)
+    .filter((key) => /^RPC_URLS?_\d+$/.test(key) && env[key])
+    .map((key) => Number(key.replace(/^RPC_URLS?_/, '')))
+  return [...new Set(configured)]
     .filter((id) => Number.isFinite(id))
     .sort((left, right) => left - right)
     .map((id) => ({ id, name: CHAIN_ID_TO_NAME[id as keyof typeof CHAIN_ID_TO_NAME] ?? String(id) }))

@@ -111,6 +111,22 @@ describe('createDefiLlamaHistoricalSource', () => {
     expect(getBatchHistorical).toHaveBeenCalledTimes(2)
   })
 
+  it.each([{ symbol: 'BROKEN' }, { prices: [null] }, { prices: [{ price: '1', timestamp: 1695254399 }] }])(
+    'treats a malformed coin or observation as a failed group: %j',
+    async (coin) => {
+      const timestamp = 1695254399
+      const getBatchHistorical = vi.fn(async () => ({
+        coins: { [`ethereum:${ADDRESS}`]: coin }
+      }))
+      const source = createDefiLlamaHistoricalSource({ getBatchHistorical } as unknown as DefiLlamaClient)
+      const targets = [{ chainId: 1, token: ADDRESS, timestamp }]
+      const onSettled = vi.fn()
+
+      await expect(source.getBatchHistoricalPrices(targets, undefined, onSettled)).resolves.toEqual([])
+      expect(onSettled).toHaveBeenCalledWith(targets, expect.objectContaining({ code: 'UNAVAILABLE' }))
+    }
+  )
+
   it('requests payload groups concurrently so one hung group cannot eat the route budget', async () => {
     const timestamp = 1695254399
     const tokens = Array.from({ length: 6 }, (_, index) => `0x${String(index + 1).repeat(40)}`)

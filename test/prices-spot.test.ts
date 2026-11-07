@@ -262,11 +262,17 @@ describe('handleSpot', () => {
     })
   })
 
-  it('throws INTERNAL_ERROR when ENSO_API_KEY is not configured', async () => {
-    await expect(handleSpot(spotRequest([ETH_KEY]), { DATABASE_URL: 'x' } as Env)).rejects.toMatchObject({
-      code: 'INTERNAL_ERROR'
+  it('keeps the independent fallback sources when ENSO_API_KEY is not configured', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      expect(url).toContain('coins.llama.fi/prices/current/')
+      return Promise.resolve(defillamaEmptyRes())
     })
-    expect(fetchMock).not.toHaveBeenCalled()
+
+    const response = await handleSpot(spotRequest([ETH_KEY]), { DATABASE_URL: 'x' } as Env)
+    const body = (await response.json()) as SpotBody
+
+    expect(body.coins).toEqual({ [ETH_KEY]: SPOT_NOT_FOUND })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it('rejects a missing coins parameter with INVALID_INPUT', async () => {

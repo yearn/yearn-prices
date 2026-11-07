@@ -1,6 +1,7 @@
 import { ApiError } from '../http/errors'
 import type { DefiLlamaBatchResponse, DefiLlamaChartResponse, DefiLlamaHistoricalResponse } from '../types'
-import { fetchJsonWithRetry, SlidingWindowRateLimiter } from './http-client'
+import { fetchJsonWithRetry, SharedCooldownRateLimiter, SlidingWindowRateLimiter } from './http-client'
+import { createProviderTransportFromEnv, type ProviderTransport } from './provider-transport'
 
 const BASE_URL = 'https://coins.llama.fi'
 
@@ -13,6 +14,9 @@ export interface DefiLlamaChartOptions {
 }
 
 export interface DefiLlamaRequestOptions {
+  /** Runtime bindings used by the caller to construct a transport. Kept here
+   * for source factories that pass their Worker environment through. */
+  env?: Record<string, string | undefined>
   timeoutMs?: number
   honorRetryAfter?: boolean
   retryAfterCapMs?: number
@@ -20,6 +24,9 @@ export interface DefiLlamaRequestOptions {
   retryTransportErrors?: boolean
   retryInvalidJson?: boolean
   onRateLimit?: (retryAfterMs: number | null, url: string, status: number) => void
+  onCooldown?: (retryAfterMs: number | null, url: string, status: number) => void
+  defaultCooldownMs?: number
+  transport?: ProviderTransport
   signal?: AbortSignal
 }
 
@@ -27,9 +34,14 @@ export interface DefiLlamaRequestOptions {
 export const DEFI_LLAMA_SEARCH_WIDTH_SECONDS = 6 * 60 * 60
 export const DEFI_LLAMA_SEARCH_WIDTH = `${DEFI_LLAMA_SEARCH_WIDTH_SECONDS / 3_600}h`
 
+// Requests created without an injected limiter still share a provider-wide
+// gate. A long Retry-After is retained in the gate, while live callers can
+// fail fast when the cooldown exceeds their route budget.
+const sharedRateLimiter = new SharedCooldownRateLimiter(10, 1000, 2_500)
+
 export class DefiLlamaClient {
   constructor(
-    private readonly rateLimiter = new SlidingWindowRateLimiter(10, 1000),
+    private readonly rateLimiter: SlidingWindowRateLimiter = sharedRateLimiter,
     private readonly onRetry?: (attempt: number, delayMs: number, url: string, status: number) => void,
     private readonly requestOptions: DefiLlamaRequestOptions = {}
   ) {}
@@ -99,6 +111,11 @@ export class DefiLlamaClient {
       rateLimiter: this.rateLimiter,
       onRetry: this.onRetry,
       ...this.requestOptions,
+      timeoutMs: this.requestOptions.timeoutMs ?? 2_500,
+      retryRateLimits: this.requestOptions.retryRateLimits ?? this.rateLimiter !== sharedRateLimiter,
+      honorRetryAfter: this.requestOptions.honorRetryAfter ?? true,
+      defaultCooldownMs: this.requestOptions.defaultCooldownMs ?? 60_000,
+      transport: this.requestOptions.transport ?? createProviderTransportFromEnv(this.requestOptions.env),
       ...(signal ? { signal } : {})
     })
   }

@@ -32,12 +32,14 @@ export interface SpotPriceSource {
   getSpotPrice(chainId: number, token: string, signal?: AbortSignal): Promise<SpotPriceResult | null>
 }
 
-export interface HistoricalPrice {
-  price: number
-  timestamp: number
-  symbol: string | null
-  confidence: number | null
+export interface HistoricalPrice extends HistoricalPriceResult {
   source: string
+}
+
+export interface HistoricalPriceEvidence {
+  blockNumber: number
+  blockTimestamp: number
+  observationEndpoint: string
 }
 
 export interface HistoricalPriceResult {
@@ -45,6 +47,8 @@ export interface HistoricalPriceResult {
   timestamp: number
   symbol: string | null
   confidence: number | null
+  /** Exact historical block used by a block-addressed provider. */
+  evidence?: HistoricalPriceEvidence
 }
 
 export interface HistoricalPriceTarget {
