@@ -351,8 +351,17 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
           )
         : [undefined]
       let visited = 0
+      let longestBatchMs = 0
       for (const batch of batches) {
-        if (controller.signal.aborted || Date.now() >= workDeadline || Number(report.claimed) >= limit) break
+        if (
+          controller.signal.aborted ||
+          Date.now() + longestBatchMs >= workDeadline ||
+          Number(report.claimed) >= limit
+        ) {
+          report.stoppedForBudget = controller.signal.aborted || Date.now() + longestBatchMs >= workDeadline
+          break
+        }
+        const batchStarted = Date.now()
         const claims = await claimRepairQueue(pool, {
           owner,
           limit: targets ? Math.min(batchSize, limit - Number(report.claimed)) : limit,
@@ -376,12 +385,15 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
           signal: controller.signal
         })
         for (const key of Object.keys(totals) as Array<keyof RepairWorkerMetrics>) totals[key] += result[key]
+        longestBatchMs = Math.max(longestBatchMs, Date.now() - batchStarted)
+        report.longestBatchMs = longestBatchMs
         report.activeClaims = 0
         report.unvisitedTargets = targets ? targets.length - visited : undefined
         saveReport()
         console.info(JSON.stringify({ stage: 'repair-progress', ...report }))
       }
-      report.stoppedForBudget = Date.now() >= workDeadline || controller.signal.aborted
+      report.stoppedForBudget =
+        report.stoppedForBudget === true || Date.now() >= workDeadline || controller.signal.aborted
       report.unvisitedTargets = targets ? targets.length - visited : undefined
     } else if (!values.reconcile) {
       report.claimed = 0
