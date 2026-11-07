@@ -1,4 +1,3 @@
-import { driverQuery } from '../helpers/drizzle-driver'
 import type { Pool as NeonPool } from '@neondatabase/serverless'
 import { Pool as PgPool } from 'pg'
 import { afterAll, afterEach, beforeAll, describe, expect, inject, it, vi } from 'vitest'
@@ -11,6 +10,7 @@ import {
 } from '../../src/backfill/finalize'
 import { getBatchHistoricalPrices, insertTokenPrices } from '../../src/db/queries'
 import { type PriceSource, SOURCE_PRIORITY } from '../../src/types'
+import { driverQuery } from '../helpers/drizzle-driver'
 
 const CHAIN = 'ethereum'
 const CHAIN_ID = 1

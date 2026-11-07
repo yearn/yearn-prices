@@ -1,4 +1,3 @@
-import { driverQuery } from '../helpers/drizzle-driver'
 import { describe, expect, it, vi } from 'vitest'
 import {
   claimRepairQueue,
@@ -12,6 +11,7 @@ import {
   settleRepairFailure,
   settleRepairSuccess
 } from '../../src/db/repair-queue'
+import { driverQuery } from '../helpers/drizzle-driver'
 
 const TOKEN = '0x0000000000000000000000000000000000000001'
 const DAY = 1_700_006_399

@@ -1,8 +1,8 @@
-import { driverQuery } from './helpers/drizzle-driver'
 import { describe, expect, it } from 'vitest'
 import { finalizeTokenPrices, insertProvisionalTokenPrices, insertTokenPrices, type Queryable } from '../src/db/queries'
 import type { TokenPriceWrite } from '../src/types'
 import { currentUtcDayEnd, normalizeToEndOfDay } from '../src/utils'
+import { driverQuery } from './helpers/drizzle-driver'
 
 function recorder(): { calls: Array<{ text: string; values: unknown[] }>; client: Queryable } {
   const calls: Array<{ text: string; values: unknown[] }> = []

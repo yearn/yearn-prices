@@ -1,8 +1,8 @@
 import { sql } from 'drizzle-orm'
-import { executeSql } from './orm'
 import { NOT_REJECTED_PRICE_SQL } from '../prices/rejections'
 import { chainIdToName } from '../utils/chains'
 import { isClosedDay, pgTimestampToUnix, unixToIsoTimestamp } from '../utils/time'
+import { executeSql } from './orm'
 
 export interface RepairQueueDb {
   query<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<{ rows: R[]; rowCount?: number | null }>

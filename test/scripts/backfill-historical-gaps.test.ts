@@ -1,4 +1,3 @@
-import { driverQuery } from '../helpers/drizzle-driver'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,6 +13,7 @@ import {
 } from '../../scripts/backfill-historical-gaps'
 import { groupContiguousRanges } from '../../src/backfill/ranges'
 import { HttpRequestError } from '../../src/clients/http-client'
+import { driverQuery } from '../helpers/drizzle-driver'
 
 const DAY = 86_400
 const EOD = 1_704_153_599

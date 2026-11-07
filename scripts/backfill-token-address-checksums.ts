@@ -1,6 +1,6 @@
+import { config as loadEnv } from 'dotenv'
 import { sql } from 'drizzle-orm'
 import { executeSql } from '../src/db/orm'
-import { config as loadEnv } from 'dotenv'
 
 loadEnv()
 

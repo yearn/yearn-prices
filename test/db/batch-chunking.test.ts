@@ -1,6 +1,6 @@
-import { driverQuery } from '../helpers/drizzle-driver'
 import { expect, it } from 'vitest'
 import { getBatchHistoricalPrices } from '../../src/db/queries'
+import { driverQuery } from '../helpers/drizzle-driver'
 
 it('splits large exact reads below the Postgres bind parameter limit', async () => {
   const paramCounts: number[] = []

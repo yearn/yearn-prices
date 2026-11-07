@@ -1,8 +1,8 @@
-import { driverQuery } from '../helpers/drizzle-driver'
 import { describe, expect, it } from 'vitest'
 import { priceKey, readPricedKeys } from '../../src/backfill/priced-keys'
 import type { QueryExecutor } from '../../src/db/queries'
 import { pgTimestampToUnix } from '../../src/utils/time'
+import { driverQuery } from '../helpers/drizzle-driver'
 
 const EOD = 1_704_153_599
 

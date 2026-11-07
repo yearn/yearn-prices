@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm'
-import { executeSql } from '../db/orm'
 import { getChainClient } from '../clients/rpc'
+import { executeSql } from '../db/orm'
 import type { QueryExecutor } from '../db/queries'
 import { createCurveLpGuard, type PlausibleQuote } from '../sources/defillama/lp-guard'
 import { SOURCE_PRIORITY, type TokenPriceWrite } from '../types'

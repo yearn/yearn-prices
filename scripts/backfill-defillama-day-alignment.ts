@@ -1,5 +1,3 @@
-import { sql } from 'drizzle-orm'
-import { executeSql } from '../src/db/orm'
 /**
  * One-off repair of DeFiLlama prices stored against the wrong day.
  *
@@ -21,6 +19,8 @@ import { executeSql } from '../src/db/orm'
 import { readFile, writeFile } from 'node:fs/promises'
 import { parseArgs } from 'node:util'
 import { config as loadEnv } from 'dotenv'
+import { sql } from 'drizzle-orm'
+import { executeSql } from '../src/db/orm'
 
 loadEnv()
 

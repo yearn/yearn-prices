@@ -1,6 +1,6 @@
-import { driverQuery } from '../helpers/drizzle-driver'
 import { expect, it } from 'vitest'
 import { getUnfinalizedExactTimestamps, type QueryExecutor } from '../../src/db/queries'
+import { driverQuery } from '../helpers/drizzle-driver'
 
 it('finds source-specific provisional rows without applying the finalized read filter', async () => {
   let sql = ''

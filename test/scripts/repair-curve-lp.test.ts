@@ -1,9 +1,9 @@
-import { driverQuery } from '../helpers/drizzle-driver'
 import { expect, it, vi } from 'vitest'
 import { repairCurveLpOutlier } from '../../scripts/lib/repair-curve-lp'
 import type { Queryable, QueryExecutor } from '../../src/db/queries'
 import { REJECTED_OBSERVATIONS } from '../../src/prices/rejections'
 import type { ResolvedPricePath } from '../../src/sources/onchain/types'
+import { driverQuery } from '../helpers/drizzle-driver'
 
 const target = REJECTED_OBSERVATIONS[0]
 function fakePool() {

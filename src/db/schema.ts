@@ -1,4 +1,3 @@
-import type { PriceSource } from '../types'
 import { sql } from 'drizzle-orm'
 import {
   bigint,
@@ -14,6 +13,7 @@ import {
   timestamp,
   varchar
 } from 'drizzle-orm/pg-core'
+import type { PriceSource } from '../types'
 
 export const backfillProgress = pgTable('backfill_progress', {
   tokenKey: text('token_key').primaryKey().notNull(),

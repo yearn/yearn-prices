@@ -1,10 +1,10 @@
-import { driverQuery } from '../helpers/drizzle-driver'
 import { describe, expect, it, vi } from 'vitest'
 import { discoverRepairTargets } from '../../scripts/lib/historical-repair'
 import { classifyRepairFailure, isExpectedUnresolved } from '../../scripts/repair-historical-prices'
 import type { RepairQueueDb } from '../../src/db/repair-queue'
 import { normalizeTokenAddress } from '../../src/utils/chains'
 import { currentUtcDayEnd, nowUnix } from '../../src/utils/time'
+import { driverQuery } from '../helpers/drizzle-driver'
 
 const ROOT = '0x0000000000000000000000000000000000000001'
 const EXTRA = '0xabcd000000000000000000000000000000000000'

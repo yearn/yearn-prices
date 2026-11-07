@@ -1,4 +1,4 @@
-import { sql, eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { database, executeSql } from '../db/orm'
 import { tokenPrices } from '../db/schema'
 import { isRejectedPrice } from '../prices/rejections'

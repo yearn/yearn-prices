@@ -1,4 +1,3 @@
-import { driverQuery } from '../helpers/drizzle-driver'
 import { describe, expect, it } from 'vitest'
 import {
   type BackfillClient,
@@ -8,6 +7,7 @@ import {
   finalizeBackfillTargets
 } from '../../src/backfill/finalize'
 import { REJECTED_OBSERVATIONS } from '../../src/prices/rejections'
+import { driverQuery } from '../helpers/drizzle-driver'
 
 const TARGET: FinalizationTarget = {
   chainId: 1,

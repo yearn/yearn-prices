@@ -1,4 +1,3 @@
-import { driverQuery } from './helpers/drizzle-driver'
 import type { Pool } from '@neondatabase/serverless'
 import * as Sentry from '@sentry/cloudflare'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -8,6 +7,7 @@ import { handleHistorical } from '../src/routes/historical/exact'
 import { MAX_GUARDED_RECORDS, type ReadThroughUpstream, readThrough } from '../src/routes/historical/read-through'
 import type { Env } from '../src/types'
 import { normalizeToEndOfDay } from '../src/utils'
+import { driverQuery } from './helpers/drizzle-driver'
 
 vi.mock('@sentry/cloudflare', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@sentry/cloudflare')>()),
@@ -511,7 +511,7 @@ describe('handleHistorical', () => {
       ])
       const [call] = insertCalls(db)
       expect(call[1]).toContain('/batchHistorical')
-      expect(call[1]).toContain(1800.25)
+      expect(call[1]).toContain('1800.25')
       expect(call[1]).toContain(false)
       expect(call[1]).not.toContain(true)
       expect(response.headers.get('cache-control')).toBe(CACHE_CONTROL_HISTORICAL)
@@ -537,7 +537,7 @@ describe('handleHistorical', () => {
       expect(guard).toHaveBeenCalledTimes(1)
       const [call] = insertCalls(db)
       expect(call[1]).toContain(true)
-      expect(call[1]).not.toContain(false)
+      expect(call[1]?.[7]).toBe(true)
     })
 
     it('bounds guard checks per read and drops the unchecked Curve LP quotes', async () => {

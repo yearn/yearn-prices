@@ -22,7 +22,7 @@ export function driverQuery<F extends (...args: any[]) => any>(query: F): F {
         })
         return {
           ...result,
-          rows: result.rows.map((row: Record<string, unknown>) => columns.map((column) => row[column]))
+          rows: result.rows.map((row: Record<string, unknown>) => columns.map((column) => row[column] ?? null))
         }
       })
     }

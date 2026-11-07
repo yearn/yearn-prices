@@ -1,8 +1,6 @@
+import type { Pool } from '@neondatabase/serverless'
 import { and, eq, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
-import type { Pool } from '@neondatabase/serverless'
-import { database, type DatabaseConnection } from './orm'
-import { tokenPrices } from './schema'
 import { isRejectedPrice, NOT_REJECTED_PRICE_SQL, SERVED_PRICE_SQL } from '../prices/rejections'
 import type {
   DbPriceRow,
@@ -16,6 +14,8 @@ import { SOURCE_PRIORITY } from '../types'
 import { chunk } from '../utils/collections'
 import { optionalResponseNumber, toResponseNumber } from '../utils/format'
 import { isTodayNormalized, pgTimestampToUnix, unixToIsoTimestamp } from '../utils/time'
+import { type DatabaseConnection, database } from './orm'
+import { tokenPrices } from './schema'
 
 export type QueryExecutor = DatabaseConnection
 export type Queryable = DatabaseConnection

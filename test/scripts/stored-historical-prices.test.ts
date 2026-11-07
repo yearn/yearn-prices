@@ -1,6 +1,6 @@
-import { driverQuery } from '../helpers/drizzle-driver'
 import { expect, it, vi } from 'vitest'
 import { storedHistoricalPrices } from '../../scripts/lib/stored-historical-prices'
+import { driverQuery } from '../helpers/drizzle-driver'
 
 it('shares exact stored prices across block contexts and marks observation provenance unknown', async () => {
   const timestamp = 1704067199

@@ -1,7 +1,7 @@
-import { sql } from 'drizzle-orm'
-import { executeSql } from '../src/db/orm'
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { config as loadEnv } from 'dotenv'
+import { sql } from 'drizzle-orm'
+import { executeSql } from '../src/db/orm'
 
 loadEnv()
 

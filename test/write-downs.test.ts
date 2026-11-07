@@ -1,4 +1,3 @@
-import { driverQuery } from './helpers/drizzle-driver'
 import type { Pool } from '@neondatabase/serverless'
 import { getAddress } from 'viem'
 import { describe, expect, it, vi } from 'vitest'
@@ -14,6 +13,8 @@ import { handleRangeHistorical } from '../src/routes/historical/range'
 import { MAX_GUARDED_RECORDS } from '../src/routes/historical/read-through'
 import { handleSpot } from '../src/routes/spot'
 import { createCurveLpGuard } from '../src/sources/defillama/lp-guard'
+import { SOURCE_PRIORITY } from '../src/types'
+import { driverQuery } from './helpers/drizzle-driver'
 import { fakeClient } from './sources/onchain/helpers'
 
 const token = '0xc4c319e2d4d66cca4464c0c2b32c9bd23ebe784e'
@@ -167,8 +168,8 @@ it('chunks maximum range queries into exact timestamp lookups', async () => {
     current: async () => new Map(),
     historical: async () => ({ prices: [], failed: false })
   })
-  expect((query.mock.calls[0] as unknown[])[1]).toHaveLength(30_000)
-  expect((query.mock.calls[1] as unknown[])[1]).toHaveLength(24_900)
+  expect((query.mock.calls[0] as unknown[])[1]).toHaveLength(30_000 + SOURCE_PRIORITY.length)
+  expect((query.mock.calls[1] as unknown[])[1]).toHaveLength(24_900 + SOURCE_PRIORITY.length)
 })
 
 it('guards spot quotes only for known Curve LPs', async () => {
