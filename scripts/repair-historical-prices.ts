@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -11,6 +11,7 @@ import {
   enqueueRepairTargets,
   type RepairLease,
   type RepairQueueDb,
+  type RepairTarget,
   releaseRepairLease,
   settleRepairFailure,
   settleRepairSuccess
@@ -113,16 +114,19 @@ export async function processClaims(
     providerRps: number
     evidenceDir: string
     signal: AbortSignal
+    provider?: ReturnType<typeof offlineProvider>
   }
 ): Promise<RepairWorkerMetrics> {
   const metrics: RepairWorkerMetrics = { completed: 0, missing: 0, unresolved: 0, invalid: 0, errors: 0, deferred: 0 }
   // A 429 is recorded on the queue and retried later. The shared limiter still
   // honors Retry-After, but this worker does not sleep past its lease/budget.
-  const provider = offlineProvider(options.providerRps, {
-    retryRateLimits: false,
-    timeoutMs: 5_000,
-    signal: options.signal
-  })
+  const provider =
+    options.provider ??
+    offlineProvider(options.providerRps, {
+      retryRateLimits: false,
+      timeoutMs: 5_000,
+      signal: options.signal
+    })
   const groupSize = Math.max(1, Math.min(25, options.concurrency * 5))
   const groups: RepairLease[][] = []
   for (let offset = 0; offset < claims.length; offset += groupSize)
@@ -239,7 +243,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       concurrency: { type: 'string', default: '2' },
       'provider-rps': { type: 'string', default: '1' },
       owner: { type: 'string', default: `historical-repair-${process.pid}` },
-      out: { type: 'string' }
+      out: { type: 'string' },
+      manifest: { type: 'string' }
     }
   })
 
@@ -259,12 +264,30 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const leaseSeconds = positiveInteger(values['lease-seconds'], '--lease-seconds', 86_400)
   if (leaseSeconds < budgetSeconds + 300)
     throw new Error('--lease-seconds must exceed --budget-seconds by at least five minutes')
+  if (values.manifest && values.reconcile) throw new Error('--manifest and --reconcile cannot be combined')
+  if (values.manifest && values['recent-only']) throw new Error('--manifest defines its own day window')
+  const targets: RepairTarget[] | undefined = values.manifest
+    ? parseManifest(readFileSync(resolve(values.manifest))).targets.map((target) => ({
+        chainId: target.chainId,
+        token: target.token,
+        timestamp: target.eodTimestamp
+      }))
+    : undefined
   const owner = values.owner!
   const outputDir = values.out ? resolve(values.out) : mkdtempSync(join(tmpdir(), 'historical-repair-'))
   mkdirSync(outputDir, { recursive: true })
   const pool = createPool(databaseUrl)
   const started = Date.now()
   let reported = false
+  const report: Record<string, unknown> = {
+    startedAt: new Date(started).toISOString(),
+    mode: values.write ? 'write' : 'dry-run',
+    reconcile: values.reconcile,
+    recentOnly: values['recent-only'],
+    recentDays,
+    manifestTargets: targets?.length
+  }
+  const saveReport = () => writeFileSync(join(outputDir, 'summary.json'), JSON.stringify(report, null, 2))
   const controller = new AbortController()
   const budgetExhausted = new Promise<{ aborted: true }>((resolve) =>
     controller.signal.addEventListener('abort', () => resolve({ aborted: true }), { once: true })
@@ -278,6 +301,10 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   // Unsettled claims remain durable and recover through lease expiry.
   const hardStopTimer = setTimeout(
     () => {
+      report.budgetExhausted = true
+      report.forcedStop = true
+      report.recovery = 'lease-expiry'
+      saveReport()
       console.error(
         JSON.stringify({ message: 'repair-hard-deadline', durationMs: Date.now() - started, recovery: 'lease-expiry' })
       )
@@ -286,13 +313,6 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     (budgetSeconds + 30) * 1000
   )
   try {
-    const report: Record<string, unknown> = {
-      startedAt: new Date(started).toISOString(),
-      mode: values.write ? 'write' : 'dry-run',
-      reconcile: values.reconcile,
-      recentOnly: values['recent-only'],
-      recentDays
-    }
     if (values.reconcile) {
       report.reconcileResult = await Promise.race([reconcile(pool, values.write ?? false, recentDays), budgetExhausted])
     }
@@ -305,23 +325,76 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     )
     report.dueBefore = dueBefore
     if (values.write && !values.reconcile) {
-      const claims = await claimRepairQueue(pool, {
-        owner,
-        limit,
-        leaseSeconds,
-        recentDays,
-        recentOnly: values['recent-only']
-      })
-      report.claimed = claims.length
-      const result = await processClaims(pool, claims, {
-        write: true,
-        deadline: started + budgetSeconds * 1000,
-        concurrency,
-        providerRps,
-        evidenceDir: outputDir,
+      // Stop taking new graph work before the abort deadline, allowing the active
+      // group and its queue updates to finish without leasing a whole backlog.
+      const workDeadline = started + budgetSeconds * 1000 - Math.min(60_000, budgetSeconds * 100)
+      const provider = offlineProvider(providerRps, {
+        retryRateLimits: false,
+        timeoutMs: 5_000,
         signal: controller.signal
       })
-      report.workerResult = result
+      const totals: RepairWorkerMetrics = {
+        completed: 0,
+        missing: 0,
+        unresolved: 0,
+        invalid: 0,
+        errors: 0,
+        deferred: 0
+      }
+      report.claimed = 0
+      report.workerResult = totals
+      if (targets) report.enqueued = await enqueueRepairTargets(pool, targets)
+      const batchSize = Math.max(1, Math.min(25, concurrency * 5))
+      const batches = targets
+        ? Array.from({ length: Math.ceil(targets.length / batchSize) }, (_, index) =>
+            targets.slice(index * batchSize, (index + 1) * batchSize)
+          )
+        : [undefined]
+      let visited = 0
+      let longestBatchMs = 0
+      for (const batch of batches) {
+        if (
+          controller.signal.aborted ||
+          Date.now() + longestBatchMs >= workDeadline ||
+          Number(report.claimed) >= limit
+        ) {
+          report.stoppedForBudget = controller.signal.aborted || Date.now() + longestBatchMs >= workDeadline
+          break
+        }
+        const batchStarted = Date.now()
+        const claims = await claimRepairQueue(pool, {
+          owner,
+          limit: targets ? Math.min(batchSize, limit - Number(report.claimed)) : limit,
+          leaseSeconds,
+          recentDays,
+          recentOnly: values['recent-only'],
+          targets: batch
+        })
+        visited += batch?.length ?? 0
+        report.visitedTargets = visited
+        report.claimed = Number(report.claimed) + claims.length
+        report.activeClaims = claims.length
+        saveReport()
+        const result = await processClaims(pool, claims, {
+          write: true,
+          deadline: workDeadline,
+          concurrency,
+          providerRps,
+          provider,
+          evidenceDir: outputDir,
+          signal: controller.signal
+        })
+        for (const key of Object.keys(totals) as Array<keyof RepairWorkerMetrics>) totals[key] += result[key]
+        longestBatchMs = Math.max(longestBatchMs, Date.now() - batchStarted)
+        report.longestBatchMs = longestBatchMs
+        report.activeClaims = 0
+        report.unvisitedTargets = targets ? targets.length - visited : undefined
+        saveReport()
+        console.info(JSON.stringify({ stage: 'repair-progress', ...report }))
+      }
+      report.stoppedForBudget =
+        report.stoppedForBudget === true || Date.now() >= workDeadline || controller.signal.aborted
+      report.unvisitedTargets = targets ? targets.length - visited : undefined
     } else if (!values.reconcile) {
       report.claimed = 0
       report.workerResult = { completed: 0, missing: 0, unresolved: 0, invalid: 0, errors: 0, deferred: dueBefore }
@@ -329,6 +402,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     report.budgetExhausted = controller.signal.aborted
     report.finishedAt = new Date().toISOString()
     report.durationMs = Date.now() - started
+    saveReport()
     process.stdout.write(`${JSON.stringify(report)}\n`)
     reported = true
   } finally {

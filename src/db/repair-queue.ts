@@ -140,6 +140,29 @@ export async function readFinalizedRepairKeys(
   return result
 }
 
+/** Diagnostic states for exact audit gaps; never includes provider URLs or raw errors. */
+export async function readRepairTargetStates(db: RepairQueueDb, targets: RepairTarget[]) {
+  const states: Record<string, unknown>[] = []
+  const normalized = targets.map((target) => normalizeTarget(target, Math.floor(Date.now() / 1000)))
+  for (let offset = 0; offset < normalized.length; offset += MAX_QUEUE_KEYS_PER_QUERY) {
+    const values = buildTargetValues(normalized.slice(offset, offset + MAX_QUEUE_KEYS_PER_QUERY))
+    const result = await db.query<Record<string, unknown>>(
+      `WITH requested(chain_id, token, timestamp) AS (VALUES ${values.sql})
+       SELECT r.chain_id, r.token, r.timestamp, q.attempts, q.last_outcome, q.next_attempt_at,
+         CASE WHEN q.token IS NULL THEN 'not-queued'
+           WHEN q.completed_at IS NOT NULL THEN 'parked-or-completed'
+           WHEN q.lease_expires_at > NOW() THEN 'leased'
+           WHEN q.next_attempt_at > NOW() THEN 'cooldown'
+           ELSE 'due' END AS state
+       FROM requested r LEFT JOIN historical_price_repair_queue q
+         ON q.chain_id = r.chain_id AND q.token = r.token AND q.timestamp = r.timestamp`,
+      values.params
+    )
+    states.push(...result.rows)
+  }
+  return states
+}
+
 /** Enqueue only targets without a finalized accepted observation. */
 export async function enqueueRepairTargets(
   db: RepairQueueDb,
@@ -202,6 +225,7 @@ export async function claimRepairQueue(
     leaseToken?: string
     recentDays?: number
     recentOnly?: boolean
+    targets?: RepairTarget[]
   }
 ): Promise<RepairLease[]> {
   if (!Number.isInteger(options.limit) || options.limit < 1) throw new Error('repair queue limit must be positive')
@@ -210,6 +234,8 @@ export async function claimRepairQueue(
   const recentDays = options.recentDays ?? 7
   if (!Number.isSafeInteger(recentDays) || recentDays < 1 || recentDays > 365)
     throw new Error('recentDays must be an integer from 1 through 365')
+  if (options.targets?.length === 0) return []
+  const requested = options.targets?.map((target) => normalizeTarget(target, Math.floor(Date.now() / 1000)))
   const token = options.leaseToken ?? randomLeaseToken()
   const result = await db.query<Record<string, unknown>>(
     `
@@ -217,6 +243,12 @@ export async function claimRepairQueue(
         SELECT chain_id, token, "timestamp"
         FROM historical_price_repair_queue
         WHERE completed_at IS NULL
+          AND ($7::jsonb IS NULL OR EXISTS (
+            SELECT 1 FROM jsonb_to_recordset($7::jsonb) AS requested(chain_id bigint, token text, timestamp timestamptz)
+            WHERE requested.chain_id = historical_price_repair_queue.chain_id
+              AND requested.token = historical_price_repair_queue.token
+              AND requested.timestamp = historical_price_repair_queue.timestamp
+          ))
           AND "timestamp" < to_timestamp(floor(extract(epoch FROM NOW()) / 86400)::bigint * 86400 + 86399)
           AND next_attempt_at <= NOW()
           AND (lease_expires_at IS NULL OR lease_expires_at <= NOW())
@@ -237,7 +269,23 @@ export async function claimRepairQueue(
       WHERE queue.chain_id = due.chain_id AND queue.token = due.token AND queue."timestamp" = due."timestamp"
       RETURNING queue.*
     `,
-    [options.limit, options.owner, token, options.leaseSeconds, recentDays, options.recentOnly ?? false]
+    [
+      options.limit,
+      options.owner,
+      token,
+      options.leaseSeconds,
+      recentDays,
+      options.recentOnly ?? false,
+      requested
+        ? JSON.stringify(
+            requested.map((target) => ({
+              chain_id: target.chainId,
+              token: target.token,
+              timestamp: unixToIsoTimestamp(target.timestamp)
+            }))
+          )
+        : null
+    ]
   )
   return result.rows.map((row) => ({ ...rowToQueueItem(row), leaseOwner: options.owner, leaseToken: token }))
 }

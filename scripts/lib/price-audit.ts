@@ -1,3 +1,5 @@
+import { chainNameToId } from '../../src/utils/chains'
+
 import type { NormalizedVault } from './kong-vaults'
 
 export type AuditKind = 'underlying' | 'vault'
@@ -48,4 +50,16 @@ export function auditCoverage(expected: ExpectedTuple[], priced: Set<string>): C
 
 export function auditFailed(report: CoverageReport, missingRpc: number[], warmupFailed = false): boolean {
   return warmupFailed || missingRpc.length > 0 || report.missing.length > 0
+}
+
+/** Freeze precisely the uncovered audit roots; graph resolution may discover dependencies. */
+export function auditRepairManifest(report: CoverageReport) {
+  return {
+    version: 1,
+    targets: report.missing.map((tuple) => {
+      const chainId = chainNameToId(tuple.chain)
+      if (!chainId) throw new Error(`Unsupported audit chain: ${tuple.chain}`)
+      return { chainId, token: tuple.token, eodTimestamp: tuple.timestamp }
+    })
+  }
 }

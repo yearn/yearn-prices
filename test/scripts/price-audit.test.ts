@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import type { NormalizedVault } from '../../scripts/lib/kong-vaults'
-import { auditCoverage, auditFailed, expectedTuples } from '../../scripts/lib/price-audit'
+import { auditCoverage, auditFailed, auditRepairManifest, expectedTuples } from '../../scripts/lib/price-audit'
 
 const vault = (vaultToken: string, underlyingToken: string, chain = 'ethereum') =>
   ({ chain, chainId: 1, vaultToken, underlyingToken, isRetired: false, isHidden: false, tvl: 1 }) as NormalizedVault
@@ -53,4 +53,16 @@ it('skips retired and hidden vaults but keeps zero-TVL vaults', () => {
     '0xb:underlying',
     '0xa:underlying'
   ])
+})
+
+it('repairs only uncovered pairs from the frozen audit scope', () => {
+  const report = auditCoverage(
+    expectedTuples([vault('0xv', '0xu'), { ...vault('0xhidden', '0xother'), isHidden: true }], [10, 20]),
+    new Set(['ethereum:0xv:10', 'ethereum:0xu:10', 'ethereum:0xu:20'])
+  )
+  expect(auditRepairManifest(report)).toEqual({
+    version: 1,
+    targets: [{ chainId: 1, token: '0xv', eodTimestamp: 20 }]
+  })
+  expect(auditRepairManifest({ ...report, missing: [] }).targets).toEqual([])
 })

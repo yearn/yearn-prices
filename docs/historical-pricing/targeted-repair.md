@@ -71,7 +71,7 @@ bun run repair:historical --write --limit 100 --budget-seconds 600
 ```
 
 Without `--write`, the worker reports queue depth without claiming targets.
-`--recent-days` controls recent Yearn discovery and the priority window (default seven closed UTC days). Due targets in that window are selected before older backlog; retry cooldowns and active leases still apply. `--recent-only` restricts claims to that window. The weekly audit uses it for a bounded 40-minute repair pass before checking coverage; remaining gaps still fail the audit. `--out <directory>` retains graph
+`--recent-days` controls recent Yearn discovery and the priority window (default seven closed UTC days). Due targets in that window are selected before older backlog; retry cooldowns and active leases still apply. `--recent-only` restricts claims to that window. The weekly audit instead uses an exact missing-target manifest, so unrelated recent inventory cannot consume its budget; remaining gaps still fail the audit. `--out <directory>` retains graph
 evidence at a selected path; otherwise evidence goes to a temporary directory.
 Structured summaries report discovery, claimed/completed/missing/unresolved/invalid/
 error/deferred counts, duration and budget exhaustion. Expected unresolved graphs and a clean
@@ -103,3 +103,12 @@ TypeScript checking and code review provide static validation. Tests and lint
 run in GitHub CI, not locally under the repository's Astra instruction.
 Migrations have not been applied to a live database.
 Coverage gain and actual repair latency remain unmeasured until a live run.
+
+
+### Exact audit repair
+
+`bun run audit:prices --repair --out audit-evidence` freezes the active-vault audit scope and missing pairs, enqueues only those roots, and invokes the leased repair worker with `--manifest`. The worker still discovers child dependencies through the batched graph resolver. Existing cooldowns, parked invalid targets and active leases are respected.
+
+The default budget is 2,400 seconds; `--repair-budget-seconds` can reduce it. Manifest work claims at most 25 roots at a time (10 at the default concurrency), reuses one provider/cache for the run, and stops starting work up to 60 seconds before the abort deadline to drain queue updates. A stuck driver still triggers the hard-stop safeguard; only the small active batch then awaits lease expiry. The parent bounds child execution and always rechecks the original scope after a child failure.
+
+Evidence includes `before.json`, `targets.json`, `after.json`, `remaining-queue.json`, `repair/summary.json`, and per-batch graph JSONL. The CI artifact is retained for 14 days, including on audit failure. `remaining-queue.json` distinguishes due targets, cooldowns, leases, and parked/completed entries without exposing raw provider errors. A zero exit from repair alone does not assert complete coverage; the final audit determines that.

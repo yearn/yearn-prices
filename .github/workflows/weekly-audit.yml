@@ -30,13 +30,16 @@ jobs:
           doppler-project: yearn-price
           doppler-config: warmup
           inject-env-vars: true
-      - name: Reconcile historical repair targets
-        run: bun run repair:historical --reconcile --write
-      - name: Repair recent audit window
-        run: bun run repair:historical --write --recent-only --recent-days 7 --limit 10000 --budget-seconds 2400 --lease-seconds 3000
-      - name: Audit finalized history
+      - name: Repair exact gaps and audit finalized history
+        run: bun run audit:prices --repair --out audit-evidence
+      - name: Preserve audit and repair evidence
         if: ${{ !cancelled() }}
-        run: bun run audit:prices
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: price-audit-evidence
+          path: audit-evidence/
+          retention-days: 14
+          if-no-files-found: warn
       - name: Heartbeat
         if: success()
         continue-on-error: true
