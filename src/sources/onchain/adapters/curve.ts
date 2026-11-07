@@ -493,6 +493,20 @@ export function curveAdapter(options: OnchainAdapterOptions): PlannedPriceAdapte
         args: [BigInt(index)],
         blockNumber: state.blockNumber
       })
+      const backingRaw = await maybe(() =>
+        isNative
+          ? state.client.getBalance({ address: poolAddress as Address, blockNumber: state.blockNumber })
+          : state.client.readContract({
+              address: coin.address as Address,
+              abi: erc20Abi,
+              functionName: 'balanceOf',
+              args: [poolAddress as Address],
+              blockNumber: state.blockNumber
+            })
+      )
+      if (backingRaw != null && backingRaw * 1000n < balanceRaw * 999n) {
+        throw new InvalidPricingError(`Curve coin ${index} balance ${balanceRaw} exceeds pool holdings ${backingRaw}`)
+      }
       coins.push({ address: pricingAddress, onchainAddress: coin.address, decimals, balanceRaw })
     }
     if (coins.length === 0) {

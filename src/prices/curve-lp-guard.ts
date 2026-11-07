@@ -1,7 +1,7 @@
 import { getChainClient } from '../clients/rpc'
 import type { QueryExecutor } from '../db/queries'
 import { createCurveLpGuard, type PlausibleQuote } from '../sources/defillama/lp-guard'
-import { isDefiLlamaSource, SOURCE_PRIORITY, type TokenPriceWrite } from '../types'
+import { SOURCE_PRIORITY, type TokenPriceWrite } from '../types'
 import { chainIdToName, chainNameToId, normalizeTokenAddress, unixToIsoTimestamp } from '../utils'
 import { ACCEPTED_PRICE_SQL, isRejectedPrice } from './rejections'
 
@@ -35,11 +35,7 @@ export async function plausibleWrites(
     writes.map(async (write) => {
       if (isRejectedPrice(write.chain, write.token, write.timestamp, write.source)) return false
       const chainId = chainNameToId(write.chain)
-      return (
-        !isDefiLlamaSource(write.source) ||
-        chainId === undefined ||
-        isPlausible(chainId, write.token, write.timestamp, Number(write.price))
-      )
+      return chainId === undefined || isPlausible(chainId, write.token, write.timestamp, Number(write.price))
     })
   )
   const rejected = writes.filter((_, index) => !verdicts[index])

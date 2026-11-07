@@ -398,6 +398,39 @@ describe('handleHistorical', () => {
       expect(result.rows).toContainEqual(expect.objectContaining({ timestamp: today, price: 2500 }))
     })
 
+    it('does not write or serve a derived quote for a known Curve LP that the guard rejects', async () => {
+      const guard = vi.fn(async () => false)
+      const currentFallback = vi.fn(async () => ({
+        prices: new Map([
+          [
+            TOKEN_KEY,
+            {
+              price: 554.6,
+              timestamp: nowSeconds() - 10,
+              symbol: 'crvPlain3andSUSD',
+              confidence: null,
+              source: 'derived' as const,
+              observationEndpoint: 'onchain.derived'
+            }
+          ]
+        ]),
+        failed: false
+      }))
+      const db = lpPool([], true)
+      const result = await readThrough(
+        db,
+        ENV,
+        [{ chain: 'ethereum', token: CHECKSUM_ADDR, timestamp: today }],
+        [],
+        undefined,
+        upstreamOf({ currentFallback, guard })
+      )
+
+      expect(guard).toHaveBeenCalledWith(1, CHECKSUM_ADDR, today, 554.6)
+      expect(result.rows).toHaveLength(0)
+      expect(insertCalls(db).flatMap(([, params]) => params)).not.toContain(554.6)
+    })
+
     it('serves the table row when live has no price for today', async () => {
       const db = pool([tableRow(today, '1')])
       const response = await handleHistorical(
