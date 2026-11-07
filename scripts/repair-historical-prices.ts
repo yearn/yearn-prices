@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -163,6 +163,24 @@ export async function processClaims(
         signal: options.signal
       })
       outcomes = readOutcomes(evidence)
+      // Publish only target identities and bounded outcome categories. Full replay
+      // diagnostics remain local because driver errors can contain endpoint details.
+      for (const record of outcomes.values()) {
+        appendFileSync(
+          join(options.evidenceDir, 'outcomes.jsonl'),
+          `${JSON.stringify({
+            target: record.target,
+            status: /^(inserted|existing|unresolved|rejected|rejected_implausible|would-insert)$/.test(
+              record.status ?? ''
+            )
+              ? record.status
+              : 'unknown',
+            reason: /^(cycle|max-depth|retryable|budget|unsupported|invalid)$/.test(record.reason ?? '')
+              ? record.reason
+              : null
+          })}\n`
+        )
+      }
     } catch (error) {
       graphError = error
     }
