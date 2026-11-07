@@ -44,6 +44,7 @@ jobs:
             audit-evidence/remaining-queue.json
             audit-evidence/repair/summary.json
             audit-evidence/repair/outcomes.jsonl
+            audit-evidence/repair/*.gaps.json
           retention-days: 14
           if-no-files-found: warn
       - name: Heartbeat

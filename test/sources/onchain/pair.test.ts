@@ -137,3 +137,85 @@ describe('pairAdapter', () => {
     })
   })
 })
+
+describe('canonical stable-pool missing-leg quotes', () => {
+  const factory = '0xf1046053aa5682b4f9a81b5481394da16be5ff5a'
+  const e18 = 10n ** 18n
+  const reserveA = 25_000n * 10n ** 6n
+  const reserveB = 50_000n * e18
+  const stableReads = () => ({
+    [LP]: {
+      ...reads[LP],
+      stable: true,
+      factory,
+      getReserves: [reserveA, reserveB, 0n],
+      getAmountOut: (amount: bigint) => (amount === reserveB ? 15_000n * 10n ** 6n : amount / (2n * 10n ** 12n))
+    },
+    [factory]: { getPool: LP },
+    [TOKEN_A]: { decimals: 6, balanceOf: reserveA },
+    [TOKEN_B]: { decimals: 18, balanceOf: reserveB }
+  })
+
+  it('uses mixed-decimal swap outputs, not a stable peg, in both engines', async () => {
+    const adapter = pairAdapter(adapterOptions(stableReads()))
+    const result = await priceWith(adapter, { [TOKEN_A]: 1 }, LP, 10)
+    expect(result.path?.priceUsd).toBeCloseTo(500)
+    expect(result.path?.metadata.derivedReserves).toMatchObject([{ impliedPriceUsd: 0.5 }])
+    expect(result.path?.metadata.valuationRule).toBe('stable-swap-derived-constituent')
+    expect(result.path?.inputs).toHaveLength(1)
+    const graph = await resolveHistoricalGraph({
+      roots: [{ chainId: 10, token: LP, timestamp: null }],
+      market: marketFor({ [TOKEN_A]: 1 }),
+      prefetch: async () => {},
+      adapters: () => [adapter]
+    })
+    expect(graph.nodes.find((node) => node.key === graph.roots[0])?.path?.priceUsd).toBeCloseTo(500)
+  })
+
+  it('accepts the 7/24 executable share of a skewed x³y + xy³ pool', async () => {
+    const data = stableReads()
+    data[LP].getAmountOut = (amount) => (amount === reserveB ? (reserveA * 7n) / 8n : (amount * 3n) / (2n * 10n ** 12n))
+    const result = await priceWith(pairAdapter(adapterOptions(data)), { [TOKEN_A]: 1 }, LP, 10)
+    expect(result.path?.priceUsd).toBeCloseTo(1000)
+  })
+
+  it('requires registration at the canonical factory', async () => {
+    const data = stableReads()
+    data[factory].getPool = TOKEN_A
+    const result = await priceWith(pairAdapter(adapterOptions(data)), { [TOKEN_A]: 1 }, LP, 10)
+    expect(result.path).toBeNull()
+    expect(result.failure?.reason).toBe('invalid')
+  })
+
+  it('rejects a thin independently priced reserve', async () => {
+    const result = await priceWith(pairAdapter(adapterOptions(stableReads())), { [TOKEN_A]: 0.1 }, LP, 10)
+    expect(result.path).toBeNull()
+    expect(result.failure?.reason).toBe('invalid')
+  })
+
+  it('rejects accounting reserves without actual backing', async () => {
+    const data = stableReads()
+    data[TOKEN_B].balanceOf = 0n
+    const result = await priceWith(pairAdapter(adapterOptions(data)), { [TOKEN_A]: 1 }, LP, 10)
+    expect(result.path).toBeNull()
+    expect(result.failure?.reason).toBe('invalid')
+  })
+
+  it('rejects a tiny quote with insufficient full-reserve payout', async () => {
+    const data = stableReads()
+    data[LP].getAmountOut = (amount) => (amount === reserveB ? 1n : amount / (2n * 10n ** 12n))
+    const result = await priceWith(pairAdapter(adapterOptions(data)), { [TOKEN_A]: 1 }, LP, 10)
+    expect(result.path).toBeNull()
+    expect(result.failure?.reason).toBe('invalid')
+  })
+
+  it('preserves retryable failures instead of inferring a price', async () => {
+    const data = stableReads()
+    data[LP].getAmountOut = () => {
+      throw new RetryablePricingError('archive unavailable')
+    }
+    const result = await priceWith(pairAdapter(adapterOptions(data)), { [TOKEN_A]: 1 }, LP, 10)
+    expect(result.path).toBeNull()
+    expect(result.failure?.reason).toBe('retryable')
+  })
+})

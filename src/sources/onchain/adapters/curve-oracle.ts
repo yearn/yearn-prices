@@ -31,6 +31,9 @@ const STABLESWAP_ORACLE_CEILING = 19n * 10n ** 17n
  */
 export const CURVE_ORACLE_POOLS: Readonly<Record<number, Readonly<Record<string, Address>>>> = {
   1: {
+    // pxETH/stETH: membership, historical EMA/rates and quote liquidity are
+    // checked on-chain; pxETH is never substituted with a fixed ETH peg.
+    '0x04c154b66cb340f3ae24111cc767e0184ed00cc6': '0x6951bDC4734b9f7F3E1B74afeBC670c736A0EDB6',
     '0xfcc5c47be19d06bf83eb04298b026f81069ff65b': '0x99f5aCc8EC2Da2BC0771c32814EFF52b712de1E5',
     '0x6440f144b7e50d6a8439336510312d2f54beb01d': '0xEFc6516323FbD28e80B85A497B65A86243a54B3E',
     '0x57ab1e0003f623289cd798b1824be09a793e4bec': '0xc522A6606BBA746d7960404F22a3DB936B6F4F50',
