@@ -3,8 +3,8 @@ import {
   fetchJsonWithRetry,
   HttpRequestError,
   MAX_PROVIDER_COOLDOWN_MS,
-  SharedCooldownRateLimiter,
   parseRetryAfter,
+  SharedCooldownRateLimiter,
   SlidingWindowRateLimiter
 } from '../../src/clients/http-client'
 import { ApiError } from '../../src/http/errors'

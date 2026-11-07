@@ -143,7 +143,7 @@ export interface FetchJsonConfig {
   // Called for every 429 response, including a terminal response that will not be retried.
   onRateLimit?: (retryAfterMs: number | null, url: string, status: number) => void
   // Called for provider responses that ask all callers to cool down. Unlike
-  // onRateLimit, this also includes 5xx gateway/provider responses and receives the uncapped
+  // onRateLimit, this also includes 5xx gateway/provider responses and receives the operationally bounded
   // Retry-After delay so a shared gate can preserve the provider's full wait.
   onCooldown?: (retryAfterMs: number | null, url: string, status: number) => void
   // Default shared cooldown when a rate-limit response omits Retry-After.
@@ -340,7 +340,7 @@ export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig
     }
     if (response.status === 429 || response.status === 502 || response.status === 503 || response.status === 504) {
       // A shared limiter is the provider-wide gate even when a caller did not
-      // install an explicit callback. This intentionally uses the uncapped
+      // install an explicit callback. This intentionally uses the operationally bounded
       // delay (up to the one-hour ceiling); retryAfterCapMs only bounds one retry sleep.
       const sharedCooldown = cooldown ?? (response.status === 429 ? (config.defaultCooldownMs ?? null) : null)
       if (sharedCooldown !== null && config.rateLimiter instanceof SharedCooldownRateLimiter) {
