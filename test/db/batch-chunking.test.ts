@@ -5,7 +5,7 @@ import { driverQuery } from '../helpers/drizzle-driver'
 it('splits large exact reads below the Postgres bind parameter limit', async () => {
   const paramCounts: number[] = []
   const pool = {
-    query: driverQuery(async function (_sql: string, params?: unknown[]) {
+    query: driverQuery(async (_sql: string, params?: unknown[]) => {
       paramCounts.push(params?.length ?? 0)
       return { rows: [] }
     })

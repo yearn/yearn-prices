@@ -255,7 +255,8 @@ it('trims a range straddling a write-down cutoff and merges both halves', async 
   expect((query.mock.calls[0] as unknown[])[1]).toEqual([
     'ethereum',
     getAddress(token),
-    new Date(before * 1000).toISOString()
+    new Date(before * 1000).toISOString(),
+    ...SOURCE_PRIORITY
   ])
   expect(await response.json()).toMatchObject({
     coins: {

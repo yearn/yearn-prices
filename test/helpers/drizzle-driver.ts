@@ -1,5 +1,5 @@
 /** Adapt text-based database fixtures to the query-config and array-row protocol. */
-export function driverQuery<F extends (...args: any[]) => any>(query: F): F {
+export function driverQuery<F extends (...args: never[]) => unknown>(query: F): F {
   return new Proxy(query, {
     apply(target, thisArg, args) {
       const [config, values] = args

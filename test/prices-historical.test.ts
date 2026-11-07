@@ -187,7 +187,7 @@ describe('handleHistorical', () => {
       expect(upstream.historical).not.toHaveBeenCalled()
       const [call] = insertCalls(db)
       expect(call[1]).toContain('/prices/current')
-      expect(call[1]).toContain(2425.5)
+      expect(call[1]).toContain('2425.5')
       expect(call[1]).toContain(false)
       await expect(response.json()).resolves.toEqual({
         coins: {
@@ -431,7 +431,7 @@ describe('handleHistorical', () => {
 
       expect(guard).toHaveBeenCalledWith(1, CHECKSUM_ADDR, today, 554.6)
       expect(result.rows).toHaveLength(0)
-      expect(insertCalls(db).flatMap(([, params]) => params)).not.toContain(554.6)
+      expect(insertCalls(db).flatMap(([, params]) => params)).not.toContain('554.6')
     })
 
     it('serves the table row when live has no price for today', async () => {
