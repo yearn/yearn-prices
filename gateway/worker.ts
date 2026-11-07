@@ -86,8 +86,8 @@ export default {
 
     try {
       const container = getContainer(env.PROVIDER_GATEWAY, CONTAINER_NAME)
-      // /healthz is handled by the Bun process without provider traffic. The
-      // edge still requires the same bearer token for readiness checks.
+      // Health and revision readiness are handled by Bun without provider
+      // traffic. /readyz also validates the token inside the container.
       return await container.fetch(request)
     } catch {
       // Keep platform/container details and environment values out of errors.

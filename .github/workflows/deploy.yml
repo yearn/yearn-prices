@@ -41,8 +41,9 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Build gateway before loading credentials
         run: |
+          sed -i "s/^PRICE_GATEWAY_REVISION = \"development\"$/PRICE_GATEWAY_REVISION = \"$GITHUB_SHA\"/" gateway/wrangler.toml
           bun run gateway:build
-          docker build --platform linux/amd64 -f Dockerfile.gateway -t yearn-prices-gateway:build .
+          docker build --platform linux/amd64 --build-arg PRICE_GATEWAY_REVISION="$GITHUB_SHA" -f Dockerfile.gateway -t yearn-prices-gateway:build .
       - name: Load Cloudflare deployment credentials
         id: cloudflare
         uses: dopplerhq/secrets-fetch-action@451892f16195f9ac360e1a5bcbf0b5fd0e957534 # v2.0.0
@@ -83,6 +84,7 @@ jobs:
         env:
           PRICE_GATEWAY_URL: ${{ steps.gateway.outputs.PRICE_GATEWAY_URL }}
           PRICE_GATEWAY_TOKEN: ${{ steps.gateway.outputs.PRICE_GATEWAY_TOKEN }}
+          EXPECTED_GATEWAY_REVISION: ${{ github.sha }}
         run: bun run scripts/check-provider-gateway.ts
 
   migrate:

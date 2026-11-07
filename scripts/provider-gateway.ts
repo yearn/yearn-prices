@@ -28,6 +28,7 @@ export interface GatewayEnvironment extends Record<string, string | undefined> {
   PRICE_GATEWAY_PORT?: string
   PRICE_GATEWAY_HOST?: string
   PRICE_GATEWAY_BIND?: string
+  PRICE_GATEWAY_REVISION?: string
   PRICE_PROXY_URLS?: string
   PRICE_PROXY_LIST_URLS?: string
   PRICE_PROXY_PUBLIC_LIST?: string
@@ -42,6 +43,7 @@ export interface GatewayConfig {
 export interface ProviderGatewayOptions {
   token: string
   transport: ProviderTransport
+  revision?: string
   port?: number
   hostname?: string
   maxConcurrent?: number
@@ -224,6 +226,13 @@ export function createProviderGateway(options: ProviderGatewayOptions): (request
     if (!constantTimeEqual(suppliedToken, `Bearer ${options.token}`))
       return new Response('unauthorized', { status: 401 })
 
+    if (requestUrl.pathname === '/readyz') {
+      return Response.json(
+        { ok: true, revision: options.revision ?? 'development' },
+        { headers: { 'cache-control': 'no-store' } }
+      )
+    }
+
     const target = allowedProviderTarget(requestUrl.searchParams.get('url'))
     if (!target) return new Response('invalid provider target', { status: 400 })
 
@@ -281,7 +290,7 @@ export function startProviderGateway(env: GatewayEnvironment = process.env): Gat
   const server = bun.serve({
     port: config.port,
     hostname: config.hostname,
-    fetch: createProviderGateway({ ...config, transport })
+    fetch: createProviderGateway({ ...config, transport, revision: env.PRICE_GATEWAY_REVISION })
   })
   if (typeof process !== 'undefined' && typeof process.once === 'function') {
     process.once('SIGTERM', () => void server.stop?.(true))

@@ -161,7 +161,7 @@ The pricing Worker can use a separate Bun gateway for rotating HTTP CONNECT
 proxies. `gateway/wrangler.toml` deploys it as a Cloudflare Container on the same
 account, with one named instance so callers share provider cooldowns and proxy
 health. This requires Workers Paid, Containers enabled, and a deploy token with
-Workers, Durable Objects and Containers deployment access. Gateway state is in
+`Workers Scripts Edit` and `Containers Edit` permissions for the target account. Gateway state is in
 memory and resets on container replacement; multiple independent deployments do
 not share cooldowns. Leave the gateway disabled to keep using direct providers.
 
@@ -182,9 +182,9 @@ not share cooldowns. Leave the gateway disabled to keep using direct providers.
 
 On a push to `main`, CI builds the gateway image before loading credentials,
 syncs only its four runtime settings, deploys the gateway Worker and container,
-and waits up to five minutes for authenticated `/healthz`. The pricing Worker
+and waits up to five minutes for authenticated `/readyz` to confirm the image revision matches the deployed commit. Readiness checks the token inside the container as well as at the Worker edge. The pricing Worker
 deploy waits for gateway success, or skips this dependency when the gateway is
-disabled. PR checks build the gateway Worker and Linux image without credentials.
+disabled. The flag controls CI deployment only: to return to direct pricing, clear `PRICE_GATEWAY_URL` in `yearn-price/prd` (and `warmup` if used), then deploy that configuration before retiring the gateway. Deleting a Doppler key alone does not remove an existing Worker secret. PR checks build the gateway Worker and Linux image without credentials.
 Enso credentials are forwarded per request and are not stored on the gateway.
 
 `bun run gateway:build` bundles the gateway Worker without deploying;

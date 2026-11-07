@@ -62,6 +62,18 @@ describe('provider gateway', () => {
     expect(upstream.fetch).not.toHaveBeenCalled()
   })
 
+  it('authenticates readiness against the container token and reports its image revision', async () => {
+    const upstream = transport([])
+    const handle = createProviderGateway({ token: TOKEN, transport: upstream, revision: 'new-image' })
+    expect((await handle(new Request('https://gateway.test/readyz'))).status).toBe(401)
+    const ready = await handle(
+      new Request('https://gateway.test/readyz', { headers: { authorization: `Bearer ${TOKEN}` } })
+    )
+    expect(ready.status).toBe(200)
+    expect(await ready.json()).toEqual({ ok: true, revision: 'new-image' })
+    expect(upstream.fetch).not.toHaveBeenCalled()
+  })
+
   it('forwards an allowlisted target and preserves provider status/body headers', async () => {
     const upstream = transport([Response.json({ coins: {} }, { status: 429, headers: { 'retry-after': '30' } })])
     const handle = createProviderGateway({ token: TOKEN, transport: upstream })

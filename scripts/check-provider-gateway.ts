@@ -2,12 +2,14 @@
 async function main(): Promise<void> {
   const token = process.env.PRICE_GATEWAY_TOKEN?.trim()
   const rawUrl = process.env.PRICE_GATEWAY_URL
-  if (!token || !rawUrl) throw new Error('Gateway URL and token are required for deployment health')
+  const revision = process.env.EXPECTED_GATEWAY_REVISION
+  if (!token || !rawUrl || !revision)
+    throw new Error('Gateway URL, token, and revision are required for deployment health')
   const endpoint = new URL(rawUrl)
   if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password || endpoint.search || endpoint.hash) {
     throw new Error('Gateway health requires an HTTPS URL without credentials, query, or fragment')
   }
-  endpoint.pathname = '/healthz'
+  endpoint.pathname = '/readyz'
   const deadline = Date.now() + 300_000
   while (Date.now() < deadline) {
     try {
@@ -16,9 +18,12 @@ async function main(): Promise<void> {
         redirect: 'error',
         signal: AbortSignal.timeout(10_000)
       })
-      if (response.ok && ((await response.json()) as { ok?: boolean }).ok === true) {
-        console.log('Provider gateway container is healthy')
-        return
+      if (response.ok) {
+        const body = (await response.json()) as { ok?: boolean; revision?: string }
+        if (body.ok === true && body.revision === revision) {
+          console.log('Provider gateway container is healthy and serving the requested revision')
+          return
+        }
       }
       await response.body?.cancel().catch(() => undefined)
     } catch {

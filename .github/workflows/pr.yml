@@ -15,8 +15,11 @@ jobs:
         with:
           bun-version: '1.4.4'
       - run: bun install --frozen-lockfile
-      - run: bun run gateway:build
-      - run: docker build --platform linux/amd64 -f Dockerfile.gateway -t yearn-prices-gateway:pr .
+      - name: Build gateway Worker and revision-tagged image
+        run: |
+          sed -i "s/^PRICE_GATEWAY_REVISION = \"development\"$/PRICE_GATEWAY_REVISION = \"$GITHUB_SHA\"/" gateway/wrangler.toml
+          bun run gateway:build
+          docker build --platform linux/amd64 --build-arg PRICE_GATEWAY_REVISION="$GITHUB_SHA" -f Dockerfile.gateway -t yearn-prices-gateway:pr .
 
   typecheck:
     runs-on: ubuntu-latest
