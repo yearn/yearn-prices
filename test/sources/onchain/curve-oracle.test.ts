@@ -134,3 +134,39 @@ describe('curveOracleAdapter', () => {
     expect(result.failure?.reason).toBe('unsupported')
   })
 })
+
+it('prices pxETH through its reviewed stETH market without assuming an ETH peg', async () => {
+  const pxeth = '0x04c154b66cb340f3ae24111cc767e0184ed00cc6'
+  const steth = '0xae7ab96520de3a18e5e111b5eaab095312d7fe84'
+  const pool = '0x6951bdc4734b9f7f3e1b74afebc670c736a0edb6'
+  const options = adapterOptions({
+    [pool]: {
+      coins: [pxeth, steth],
+      balances: [20n * E18, 20n * E18],
+      price_oracle: (101n * E18) / 100n,
+      stored_rates: [E18, E18]
+    },
+    [pxeth]: { decimals: 18 },
+    [steth]: { decimals: 18 }
+  })
+  const result = await priceWith(curveOracleAdapter(options), { [steth]: 2000 }, pxeth)
+  expect(result.path?.priceUsd).toBeCloseTo(2000 / 1.01)
+  expect(result.path?.inputs[0].token.toLowerCase()).toBe(steth)
+})
+
+it('prices lvlUSD against mixed-decimal USDC for the nested slvlUSD pool', async () => {
+  const lvl = '0x7c1156e515aa1a2e851674120074968c905aaf37'
+  const pool = '0x1220868672d5b10f3e1cb9ab519e4d0b08545ea4'
+  const options = adapterOptions({
+    [pool]: {
+      coins: [USDC, lvl],
+      balances: [30_000n * 10n ** 6n, 30_000n * E18],
+      price_oracle: (99n * E18) / 100n,
+      stored_rates: [10n ** 30n, E18]
+    },
+    [USDC]: { decimals: 6 },
+    [lvl]: { decimals: 18 }
+  })
+  const result = await priceWith(curveOracleAdapter(options), { [USDC]: 1.01 }, lvl)
+  expect(result.path?.priceUsd).toBeCloseTo(0.9999)
+})

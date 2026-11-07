@@ -229,7 +229,7 @@ async function deriveMissingLegs(
     }
   })
   if (anchorIndex < 0 || anchorValue <= 0) {
-    return null
+    throw new Error('Curve pool has no positive priced anchor reserve')
   }
   const anchorPrice = marketPrices[anchorIndex] as number
 
@@ -240,12 +240,12 @@ async function deriveMissingLegs(
   for (const index of marketPrices.flatMap((price, i) => (price == null ? [i] : []))) {
     const dxRaw = 10n ** BigInt(coins[index].decimals)
     const getDyRaw = await readGetDy(state.client, poolAddress, index, anchorIndex, dxRaw, state.blockNumber, abiSlot)
-    if (getDyRaw == null || getDyRaw === 0n) {
-      return null
-    }
+    if (getDyRaw == null) throw new Error(`Curve coin ${index} has no supported swap quote into anchor ${anchorIndex}`)
+    if (getDyRaw === 0n)
+      throw new InvalidPricingError(`Curve coin ${index} swap quote into anchor ${anchorIndex} is zero`)
     const derivedPrice = scaledRaw(getDyRaw, coins[anchorIndex].decimals) * anchorPrice
     if (!Number.isFinite(derivedPrice) || derivedPrice <= 0) {
-      return null
+      throw new InvalidPricingError(`Curve coin ${index} swap quote produced an invalid price`)
     }
     const balanceRaw = coins[index].balanceRaw
     const markedValue = scaledRaw(balanceRaw, coins[index].decimals) * derivedPrice
@@ -261,11 +261,13 @@ async function deriveMissingLegs(
         abiSlot
       )
       if (executableDyRaw == null) {
-        return null
+        throw new Error(`Curve coin ${index} full-reserve swap into anchor ${anchorIndex} is unavailable`)
       }
       const executableValue = scaledRaw(executableDyRaw, coins[anchorIndex].decimals) * anchorPrice
       if (!Number.isFinite(executableValue) || executableValue < MIN_EXECUTABLE_SHARE * markedValue) {
-        return null
+        throw new InvalidPricingError(
+          `Curve coin ${index} executable value ${executableValue} is below ${MIN_EXECUTABLE_SHARE} of marked value ${markedValue}`
+        )
       }
     }
 
@@ -284,7 +286,9 @@ async function deriveMissingLegs(
   }
 
   if (derivedValue > anchorValue / MIN_EXECUTABLE_SHARE) {
-    return null
+    throw new InvalidPricingError(
+      `Curve derived value ${derivedValue} exceeds anchor bound ${anchorValue / MIN_EXECUTABLE_SHARE}`
+    )
   }
   return { prices: prices as number[], derivedCoins }
 }
@@ -522,6 +526,9 @@ export function curveAdapter(options: OnchainAdapterOptions): PlannedPriceAdapte
         blockNumber: state.blockNumber
       })
     ])
+    if (totalSupplyRaw <= 0n) throw new InvalidPricingError('Curve LP has zero total supply at the requested block')
+    if (coins.every((coin) => coin.balanceRaw === 0n))
+      throw new InvalidPricingError('Curve pool has zero reserves at the requested block')
     const metadata = {
       ...blockEvidence(state, target),
       poolAddress,

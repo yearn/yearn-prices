@@ -32,6 +32,14 @@ const reads = {
 }
 
 describe('curveAdapter', () => {
+  it('reports zero LP supply before attempting to price any missing coins', async () => {
+    const data = { ...reads, [LP]: { ...reads[LP], totalSupply: 0n } }
+    const result = await priceWith(curveAdapter(adapterOptions(data)), {}, LP)
+    expect(result.path).toBeNull()
+    expect(result.failure?.reason).toBe('invalid')
+    expect(result.failure?.attempts[0].error).toContain('zero total supply')
+  })
+
   it('derives a missing leg with get_dy in both the recursive engine and the graph', async () => {
     const quoteReads = {
       [LP]: { minter: CURVE_POOL, decimals: 18, totalSupply: 100n * 10n ** 18n },
