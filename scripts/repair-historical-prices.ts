@@ -233,6 +233,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       write: { type: 'boolean', default: false },
       limit: { type: 'string', default: '100' },
       'recent-days': { type: 'string', default: '7' },
+      'recent-only': { type: 'boolean', default: false },
       'budget-seconds': { type: 'string', default: '600' },
       'lease-seconds': { type: 'string', default: '1800' },
       concurrency: { type: 'string', default: '2' },
@@ -288,7 +289,9 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     const report: Record<string, unknown> = {
       startedAt: new Date(started).toISOString(),
       mode: values.write ? 'write' : 'dry-run',
-      reconcile: values.reconcile
+      reconcile: values.reconcile,
+      recentOnly: values['recent-only'],
+      recentDays
     }
     if (values.reconcile) {
       report.reconcileResult = await Promise.race([reconcile(pool, values.write ?? false, recentDays), budgetExhausted])
@@ -302,7 +305,13 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     )
     report.dueBefore = dueBefore
     if (values.write && !values.reconcile) {
-      const claims = await claimRepairQueue(pool, { owner, limit, leaseSeconds })
+      const claims = await claimRepairQueue(pool, {
+        owner,
+        limit,
+        leaseSeconds,
+        recentDays,
+        recentOnly: values['recent-only']
+      })
       report.claimed = claims.length
       const result = await processClaims(pool, claims, {
         write: true,
