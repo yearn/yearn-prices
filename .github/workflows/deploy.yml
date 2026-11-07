@@ -1,4 +1,4 @@
-name: Deploy Worker
+name: Deploy Pricing Services
 
 on:
   push:
@@ -10,6 +10,83 @@ permissions:
   id-token: write
 
 jobs:
+  deploy-gateway:
+    # No extra service is provisioned until its scoped Doppler identity is configured.
+    if: vars.PRICE_GATEWAY_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: yearn-prices-gateway-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Require default-branch push and gateway identity
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          IDENTITY_ID: ${{ vars.DOPPLER_GATEWAY_IDENTITY_ID }}
+        run: |
+          set -euo pipefail
+          [[ "$EVENT_NAME" == push && "$REF" == "refs/heads/$DEFAULT_BRANCH" ]]
+          if [[ -z "$IDENTITY_ID" ]]; then
+            echo '::error::Set DOPPLER_GATEWAY_IDENTITY_ID before enabling gateway deployment'
+            exit 1
+          fi
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: '1.4.4'
+      - run: bun install --frozen-lockfile
+      - name: Build gateway before loading credentials
+        run: |
+          sed -i "s/^PRICE_GATEWAY_REVISION = \"development\"$/PRICE_GATEWAY_REVISION = \"$GITHUB_SHA\"/" gateway/wrangler.toml
+          bun run gateway:build
+          docker build --platform linux/amd64 --build-arg PRICE_GATEWAY_REVISION="$GITHUB_SHA" -f Dockerfile.gateway -t yearn-prices-gateway:build .
+      - name: Load Cloudflare deployment credentials
+        id: cloudflare
+        uses: dopplerhq/secrets-fetch-action@451892f16195f9ac360e1a5bcbf0b5fd0e957534 # v2.0.0
+        with:
+          auth-method: oidc
+          doppler-identity-id: ${{ vars.DOPPLER_GATEWAY_IDENTITY_ID }}
+          doppler-project: webops-shared-prod
+          doppler-config: cloudflare-deploy-configs
+          inject-env-vars: false
+      - name: Load gateway configuration
+        id: gateway
+        uses: dopplerhq/secrets-fetch-action@451892f16195f9ac360e1a5bcbf0b5fd0e957534 # v2.0.0
+        with:
+          auth-method: oidc
+          doppler-identity-id: ${{ vars.DOPPLER_GATEWAY_IDENTITY_ID }}
+          doppler-project: yearn-price
+          doppler-config: prd_gateway
+          inject-env-vars: false
+      - name: Sync only gateway runtime secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ steps.cloudflare.outputs.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ steps.cloudflare.outputs.CLOUDFLARE_ACCOUNT_ID }}
+          GATEWAY_SECRETS: ${{ toJSON(steps.gateway.outputs) }}
+        run: |
+          set -euo pipefail
+          [[ -n "$CLOUDFLARE_API_TOKEN" && -n "$CLOUDFLARE_ACCOUNT_ID" ]]
+          jq -e '.PRICE_GATEWAY_TOKEN | type == "string" and length >= 32' <<<"$GATEWAY_SECRETS" >/dev/null
+          jq -e '.PRICE_GATEWAY_URL | type == "string" and startswith("https://")' <<<"$GATEWAY_SECRETS" >/dev/null
+          # Empty optional values explicitly clear a previously configured list.
+          jq -c '{PRICE_GATEWAY_TOKEN, PRICE_PROXY_URLS: (.PRICE_PROXY_URLS // ""), PRICE_PROXY_LIST_URLS: (.PRICE_PROXY_LIST_URLS // ""), PRICE_PROXY_PUBLIC_LIST: (.PRICE_PROXY_PUBLIC_LIST // "false")}' <<<"$GATEWAY_SECRETS" |
+            bun run wrangler secret bulk --config gateway/wrangler.toml
+      - name: Deploy gateway Worker and container
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ steps.cloudflare.outputs.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ steps.cloudflare.outputs.CLOUDFLARE_ACCOUNT_ID }}
+        run: bun run gateway:deploy
+      - name: Wait for authenticated container health
+        env:
+          PRICE_GATEWAY_URL: ${{ steps.gateway.outputs.PRICE_GATEWAY_URL }}
+          PRICE_GATEWAY_TOKEN: ${{ steps.gateway.outputs.PRICE_GATEWAY_TOKEN }}
+          EXPECTED_GATEWAY_REVISION: ${{ github.sha }}
+        run: bun run scripts/check-provider-gateway.ts
+
   migrate:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -34,7 +111,10 @@ jobs:
         run: bun run migrate
 
   deploy:
-    needs: migrate
+    needs: [migrate, deploy-gateway]
+    if: >-
+      always() && !cancelled() && needs.migrate.result == 'success' &&
+      (needs.deploy-gateway.result == 'success' || needs.deploy-gateway.result == 'skipped')
     uses: yearn/yearn-gha/.github/workflows/cloudflare-deploy.yml@d7047bb766f85ae4dfe0c4ab080bee3ebb1a7d31
     with:
       project: yearn-price

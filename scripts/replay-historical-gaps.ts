@@ -406,7 +406,7 @@ async function run(args: Args): Promise<void> {
 
   const pool = createPool(databaseUrl)
   const stats = { apiCalls: 0, retries: 0, requestFailures: 0 }
-  const rateLimiter = new SharedCooldownRateLimiter(10, 1000)
+  const rateLimiter = new SharedCooldownRateLimiter(10, 1000, CHART_RETRY_AFTER_CAP_MS)
 
   try {
     const allTargets: Array<{ cohort: Cohort; target: NormalizedTarget }> = [

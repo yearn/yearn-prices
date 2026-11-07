@@ -45,7 +45,8 @@ export function validateGraphResolution(
       Math.abs(path.observedTimestamp - target.eodTimestamp) > MAXIMUM_ACCEPTED_OFFSET_SECONDS
     )
       throw new Error('Graph observation outside 6-hour matching window')
-    if (node.market !== 'price') {
+    const blockPricedProvider = path.source === 'bobs-api' && path.metadata.provenance !== 'existing-token_prices-row'
+    if (node.market !== 'price' || blockPricedProvider) {
       const block = path.metadata.block as
         | { number?: number; timestamp?: number; requestedTimestamp?: number }
         | undefined
@@ -60,6 +61,13 @@ export function validateGraphResolution(
         (node.target.blockNumber != null && block.number !== node.target.blockNumber)
       )
         throw new Error('Invalid historical block evidence')
+      if (
+        blockPricedProvider &&
+        (path.observedTimestamp !== block.timestamp || path.metadata.observationEndpoint !== '/get_price')
+      )
+        throw new Error('Invalid block-priced provider observation')
+    }
+    if (node.market !== 'price') {
       const route = node.routes.find((route) => route.adapter === path.adapter && !route.error)
       if (!route) throw new Error('Missing selected route evidence')
       let consumed = 0
@@ -91,13 +99,18 @@ export function validateGraphResolution(
   visit(root)
   const path = root.path!
   const fromStoredRow = path.metadata.provenance === 'existing-token_prices-row'
-  const hasProviderObservation = !fromStoredRow && (path.source === 'defillama' || path.source === 'defillama-alias')
+  const hasProviderObservation =
+    !fromStoredRow && (path.source === 'defillama' || path.source === 'defillama-alias' || path.source === 'bobs-api')
   return {
     price: path.priceUsd,
     symbol: path.symbol,
     confidence: path.confidence,
     source: path.source,
     observedTimestamp: hasProviderObservation ? path.observedTimestamp : null,
-    observationEndpoint: hasProviderObservation ? '/batchHistorical' : null
+    observationEndpoint: hasProviderObservation
+      ? path.source === 'bobs-api'
+        ? '/get_price'
+        : '/batchHistorical'
+      : null
   }
 }

@@ -704,9 +704,13 @@ describe('handleHistorical', () => {
   })
 
   it('serves a table miss as a 404 whose negative TTL stays under the hourly warmup cadence', async () => {
+    // This case needs a healthy provider, independent of the preceding 429 scenario.
+    // Reimport the worker instead of resetting its production shared cooldown or clock.
+    vi.resetModules()
+    const { default: freshWorker } = await import('../src/index')
     fetchMock.mockResolvedValue(Response.json({ coins: {} }))
     vi.stubGlobal('caches', { default: { match: async () => undefined, put: async () => {} } })
-    const response = await worker.fetch(
+    const response = await freshWorker.fetch(
       new Request(request().url, { headers: { authorization: 'Bearer k' } }),
       { ...ENV, API_KEY_TEST: 'k' } as unknown as Env,
       { waitUntil: vi.fn() } as unknown as ExecutionContext

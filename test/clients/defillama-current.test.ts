@@ -33,12 +33,29 @@ describe('DefiLlamaClient.getCurrent', () => {
   })
 
   it('passes an optional abort signal to /prices/current', async () => {
-    const fetchMock = stubFetch({ coins: {} })
     const controller = new AbortController()
+    let requestSignal: AbortSignal | undefined
+    let resolveStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve
+    })
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+        new Promise<Response>((_resolve, reject) => {
+          requestSignal = init?.signal ?? undefined
+          resolveStarted()
+          requestSignal?.addEventListener('abort', () => reject(requestSignal?.reason), { once: true })
+        })
+    )
+    vi.stubGlobal('fetch', fetchMock)
 
-    await new DefiLlamaClient().getCurrent([WETH], controller.signal)
+    const pending = new DefiLlamaClient().getCurrent([WETH], controller.signal)
+    await started
+    expect(requestSignal).toBeDefined()
 
-    expect((fetchMock.mock.calls[0][1] as RequestInit).signal).toBe(controller.signal)
+    controller.abort()
+    expect(requestSignal?.aborted).toBe(true)
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
   })
 })
 

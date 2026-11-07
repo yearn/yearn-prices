@@ -1,4 +1,5 @@
 import { ApiError } from '../http/errors'
+import type { HistoricalPriceEvidence } from '../sources/types'
 
 export interface NamedSource {
   name: string
@@ -11,6 +12,7 @@ export type PriceFields = {
   timestamp: number
   symbol: string | null
   confidence: number | null
+  evidence?: HistoricalPriceEvidence
 }
 
 export type StampedPrice = PriceFields & { source: string }

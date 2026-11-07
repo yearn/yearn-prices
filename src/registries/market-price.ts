@@ -1,6 +1,7 @@
 import { ApiError } from '../http/errors'
 import { writeDown } from '../prices/write-downs'
 import type { MarketPriceResolver, ResolvedPricePath } from '../sources/onchain/types'
+import type { HistoricalPriceEvidence } from '../sources/types'
 import type { PriceSource } from '../types'
 
 interface MarketQuote {
@@ -9,6 +10,7 @@ interface MarketQuote {
   symbol: string | null
   confidence: number | null
   source: string
+  evidence?: HistoricalPriceEvidence
 }
 
 interface MarketSource {
@@ -55,9 +57,18 @@ export function createMarketPriceResolver(
         confidence: price.confidence,
         source: price.source as PriceSource,
         adapter: price.source,
-        blockNumber: target.blockNumber ?? null,
+        blockNumber: price.evidence?.blockNumber ?? target.blockNumber ?? null,
         inputs: [],
-        metadata: {}
+        metadata: price.evidence
+          ? {
+              block: {
+                number: price.evidence.blockNumber,
+                timestamp: price.evidence.blockTimestamp,
+                requestedTimestamp: target.timestamp
+              },
+              observationEndpoint: price.evidence.observationEndpoint
+            }
+          : {}
       }
       return path
     } catch (error) {

@@ -11,3 +11,4 @@ export {
   type ChainlinkHistoricalSourceOptions,
   createChainlinkHistoricalSource
 } from './historical'
+export { ChainlinkSpotSource, createChainlinkSpotSource } from './spot'

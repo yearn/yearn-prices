@@ -1,7 +1,7 @@
 import { DefiLlamaClient } from '../../clients/defillama'
-import { SharedCooldownRateLimiter } from '../../clients/http-client'
 import { ApiError } from '../../http/errors'
 import { isRejectedPrice } from '../../prices/rejections'
+import type { Env } from '../../types'
 import { chainIdToName } from '../../utils/chains'
 import { currentUtcDayEnd, nowUnix } from '../../utils/time'
 import { SpotPriceSourceBase } from '../base'
@@ -40,22 +40,15 @@ type Batch = {
   controller: AbortController
 }
 
-// One limiter and one client are shared by all request registries in this
-// isolate. The source still coalesces only within a registry, while this gate
-// protects the provider across concurrent requests and honors a Retry-After
-// response, capped at the client default, for every subsequent batch. A cooldown
-// longer than one batch budget fails fast so the registry moves on to the next source.
-const sharedLimiter = new SharedCooldownRateLimiter(10, 1_000, DEFI_LLAMA_SPOT_TIMEOUT_MS)
-const defaultClient = new DefiLlamaClient(sharedLimiter, undefined, {
-  timeoutMs: DEFI_LLAMA_SPOT_TIMEOUT_MS,
-  honorRetryAfter: true,
-  // A failed batch is reported to every token in that batch. Retrying one
-  // token at a time would multiply provider traffic and defeat coalescing.
-  retryRateLimits: false,
-  onRateLimit: (retryAfterMs) => {
-    if (retryAfterMs != null) sharedLimiter.extendCooldown(retryAfterMs)
-  }
-})
+// All default clients share the same provider gate, including historical
+// read-through. A failed batch still settles every member without token retries.
+function currentClient(env?: Env): DefiLlamaClient {
+  return new DefiLlamaClient(undefined, undefined, {
+    env,
+    timeoutMs: DEFI_LLAMA_SPOT_TIMEOUT_MS,
+    retryRateLimits: false
+  })
+}
 
 function withSignal<T>(promise: Promise<T>, signal?: AbortSignal, onCancel?: () => void): Promise<T> {
   if (!signal) return promise
@@ -113,7 +106,7 @@ export class DefiLlamaSpotSource extends SpotPriceSourceBase {
   private flushRunning = false
   private flushAgain = false
 
-  constructor(private readonly client: CurrentClient = defaultClient) {
+  constructor(private readonly client: CurrentClient = currentClient()) {
     super()
   }
 
@@ -271,6 +264,6 @@ export class DefiLlamaSpotSource extends SpotPriceSourceBase {
   }
 }
 
-export function createDefiLlamaSpotSource(client?: CurrentClient): DefiLlamaSpotSource {
-  return new DefiLlamaSpotSource(client)
+export function createDefiLlamaSpotSource(client?: CurrentClient, env?: Env): DefiLlamaSpotSource {
+  return new DefiLlamaSpotSource(client ?? currentClient(env))
 }

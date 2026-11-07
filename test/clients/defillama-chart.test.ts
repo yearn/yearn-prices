@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DefiLlamaClient } from '../../src/clients/defillama'
+import { SlidingWindowRateLimiter } from '../../src/clients/http-client'
 import multiDay from '../fixtures/defillama-chart/01_basic_start_span_period.json'
 import oneDay from '../fixtures/defillama-chart/06_neither_end_nor_span.json'
 import endOnly from '../fixtures/defillama-chart/07_end_only_no_start.json'
@@ -178,8 +179,14 @@ describe('DefiLlamaClient.getChart', () => {
   it('retries a 429 and returns the following success', async () => {
     vi.useFakeTimers()
     const fetchMock = stubFetch({ status: 429, body: { message: 'rate limited' } }, { body: multiDay })
+    // The production default shares a provider cooldown and deliberately
+    // surfaces a 429 immediately. Exercise the legacy opt-in retry contract
+    // with an isolated limiter so this test does not poison later cases.
+    const client = new DefiLlamaClient(new SlidingWindowRateLimiter(10, 1000), undefined, {
+      retryRateLimits: true
+    })
 
-    const response = await drain(new DefiLlamaClient().getChart([WETH], { start: START, span: 5, period: '1d' }))
+    const response = await drain(client.getChart([WETH], { start: START, span: 5, period: '1d' }))
 
     expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(response.coins[WETH].prices).toHaveLength(5)
@@ -187,7 +194,12 @@ describe('DefiLlamaClient.getChart', () => {
 
   it('fails immediately on a 429 when the caller opts out of rate-limit retries', async () => {
     const fetchMock = stubFetch({ status: 429, body: { message: 'rate limited' } }, { body: multiDay })
-    const client = new DefiLlamaClient(undefined, undefined, { retryRateLimits: false })
+    // Keep this terminal-429 assertion isolated from the module-wide provider
+    // cooldown. The production default intentionally shares that gate, but a
+    // test-local limiter must not make the following getFirst case flaky.
+    const client = new DefiLlamaClient(new SlidingWindowRateLimiter(10, 1000), undefined, {
+      retryRateLimits: false
+    })
 
     await expect(client.getChart([WETH], { start: START, span: 5, period: '1d' })).rejects.toMatchObject({
       responseStatus: 429,

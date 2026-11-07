@@ -38,21 +38,26 @@ export interface ReadThroughUpstream {
   guard?: PlausibleQuote
 }
 
-const client = () =>
-  new DefiLlamaClient(undefined, undefined, { timeoutMs: UPSTREAM_TIMEOUT_MS, retryRateLimits: false })
-
-const defaultUpstream: ReadThroughUpstream = {
-  current: (targets) => fetchCurrentPrices(client(), targets),
-  historical: async (targets) => {
-    let failed = false
-    const prices = await createDefiLlamaHistoricalSource(client()).getBatchHistoricalPrices(
-      targets,
-      undefined,
-      (_settled, error) => {
-        if (error) failed = true
-      }
-    )
-    return { prices, failed }
+function createDefaultUpstream(env: Env): ReadThroughUpstream {
+  const client = new DefiLlamaClient(undefined, undefined, {
+    env,
+    timeoutMs: UPSTREAM_TIMEOUT_MS,
+    retryRateLimits: false
+  })
+  return {
+    current: (targets) => fetchCurrentPrices(client, targets),
+    currentFallback: (targets, cached) => resolveCurrentFallback(env, targets, cached),
+    historical: async (targets) => {
+      let failed = false
+      const prices = await createDefiLlamaHistoricalSource(client).getBatchHistoricalPrices(
+        targets,
+        undefined,
+        (_settled, error) => {
+          if (error) failed = true
+        }
+      )
+      return { prices, failed }
+    }
   }
 }
 
@@ -84,7 +89,7 @@ export async function readThrough(
   requests: HistoricalRequestTuple[],
   rows: ExactPriceRecord[],
   source: PriceSource | undefined,
-  upstream: ReadThroughUpstream = defaultUpstream
+  upstream: ReadThroughUpstream = createDefaultUpstream(env)
 ): Promise<{ rows: ExactPriceRecord[]; upstreamFailed: boolean }> {
   if (source) return { rows, upstreamFailed: false }
 
@@ -140,20 +145,17 @@ export async function readThrough(
     MAX_CURRENT_FALLBACK_TARGETS
   )
   let fallback: CurrentFallbackResult = { prices: new Map(), failed: false }
-  if (fallbackTargets.length > 0 && (upstream.currentFallback || upstream === defaultUpstream)) {
+  if (fallbackTargets.length > 0 && upstream.currentFallback) {
     const targets: CurrentFallbackTarget[] = fallbackTargets.map(([, target]) => ({
       chainId: chainNameToId(target.chain) ?? 0,
       chain: target.chain,
       token: target.token
     }))
     try {
-      fallback = upstream.currentFallback
-        ? await upstream.currentFallback(targets, live)
-        : await resolveCurrentFallback(
-            env,
-            targets.filter((target) => target.chainId > 0),
-            live
-          )
+      fallback = await upstream.currentFallback(
+        targets.filter((target) => target.chainId > 0),
+        live
+      )
       if (fallback.failed) upstreamFailed = true
     } catch (error) {
       upstreamFailed = true

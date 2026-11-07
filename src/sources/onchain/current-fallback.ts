@@ -122,9 +122,9 @@ export async function resolveCurrentFallback(
 
   const timeout = AbortSignal.timeout(FALLBACK_TIMEOUT_MS)
   const deadline = signal ? AbortSignal.any([signal, timeout]) : timeout
-  const defiLlama = createDefiLlamaSpotSource()
+  const defiLlama = createDefiLlamaSpotSource(undefined, env)
   const chainlink = createChainlinkHistoricalSource({ env })
-  const enso = env.ENSO_API_KEY ? createEnsoSpotSource(env.ENSO_API_KEY) : undefined
+  const enso = env.ENSO_API_KEY ? createEnsoSpotSource(env.ENSO_API_KEY, env) : undefined
   const knownMissing = new Set(targets.map((target) => key(target.chain, target.token)))
   const marketSources: SpotPriceSource[] = [
     new ChainlinkCurrentSource(chainlink),

@@ -1,0 +1,23 @@
+name = "yearn-price-gateway"
+main = "worker.ts"
+compatibility_date = "2026-03-30"
+compatibility_flags = ["nodejs_als"]
+
+[[containers]]
+class_name = "ProviderGatewayContainer"
+image = "../Dockerfile.gateway"
+image_build_context = ".."
+instance_type = "lite"
+max_instances = 1
+
+[containers.image_vars]
+PRICE_GATEWAY_REVISION = "development"
+
+[[durable_objects.bindings]]
+name = "PROVIDER_GATEWAY"
+class_name = "ProviderGatewayContainer"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ProviderGatewayContainer"]
+

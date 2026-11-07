@@ -641,7 +641,7 @@ function applyReportState(
 }
 
 export function createChartFetcher(searchWidth: string): ChartFetch {
-  const rateLimiter = new SharedCooldownRateLimiter(10, 1000)
+  const rateLimiter = new SharedCooldownRateLimiter(10, 1000, CHART_RETRY_AFTER_CAP_MS)
 
   return async (identifier, rangeStart, spanDays) => {
     let retries = 0

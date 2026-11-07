@@ -1,0 +1,19 @@
+# The gateway image uses an explicit source allowlist in Dockerfile.gateway.
+# Keep repository metadata, local secrets, dependencies, and diagnostics out of
+# the build context even when Docker is invoked from the repository root.
+**
+
+!Dockerfile.gateway
+!gateway/
+!gateway/package.json
+!scripts/
+!scripts/provider-gateway.ts
+!src/
+!src/clients/
+!src/clients/http-client.ts
+!src/clients/provider-transport.ts
+!src/clients/proxy-pool.ts
+!src/http/
+!src/http/errors.ts
+!src/types.ts
+

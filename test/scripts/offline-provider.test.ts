@@ -1,6 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { createOfflineDefiLlamaClient, offlineProvider } from '../../scripts/lib/offline-provider'
-import { CHART_RETRY_AFTER_CAP_MS } from '../../src/backfill/constants'
 
 afterEach(() => {
   vi.useRealTimers()
@@ -31,7 +30,7 @@ it.each(['direct', 'batched'])('blocks a subsequent %s request until the shared 
   expect(fetchMock).toHaveBeenCalledTimes(3)
 })
 
-it('caps a multi-hour Retry-After at the shared chart cap', async () => {
+it('fails fast when a full Retry-After exceeds the shared chart budget', async () => {
   vi.useFakeTimers()
   vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
   vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -41,11 +40,8 @@ it('caps a multi-hour Retry-After at the shared chart cap', async () => {
     .mockImplementation(async () => Response.json({ coins: {} }))
   vi.stubGlobal('fetch', fetchMock)
   const first = createOfflineDefiLlamaClient(10).getHistorical(1704067199, ['ethereum:0x1'])
-  await vi.advanceTimersByTimeAsync(CHART_RETRY_AFTER_CAP_MS - 1)
+  await expect(first).rejects.toMatchObject({ code: 'UNAVAILABLE' })
   expect(fetchMock).toHaveBeenCalledTimes(1)
-  await vi.advanceTimersByTimeAsync(1_100)
-  await first
-  expect(fetchMock).toHaveBeenCalledTimes(2)
 })
 
 it('extends the shared cooldown when a later in-flight response reports another 429', async () => {
@@ -140,4 +136,21 @@ it('opts into today-compatible lookup and exposes batch endpoint and observation
   expect(fetchMock).toHaveBeenCalledOnce()
   const requestUrl = new URL(fetchMock.mock.calls[0][0] as string)
   expect(JSON.parse(requestUrl.searchParams.get('coins')!)).toEqual({ [coin]: [now] })
+})
+
+it.each([502, 503, 504])('does not gate siblings after headerless %s', async (status) => {
+  vi.useFakeTimers()
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(new Response('{}', { status }))
+    .mockImplementation(async () => Response.json({ coins: {} }))
+  vi.stubGlobal('fetch', fetchMock)
+  const client = createOfflineDefiLlamaClient(10)
+  const first = client.getHistorical(1704067199, ['ethereum:0x1'])
+  await vi.advanceTimersByTimeAsync(0)
+  await expect(client.getHistorical(1704067199, ['ethereum:0x2'])).resolves.toEqual({ coins: {} })
+  expect(fetchMock).toHaveBeenCalledTimes(2)
+  await vi.advanceTimersByTimeAsync(1000)
+  await first
 })
