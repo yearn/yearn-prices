@@ -265,11 +265,28 @@ describe('createDefiLlamaSpotSource', () => {
       await secondRejected
       expect(fetchMock).toHaveBeenCalledTimes(1)
 
-      fetchMock.mockResolvedValueOnce(Response.json({ coins: { [`ethereum:${OTHER}`]: { price: 1, timestamp: NOW } } }))
       await vi.advanceTimersByTimeAsync(60_000)
+      const stillBlocked = createDefiLlamaSpotSource().getSpotPrice(1, OTHER)
+      const stillBlockedRejected = expect(stillBlocked).rejects.toMatchObject({ code: 'UNAVAILABLE' })
+      await vi.advanceTimersByTimeAsync(100)
+      await stillBlockedRejected
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+
+      // The shared gate retains the provider's complete 600-second
+      // Retry-After. We have advanced 60 seconds plus the small assertion
+      // windows above, so consume the remaining cooldown before retrying.
+      await vi.advanceTimersByTimeAsync(539_900)
+      fetchMock.mockImplementationOnce(async () =>
+        Response.json({
+          coins: {
+            [`ethereum:${OTHER}`]: { price: 1, timestamp: Math.floor(Date.now() / 1000) }
+          }
+        })
+      )
       const third = createDefiLlamaSpotSource().getSpotPrice(1, OTHER)
-      await vi.advanceTimersByTimeAsync(10)
-      await expect(third).resolves.toMatchObject({ price: 1 })
+      const thirdResolved = expect(third).resolves.toMatchObject({ price: 1 })
+      await vi.advanceTimersByTimeAsync(5)
+      await thirdResolved
       expect(fetchMock).toHaveBeenCalledTimes(2)
     } finally {
       vi.unstubAllGlobals()

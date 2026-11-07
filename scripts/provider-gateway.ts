@@ -65,8 +65,16 @@ interface BunLike {
 }
 
 function isValidBind(value: string): boolean {
+  const hasControlCharacter = [...value].some((character) => {
+    const code = character.charCodeAt(0)
+    return code < 32 || code === 127
+  })
   return (
-    value.length > 0 && value.length <= 253 && !/[\u0000-\u001f\u007f\s/\\?#]/u.test(value) && !value.includes('://')
+    value.length > 0 &&
+    value.length <= 253 &&
+    !hasControlCharacter &&
+    !/[\s/\\?#]/u.test(value) &&
+    !value.includes('://')
   )
 }
 

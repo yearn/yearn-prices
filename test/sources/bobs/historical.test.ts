@@ -128,12 +128,20 @@ describe('BobsHistoricalSource', () => {
       expect.objectContaining({
         price: 7,
         timestamp: BASE_TIMESTAMP + 50,
-        evidence: { blockNumber: 50 }
+        evidence: {
+          blockNumber: 50,
+          blockTimestamp: BASE_TIMESTAMP + 50,
+          observationEndpoint: '/get_price'
+        }
       }),
       expect.objectContaining({
         price: 7,
         timestamp: BASE_TIMESTAMP + 50,
-        evidence: { blockNumber: 50 }
+        evidence: {
+          blockNumber: 50,
+          blockTimestamp: BASE_TIMESTAMP + 50,
+          observationEndpoint: '/get_price'
+        }
       })
     ])
     expect(fetchMock).toHaveBeenCalledTimes(2)

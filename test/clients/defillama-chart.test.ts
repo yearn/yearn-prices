@@ -194,7 +194,12 @@ describe('DefiLlamaClient.getChart', () => {
 
   it('fails immediately on a 429 when the caller opts out of rate-limit retries', async () => {
     const fetchMock = stubFetch({ status: 429, body: { message: 'rate limited' } }, { body: multiDay })
-    const client = new DefiLlamaClient(undefined, undefined, { retryRateLimits: false })
+    // Keep this terminal-429 assertion isolated from the module-wide provider
+    // cooldown. The production default intentionally shares that gate, but a
+    // test-local limiter must not make the following getFirst case flaky.
+    const client = new DefiLlamaClient(new SlidingWindowRateLimiter(10, 1000), undefined, {
+      retryRateLimits: false
+    })
 
     await expect(client.getChart([WETH], { start: START, span: 5, period: '1d' })).rejects.toMatchObject({
       responseStatus: 429,

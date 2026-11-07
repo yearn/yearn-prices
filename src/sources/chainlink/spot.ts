@@ -3,7 +3,7 @@ import { nowUnix } from '../../utils/time'
 import { SpotPriceSourceBase } from '../base'
 import type { SpotPriceResult } from '../types'
 import {
-  ChainlinkHistoricalSource,
+  type ChainlinkHistoricalSource,
   type ChainlinkHistoricalSourceOptions,
   createChainlinkHistoricalSource
 } from './historical'

@@ -251,7 +251,7 @@ export class ProxyPool implements ProxyPoolLike {
     const routes: Array<string | null> = [null, ...this.proxies]
     if (!routes.length) return null
     const now = this.now()
-    let currentIndex = routes.findIndex((route) => route === this.currentRoute)
+    let currentIndex = routes.indexOf(this.currentRoute)
     if (currentIndex < 0) {
       // A refreshed list may remove the previously selected proxy. Restart at
       // the direct route rather than accidentally skipping it.

@@ -3,7 +3,7 @@ import {
   type FetchJsonConfig,
   fetchJsonWithRetry,
   SharedCooldownRateLimiter,
-  SlidingWindowRateLimiter
+  type SlidingWindowRateLimiter
 } from './http-client'
 import { createProviderTransportFromEnv, type ProviderTransport } from './provider-transport'
 

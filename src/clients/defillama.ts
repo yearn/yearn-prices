@@ -1,6 +1,6 @@
 import { ApiError } from '../http/errors'
 import type { DefiLlamaBatchResponse, DefiLlamaChartResponse, DefiLlamaHistoricalResponse } from '../types'
-import { fetchJsonWithRetry, SharedCooldownRateLimiter, SlidingWindowRateLimiter } from './http-client'
+import { fetchJsonWithRetry, SharedCooldownRateLimiter, type SlidingWindowRateLimiter } from './http-client'
 import { createProviderTransportFromEnv, type ProviderTransport } from './provider-transport'
 
 const BASE_URL = 'https://coins.llama.fi'
