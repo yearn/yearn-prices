@@ -37,7 +37,13 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: price-audit-evidence
-          path: audit-evidence/
+          path: |
+            audit-evidence/before.json
+            audit-evidence/targets.json
+            audit-evidence/after.json
+            audit-evidence/remaining-queue.json
+            audit-evidence/repair/summary.json
+            audit-evidence/repair/outcomes.jsonl
           retention-days: 14
           if-no-files-found: warn
       - name: Heartbeat
