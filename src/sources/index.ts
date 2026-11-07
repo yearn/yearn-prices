@@ -1,4 +1,5 @@
-export { createChainlinkHistoricalSource } from './chainlink'
+export { createBobsHistoricalSource, createOptionalBobsHistoricalSource } from './bobs'
+export { createChainlinkHistoricalSource, createChainlinkSpotSource } from './chainlink'
 export {
   createDefiLlamaAliasHistoricalSource,
   createDefiLlamaHistoricalSource,

@@ -91,12 +91,8 @@ Export your source factory from `src/sources/<name>/index.ts` and from `src/sour
 ```ts
 // src/registries/spot.ts
 export function createSpotSources(env: Env): SpotPriceSource[] {
-  if (!env.ENSO_API_KEY) {
-    throw new ApiError('INTERNAL_ERROR', 'ENSO_API_KEY is not configured')
-  }
-
   return [
-    createEnsoSpotSource(env.ENSO_API_KEY),
+    ...(env.ENSO_API_KEY ? [createEnsoSpotSource(env.ENSO_API_KEY, env)] : []),
     create<YourName>SpotSource(),  // <-- add here
   ]
 }

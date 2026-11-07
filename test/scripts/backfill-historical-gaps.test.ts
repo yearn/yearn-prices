@@ -634,7 +634,7 @@ describe('createChartFetcher', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3)
   })
 
-  it('caps an absurd Retry-After instead of stalling the job', async () => {
+  it('fails fast when an absurd Retry-After exceeds the chart budget', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
     vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -644,9 +644,8 @@ describe('createChartFetcher', () => {
       .mockImplementation(async () => Response.json({ coins: {} }))
     vi.stubGlobal('fetch', fetchMock)
     const pending = createChartFetcher('6h')('ethereum:0xa', EOD, 1)
-    await vi.advanceTimersByTimeAsync(600_000)
-    await pending
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    await expect(pending).rejects.toMatchObject({ name: 'ChartRequestError', attempts: 1, rateLimited: 1 })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 })
 

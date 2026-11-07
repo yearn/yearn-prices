@@ -72,7 +72,8 @@ Price routes accept an optional `source` query parameter. Supported values are:
 - `defillama`: `scripts/warmup-prices.ts`, `scripts/backfill-historical-gaps.ts` (alias hits are stored as `defillama`) and `scripts/backfill-defillama-day-alignment.ts` (re-aligns existing rows).
 - `curve`, `derived`, `chainlink`: `scripts/warmup-prices.ts`; `derived` also from graph backfill and the targeted historical repair worker. Scheduled work now drains a durable queue rather than running broad warmup.
 - `defillama-alias`: no writer. Only rows stored before the request-path registry was removed can match.
-- `on-chain-oracle`, `bobs-api`: no writer in this repo.
+- `bobs-api`: optional ypriceAPI source in offline historical graph repair; requires `YPRICEAPI_SIGNER` and `YPRICEAPI_SIGNATURE`.
+- `on-chain-oracle`: no writer in this repo.
 - `enso`: the spot route never writes `token_prices`. Today's historical read-through may persist a provisional Enso fallback observation when configured; it is not a finalized historical close.
 
 Filtering on a source with no stored rows returns `404` for the single-token route and `200` with an empty `coins` object for `batchHistorical` and `rangeHistorical`.

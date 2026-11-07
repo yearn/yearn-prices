@@ -112,6 +112,29 @@ describe('graph finalization evidence', () => {
       observationEndpoint: null
     })
   })
+  it('retains the actual block timestamp and endpoint of a Bob price', () => {
+    const { root, nodes } = fixture()
+    root.market = 'price'
+    root.path!.source = 'bobs-api'
+    root.path!.adapter = 'bobs-api'
+    root.path!.observedTimestamp = timestamp - 5
+    root.path!.metadata.observationEndpoint = '/get_price'
+
+    expect(validateGraphResolution(root, target, nodes)).toMatchObject({
+      observedTimestamp: timestamp - 5,
+      observationEndpoint: '/get_price'
+    })
+  })
+  it('rejects a Bob quote without matching historical block evidence', () => {
+    const { root, nodes } = fixture()
+    root.market = 'price'
+    root.path!.source = 'bobs-api'
+    root.path!.metadata.observationEndpoint = '/get_price'
+
+    expect(() => validateGraphResolution(root, target, nodes)).toThrow('block-priced provider observation')
+    root.path!.metadata = {}
+    expect(() => validateGraphResolution(root, target, nodes)).toThrow('historical block evidence')
+  })
   it('rejects a late child even when the root timestamp is in range', () => {
     const { root, child, nodes } = fixture()
     child.path!.observedTimestamp += 21601

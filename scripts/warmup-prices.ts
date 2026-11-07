@@ -254,9 +254,14 @@ async function warmDirectPrices(
         }
       }
 
-      const lookups = [...byFetchTimestamp].flatMap(([fetchTimestamp, coins]) =>
-        coins.map((coin) => ({ coin, result: defiLlama.getHistorical(fetchTimestamp, [coin]) }))
-      )
+      // Keep the known token set batched by timestamp. The offline client
+      // ultimately uses /batchHistorical, so issuing one lookup per token here
+      // would throw away its request coalescing and amplify provider traffic.
+      const lookups = [...byFetchTimestamp].map(([fetchTimestamp, coins]) => ({
+        fetchTimestamp,
+        coins,
+        result: defiLlama.getHistorical(fetchTimestamp, coins)
+      }))
       const settled = await Promise.allSettled(lookups.map(({ result }) => result))
       const failedTokens = new Set<string>()
       const responses = []
@@ -265,9 +270,9 @@ async function warmDirectPrices(
           responses.push({ response: outcome.value })
           continue
         }
-        failedTokens.add(lookups[index].coin)
+        for (const coin of lookups[index].coins) failedTokens.add(coin)
         stats.failures += 1
-        console.error('DeFiLlama lookup failed', lookups[index].coin, outcome.reason)
+        console.error('DeFiLlama lookup failed', lookups[index].coins.join(','), outcome.reason)
       }
       const samplesByToken = new Map<string, Array<{ timestamp: number; price: number; confidence?: number | null }>>()
       const symbolByToken = new Map<string, string | null>()

@@ -11,7 +11,8 @@ import type { createPool } from '../../src/db'
 import {
   createChainlinkHistoricalSource,
   createDefiLlamaAliasHistoricalSource,
-  createDefiLlamaHistoricalSource
+  createDefiLlamaHistoricalSource,
+  createOptionalBobsHistoricalSource
 } from '../../src/sources'
 import type { GraphNode } from '../../src/sources/onchain/graph'
 import { preflightTokenCasings } from '../backfill-historical-gaps'
@@ -91,6 +92,7 @@ export async function runGraphBackfill(options: {
       writeFileSync(pendingFile, JSON.stringify({ version: 1, targets: pending }), { flag: 'wx' })
       writeFileSync(replayFile, '', { flag: 'wx' })
       const provider = options.provider ?? offlineProvider(options.providerRps)
+      const bobs = createOptionalBobsHistoricalSource()
       await replayGraph({
         targets: pending.map((target) => ({
           chainId: target.chainId,
@@ -100,6 +102,7 @@ export async function runGraphBackfill(options: {
         sources: [
           createDefiLlamaHistoricalSource(provider),
           createChainlinkHistoricalSource(),
+          ...(bobs ? [bobs] : []),
           createDefiLlamaAliasHistoricalSource(provider)
         ],
         stored: storedHistoricalPrices(pool, { finalizedOnly: options.finalizedOnly }),

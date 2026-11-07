@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p gateway/tsconfig.json --noEmit",
+    "gateway:start": "bun run scripts/provider-gateway.ts",
+    "gateway:build": "wrangler deploy --config gateway/wrangler.toml --dry-run",
+    "gateway:deploy": "wrangler deploy --config gateway/wrangler.toml",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config ./vitest.integration.config.ts",
@@ -32,6 +35,7 @@
     "migrate": "drizzle-kit migrate"
   },
   "dependencies": {
+    "@cloudflare/containers": "0.3.7",
     "@neondatabase/serverless": "0.10.4",
     "@sentry/cloudflare": "11.9.0",
     "dotenv": "16.6.1",
@@ -40,7 +44,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.4",
-    "@cloudflare/workers-types": "4.20260329.1",
+    "@cloudflare/workers-types": "4.20260402.1",
     "@types/node": "22.19.15",
     "@types/pg": "8.21.0",
     "drizzle-kit": "0.31.11",

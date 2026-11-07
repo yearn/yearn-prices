@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   fetchJsonWithRetry,
   HttpRequestError,
+  MAX_PROVIDER_COOLDOWN_MS,
   parseRetryAfter,
+  SharedCooldownRateLimiter,
   SlidingWindowRateLimiter
 } from '../../src/clients/http-client'
 import { ApiError } from '../../src/http/errors'
@@ -484,4 +486,17 @@ describe('fetchJsonWithRetry opt-in hardening', () => {
 
     expect(error).toMatchObject({ diagnosticCode: 'provider_response', responseStatus: 400 })
   })
+})
+
+it('reopens a shared gate after the operational ceiling', async () => {
+  vi.useFakeTimers()
+  try {
+    const gate = new SharedCooldownRateLimiter(10, 1000, 0)
+    gate.extendCooldown(60_000_000)
+    await expect(gate.waitTurn()).rejects.toMatchObject({ code: 'UNAVAILABLE' })
+    await vi.advanceTimersByTimeAsync(MAX_PROVIDER_COOLDOWN_MS)
+    await expect(gate.waitTurn()).resolves.toBeUndefined()
+  } finally {
+    vi.useRealTimers()
+  }
 })

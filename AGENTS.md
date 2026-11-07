@@ -11,8 +11,8 @@
   across the run, and coalesce newly discovered dependencies into batches.
   Preserve observation timestamps and record which endpoint produced them.
 - Batching reduces HTTP traffic; it does not guarantee exemption from quotas.
-  Bound batch concurrency and honor the provider's full `Retry-After` through a
-  shared cooldown. Do not fan out single-request retries after a failed batch.
+  Bound batch concurrency and honor `Retry-After` through a shared cooldown,
+  capped at the documented one-hour operational ceiling for implausible headers. Do not fan out single-request retries after a failed batch.
 - Keep successful empty responses separate from malformed responses, 429s,
   timeouts, and 5xx failures. Only successful, well-formed responses establish
   missing observations. Failed requests remain retryable, never zero-valued.

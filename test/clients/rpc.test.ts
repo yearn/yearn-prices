@@ -1,6 +1,6 @@
 import { BlockNotFoundError, type PublicClient } from 'viem'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { estimateBlockByTimestamp, getChainClient } from '../../src/clients/rpc'
+import { estimateBlockByTimestamp, getChainClient, rpcCooldownDelay, rpcUrlsForChain } from '../../src/clients/rpc'
 
 const GENESIS = 1_600_000_000
 const BLOCK_TIME = 12
@@ -191,6 +191,67 @@ describe('estimateBlockByTimestamp', () => {
 })
 
 describe('getChainClient', () => {
+  it.each(['ftp://bad.test', 'not a url'])('disables RPC sources for invalid configuration: %s', (url) => {
+    expect(getChainClient(1, { RPC_URL_1: url })).toBeNull()
+  })
+
+  it('disables RPC sources when too many endpoints are configured', () => {
+    const urls = Array.from({ length: 17 }, (_, i) => `https://rpc${i}.test`)
+    expect(getChainClient(1, { RPC_URLS_1: JSON.stringify(urls) })).toBeNull()
+  })
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('honors Retry-After up to the one-hour operational ceiling', () => {
+    const now = 1_700_000_000_000
+
+    expect(rpcCooldownDelay(429, '7', now)).toBe(7_000)
+    expect(rpcCooldownDelay(503, new Date(now + 12_000).toUTCString(), now)).toBe(12_000)
+    expect(rpcCooldownDelay(500, '60', now)).toBe(0)
+    expect(rpcCooldownDelay(429, '999999999', now)).toBe(3_600_000)
+  })
+
+  it('skips a rate-limited primary on subsequent reads while the backup works', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('primary.cooldown.test')) {
+        return new Response('rate limited', { status: 429, headers: { 'retry-after': '3600' } })
+      }
+      const payload = JSON.parse(String(init?.body))
+      const answer = (request: { id: number }) => ({ jsonrpc: '2.0', id: request.id, result: '0x1234' })
+      return Response.json(Array.isArray(payload) ? payload.map(answer) : answer(payload))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const client = getChainClient(1, {
+      RPC_URL_1: 'https://primary.cooldown.test',
+      RPC_URLS_1: '["https://backup.cooldown.test"]'
+    })!
+    await expect(client.request({ method: 'eth_blockNumber' })).resolves.toBe('0x1234')
+    await expect(client.request({ method: 'eth_blockNumber' })).resolves.toBe('0x1234')
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('primary.cooldown.test'))).toHaveLength(1)
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('backup.cooldown.test'))).toHaveLength(2)
+  })
+
+  it('keeps the singular URL first and merges canonicalized JSON backups', () => {
+    const urls = rpcUrlsForChain(1, {
+      RPC_URL_1: ' HTTPS://RPC.EXAMPLE/primary/#ignored ',
+      RPC_URLS_1: '["https://rpc.example/backup/", "https://rpc.example/primary/"]'
+    })
+
+    expect(urls).toEqual(['https://rpc.example/primary/', 'https://rpc.example/backup/'])
+  })
+
+  it('accepts comma and newline-delimited backup URLs', () => {
+    expect(
+      rpcUrlsForChain(1, {
+        RPC_URLS_1: 'https://rpc.example/one,\n https://rpc.example/two'
+      })
+    ).toEqual(['https://rpc.example/one', 'https://rpc.example/two'])
+  })
+
+  it('rejects non-http(s) archive endpoints', () => {
+    expect(() => rpcUrlsForChain(1, { RPC_URLS_1: '["ftp://rpc.example/archive"]' })).toThrow('http:// or https://')
+  })
+
   it('memoizes per chain and rpc url', () => {
     const env = { RPC_URL_1: 'https://rpc.example/one' }
 
@@ -204,6 +265,23 @@ describe('getChainClient', () => {
     expect(first).not.toBe(second)
     expect(first?.chain?.rpcUrls.default.http[0]).toBe('https://rpc.example/first')
     expect(second?.chain?.rpcUrls.default.http[0]).toBe('https://rpc.example/second')
+  })
+
+  it('memoizes the complete ordered URL set and exposes all endpoints on the chain', () => {
+    const env = {
+      RPC_URL_1: 'https://rpc.example/primary',
+      RPC_URLS_1: '["https://rpc.example/backup"]'
+    }
+    const client = getChainClient(1, env)
+
+    expect(client?.chain?.rpcUrls.default.http).toEqual(['https://rpc.example/primary', 'https://rpc.example/backup'])
+    expect(client).toBe(getChainClient(1, env))
+    expect(client).not.toBe(
+      getChainClient(1, {
+        RPC_URL_1: 'https://rpc.example/primary',
+        RPC_URLS_1: '["https://rpc.example/other"]'
+      })
+    )
   })
 
   it('returns null when the env has no binding for the chain', () => {

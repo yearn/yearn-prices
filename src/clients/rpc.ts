@@ -1,5 +1,6 @@
-import { BlockNotFoundError, createPublicClient, defineChain, http, type PublicClient, parseAbi } from 'viem'
+import { BlockNotFoundError, createPublicClient, defineChain, fallback, http, type PublicClient, parseAbi } from 'viem'
 import { CHAIN_ID_TO_NAME } from '../utils/chains'
+import { MAX_PROVIDER_COOLDOWN_MS, parseRetryAfter } from './http-client'
 
 const SHARE_PRICE_ABI_V2 = parseAbi(['function pricePerShare() view returns (uint256)'])
 const SHARE_PRICE_ABI_V3 = parseAbi(['function convertToAssets(uint256) view returns (uint256)'])
@@ -7,6 +8,12 @@ const SHARE_PRICE_ABI_V3 = parseAbi(['function convertToAssets(uint256) view ret
 const MAX_BLOCK_CACHE = 512
 const MAX_SAMPLES_PER_CHAIN = 64
 const MAX_CLIENT_CACHE = 64
+const MAX_RPC_ENDPOINTS = 16
+const RPC_REQUEST_TIMEOUT_MS = 8_000
+const RPC_MAX_COOLDOWN_MS = MAX_PROVIDER_COOLDOWN_MS
+const RPC_RATE_LIMIT_COOLDOWN_MS = 60_000
+const RPC_SERVER_FAILURE_COOLDOWN_MS = 30_000
+const RPC_NETWORK_FAILURE_COOLDOWN_MS = 5_000
 
 const blockCache = new Map<string, bigint>()
 const blockSearchInflight = new WeakMap<PublicClient, Map<string, Promise<bigint>>>()
@@ -115,7 +122,135 @@ export function isV3Vault(apiVersion: string | null | undefined): boolean {
   return compareApiVersions(apiVersion, '3.0.0') >= 0
 }
 
-function createChainClient(chainId: number, rpcUrl: string): PublicClient {
+interface EndpointCooldownState {
+  cooldownUntil: number
+}
+
+class RpcEndpointCoolingError extends Error {
+  constructor() {
+    // Do not include the endpoint URL: RPC URLs commonly carry API keys.
+    super('RPC endpoint is cooling down')
+    this.name = 'RpcEndpointCoolingError'
+  }
+}
+
+function responseStatus(error: unknown): number | undefined {
+  const status = (error as { status?: unknown } | null)?.status
+  if (typeof status === 'number' && Number.isInteger(status)) return status
+  const cause = (error as { cause?: unknown } | null)?.cause
+  return cause && cause !== error ? responseStatus(cause) : undefined
+}
+
+function responseHeaders(error: unknown): Headers | undefined {
+  const headers = (error as { headers?: unknown } | null)?.headers
+  if (headers instanceof Headers) return headers
+  const cause = (error as { cause?: unknown } | null)?.cause
+  return cause && cause !== error ? responseHeaders(cause) : undefined
+}
+
+function errorMessage(error: unknown): string {
+  const message = (error as { message?: unknown } | null)?.message
+  const cause = (error as { cause?: unknown } | null)?.cause
+  const causeMessage = cause && cause !== error ? errorMessage(cause) : ''
+  return `${typeof message === 'string' ? message : ''} ${causeMessage}`
+}
+
+function isRateLimitError(error: unknown): boolean {
+  return /rate[ -]?limit|too many requests|throttl|quota/i.test(errorMessage(error))
+}
+
+function isRpcApplicationError(error: unknown): boolean {
+  const name = (error as { name?: unknown } | null)?.name
+  return (
+    name === 'RpcRequestError' ||
+    (responseStatus(error) === undefined && typeof (error as { code?: unknown } | null)?.code === 'number')
+  )
+}
+
+function isTransientRpcStatus(status: number | undefined): boolean {
+  return status === 429 || status === 502 || status === 503 || status === 504
+}
+
+/**
+ * Computes the endpoint quarantine duration for a response status. Provider
+ * Retry-After is retained up to the one-hour operational ceiling. Cooling endpoints fail fast rather than
+ * sleeping, so even a distant date cannot keep a request pending indefinitely.
+ * Absent headers use short defaults to avoid retrying a bad node on every read.
+ */
+export function rpcCooldownDelay(status: number, retryAfter: string | null = null, now = Date.now()): number {
+  if (!isTransientRpcStatus(status)) return 0
+  const fallbackDelay = status === 429 ? RPC_RATE_LIMIT_COOLDOWN_MS : RPC_SERVER_FAILURE_COOLDOWN_MS
+  return parseRetryAfter(retryAfter, RPC_MAX_COOLDOWN_MS, now) ?? fallbackDelay
+}
+
+function extendEndpointCooldown(state: EndpointCooldownState, delayMs: number): void {
+  if (!Number.isFinite(delayMs) || delayMs <= 0) return
+  state.cooldownUntil = Math.max(state.cooldownUntil, Date.now() + Math.min(delayMs, RPC_MAX_COOLDOWN_MS))
+}
+
+function ensureEndpointAvailable(state: EndpointCooldownState): void {
+  if (state.cooldownUntil > Date.now()) throw new RpcEndpointCoolingError()
+}
+
+function causedByCooling(error: unknown): boolean {
+  if (error instanceof RpcEndpointCoolingError) return true
+  const cause = (error as { cause?: unknown } | null)?.cause
+  return cause !== undefined && cause !== error ? causedByCooling(cause) : false
+}
+
+function createCooldownTransport(url: string, state: EndpointCooldownState): ReturnType<typeof http> {
+  const base = http(url, {
+    batch: true,
+    retryCount: 0,
+    retryDelay: 0,
+    timeout: RPC_REQUEST_TIMEOUT_MS,
+    onFetchRequest: () => {
+      // The callback runs immediately before fetch, including for a batch that
+      // was queued before another request quarantined this endpoint.
+      ensureEndpointAvailable(state)
+    },
+    onFetchResponse: (response) => {
+      const status = response.status
+      if (isTransientRpcStatus(status)) {
+        extendEndpointCooldown(state, rpcCooldownDelay(status, response.headers.get('retry-after')))
+      }
+    }
+  })
+
+  // http() reports HTTP failures as errors after onFetchResponse and reports
+  // transport/timeouts without a Response. Wrap its request once more so both
+  // cases quarantine the endpoint, while JSON-RPC application errors (notably
+  // execution reverts) remain visible to viem's terminal-error policy.
+  return ((parameters) => {
+    const transport = base(parameters)
+    return {
+      ...transport,
+      async request(...args: Parameters<typeof transport.request>) {
+        ensureEndpointAvailable(state)
+        try {
+          return await transport.request(...args)
+        } catch (error) {
+          if (causedByCooling(error)) throw error
+
+          const status = responseStatus(error)
+          if (status !== undefined && isTransientRpcStatus(status)) {
+            extendEndpointCooldown(state, rpcCooldownDelay(status, responseHeaders(error)?.get('retry-after') ?? null))
+          } else if (isRpcApplicationError(error)) {
+            // Some providers return quota errors as HTTP 200 JSON-RPC errors.
+            if (isRateLimitError(error)) extendEndpointCooldown(state, RPC_RATE_LIMIT_COOLDOWN_MS)
+          } else {
+            // A timeout/DNS/socket failure has no response headers. Keep its
+            // quarantine short so archive recovery does not require a restart.
+            extendEndpointCooldown(state, RPC_NETWORK_FAILURE_COOLDOWN_MS)
+          }
+          throw error
+        }
+      }
+    }
+  }) as ReturnType<typeof http>
+}
+
+function createChainClient(chainId: number, rpcUrls: string[]): PublicClient {
   const chainName = CHAIN_ID_TO_NAME[chainId as keyof typeof CHAIN_ID_TO_NAME]
   if (!chainName) {
     throw new Error(`Unsupported chain id: ${chainId}`)
@@ -131,52 +266,140 @@ function createChainClient(chainId: number, rpcUrl: string): PublicClient {
     },
     rpcUrls: {
       default: {
-        http: [rpcUrl]
+        http: rpcUrls
       }
     }
   })
 
   return createPublicClient({
     chain,
-    transport: http(rpcUrl, {
-      batch: true,
-      retryCount: 2,
-      retryDelay: 250
-    })
+    // Keep the configured order stable. A primary archive provider should be
+    // preferred until it fails, then viem walks the remaining endpoints. The
+    // explicit zero retry counts are deliberate: retrying a dead endpoint
+    // before trying the next one multiplies latency and makes rate limits
+    // worse. viem's fallback transport keeps execution-revert and rejected
+    // transaction errors terminal, so a valid on-chain "revert" is never
+    // replaced with a different provider's arbitrary answer.
+    transport: fallback(
+      rpcUrls.map((rpcUrl) => createCooldownTransport(rpcUrl, { cooldownUntil: 0 })),
+      {
+        rank: false,
+        retryCount: 0,
+        retryDelay: 0
+      }
+    )
   })
 }
 
-function rpcUrlForChain(chainId: number, env?: Record<string, string | undefined>): string | undefined {
-  if (env) {
-    return env[`RPC_URL_${chainId}`]
-  }
+function envValue(name: string, env?: Record<string, string | undefined>): string | undefined {
+  if (env) return env[name]
   // Workers have no `process` unless nodejs_compat is on. Scripts and tests
   // still read process.env when no Worker env is passed.
-  if (typeof process === 'undefined') {
-    return undefined
+  if (typeof process === 'undefined') return undefined
+  return process.env[name]
+}
+
+function canonicalRpcUrl(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) throw new Error('RPC endpoint cannot be empty')
+
+  let parsed: URL
+  try {
+    parsed = new URL(trimmed)
+  } catch {
+    throw new Error('RPC endpoint must be a valid URL')
   }
-  return process.env[`RPC_URL_${chainId}`]
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error('RPC endpoint must use http:// or https://')
+  }
+  if (!parsed.hostname) throw new Error('RPC endpoint must include a hostname')
+
+  // Fragments are not sent over HTTP and would make equivalent endpoints look
+  // different. Normalize only that transport-irrelevant part; preserve paths,
+  // query strings and credentials because providers commonly encode API keys
+  // in those fields.
+  parsed.hash = ''
+  return parsed.toString()
+}
+
+function parseRpcUrlList(value: string): string[] {
+  const trimmed = value.trim()
+  if (!trimmed) return []
+
+  if (trimmed.startsWith('[')) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(trimmed)
+    } catch {
+      throw new Error('RPC_URLS_<chainId> must be valid JSON when it starts with [')
+    }
+    if (!Array.isArray(parsed) || parsed.some((entry) => typeof entry !== 'string')) {
+      throw new Error('RPC_URLS_<chainId> JSON must be an array of URL strings')
+    }
+    return parsed
+  }
+
+  // A comma/newline-delimited value is convenient for .env files. Whitespace
+  // around each item is ignored, but URLs themselves are never split on spaces
+  // or other punctuation that could occur in query strings.
+  return trimmed.split(/[\r\n,]+/)
 }
 
 /**
- * Returns a memoized client for `chainId`, or null when no `RPC_URL_<chainId>`
- * is configured. Callers decide how to surface the missing-RPC gap.
+ * Resolves the ordered archive RPC set for a chain.
+ *
+ * `RPC_URL_<chainId>` remains the primary endpoint. `RPC_URLS_<chainId>` may
+ * contain a JSON array or comma/newline-delimited backups. Invalid endpoints
+ * fail fast so a typo cannot silently turn a historical read into a partial
+ * result. The returned URLs are canonicalized and deduplicated.
+ */
+export function rpcUrlsForChain(chainId: number, env?: Record<string, string | undefined>): string[] {
+  const values = [
+    envValue(`RPC_URL_${chainId}`, env),
+    ...(envValue(`RPC_URLS_${chainId}`, env) ? parseRpcUrlList(envValue(`RPC_URLS_${chainId}`, env) as string) : [])
+  ].filter((value): value is string => value !== undefined && value.trim().length > 0)
+
+  const deduplicated: string[] = []
+  const seen = new Set<string>()
+  for (const value of values) {
+    const canonical = canonicalRpcUrl(value)
+    if (seen.has(canonical)) continue
+    seen.add(canonical)
+    deduplicated.push(canonical)
+    if (deduplicated.length > MAX_RPC_ENDPOINTS) {
+      throw new Error(`At most ${MAX_RPC_ENDPOINTS} RPC endpoints may be configured for chain ${chainId}`)
+    }
+  }
+  return deduplicated
+}
+
+/**
+ * Returns a memoized client for `chainId`, or null when neither RPC setting
+ * is configured or the configuration is invalid. Callers decide how to surface the missing-RPC gap.
  */
 export function getChainClient(chainId: number, env?: Record<string, string | undefined>): PublicClient | null {
-  const rpcUrl = rpcUrlForChain(chainId, env)
-  if (!rpcUrl) {
+  let rpcUrls: string[]
+  try {
+    rpcUrls = rpcUrlsForChain(chainId, env)
+  } catch {
+    // Invalid operator configuration disables RPC-backed sources only. Keep
+    // the strict parser available to diagnostics without breaking market feeds.
     return null
   }
+  if (rpcUrls.length === 0) return null
 
-  // Keyed by URL as well as chain: one isolate serves many envs, and keying by
-  // chain alone hands the first caller's RPC to every later one.
-  const cacheKey = `${chainId}:${rpcUrl}`
+  // Keyed by the complete ordered URL set as well as chain: one isolate serves
+  // many envs, and keying by chain alone hands the first caller's RPCs to every
+  // later one. The URL strings are retained only in this bounded in-memory
+  // cache; they are never logged or included in error messages.
+  const cacheKey = `${chainId}:${rpcUrls.join('|')}`
   const cached = clientCache.get(cacheKey)
   if (cached) {
     return cached
   }
 
-  const client = createChainClient(chainId, rpcUrl)
+  const client = createChainClient(chainId, rpcUrls)
   setCapped(clientCache, cacheKey, client, MAX_CLIENT_CACHE)
   return client
 }

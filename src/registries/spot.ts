@@ -1,6 +1,5 @@
 import { getChainClient } from '../clients/rpc'
-import { ApiError } from '../http/errors'
-import { createDefiLlamaSpotSource, createEnsoSpotSource } from '../sources'
+import { createChainlinkSpotSource, createDefiLlamaSpotSource, createEnsoSpotSource } from '../sources'
 import { createCurveLpGuard, type PlausibleQuote } from '../sources/defillama/lp-guard'
 import { createOnchainSpotSource } from '../sources/onchain'
 import type { SpotPrice, SpotPriceSource } from '../sources/types'
@@ -23,11 +22,11 @@ function marketPriceResolver(marketSources: SpotPriceSource[], env: Env) {
 }
 
 export function createSpotSources(env: Env): SpotPriceSource[] {
-  if (!env.ENSO_API_KEY) {
-    throw new ApiError('INTERNAL_ERROR', 'ENSO_API_KEY is not configured')
-  }
-
-  const marketSources = [createEnsoSpotSource(env.ENSO_API_KEY), createDefiLlamaSpotSource()]
+  const marketSources: SpotPriceSource[] = []
+  // Enso is an accelerator, not a prerequisite for the independent sources.
+  // A missing key must leave DeFiLlama, Chainlink and on-chain derivation usable.
+  if (env.ENSO_API_KEY) marketSources.push(createEnsoSpotSource(env.ENSO_API_KEY, env))
+  marketSources.push(createDefiLlamaSpotSource(undefined, env), createChainlinkSpotSource({ env }))
 
   return [
     ...marketSources,
