@@ -1,3 +1,4 @@
+import { driverQuery } from '../helpers/drizzle-driver'
 import { describe, expect, it, vi } from 'vitest'
 import { discoverRepairTargets } from '../../scripts/lib/historical-repair'
 import { classifyRepairFailure, isExpectedUnresolved } from '../../scripts/repair-historical-prices'
@@ -9,7 +10,7 @@ const ROOT = '0x0000000000000000000000000000000000000001'
 const EXTRA = '0xabcd000000000000000000000000000000000000'
 
 function dbFor(results: Array<{ rows: unknown[] }>) {
-  const query = vi.fn(async (_sql: string, _params?: unknown[]) => results.shift() ?? { rows: [] })
+  const query = driverQuery(vi.fn(async (_sql: string, _params?: unknown[]) => results.shift() ?? { rows: [] }))
   return { db: { query } as unknown as RepairQueueDb, query }
 }
 

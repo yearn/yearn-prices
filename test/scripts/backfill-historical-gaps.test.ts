@@ -1,3 +1,4 @@
+import { driverQuery } from '../helpers/drizzle-driver'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -49,7 +50,7 @@ function fakePool(config: FakePoolConfig = {}): {
   const statements: string[] = []
   const queries: Array<{ sql: string; params?: unknown[] }> = []
 
-  const query = async (sql: string, params?: unknown[]) => {
+  const query = driverQuery(async (sql: string, params?: unknown[]) => {
     statements.push(sql.trim().split('\n')[0].trim())
     queries.push({ sql, params })
 
@@ -75,7 +76,7 @@ function fakePool(config: FakePoolConfig = {}): {
     }
     if (sql.includes('RETURNING')) {
       const rows: Record<string, unknown>[] = []
-      for (let offset = 0; offset < (params ?? []).length; offset += 7) {
+      for (let offset = 0; offset + 9 < (params ?? []).length && typeof params?.[offset] === 'string'; offset += 10) {
         const all = params as unknown[]
         rows.push({
           chain: all[offset],
@@ -86,7 +87,7 @@ function fakePool(config: FakePoolConfig = {}): {
       return { rows }
     }
     return { rows: [] }
-  }
+  })
 
   const pool = {
     query,

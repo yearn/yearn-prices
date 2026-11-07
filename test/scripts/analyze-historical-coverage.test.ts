@@ -1,3 +1,4 @@
+import { driverQuery } from '../helpers/drizzle-driver'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -13,7 +14,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('node:util', () => ({ parseArgs: () => ({ values: mocks.values }) }))
-vi.mock('../../src/db', () => ({ createPool: () => ({ query: mocks.query, end: mocks.end }) }))
+vi.mock('../../src/db', () => ({ createPool: () => ({ query: driverQuery(mocks.query), end: mocks.end }) }))
 vi.mock('../../scripts/lib/offline-provider', () => ({
   createOfflineDefiLlamaClient: () => ({ getFirst: mocks.getFirst, getChart: mocks.getChart })
 }))

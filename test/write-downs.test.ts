@@ -1,3 +1,4 @@
+import { driverQuery } from './helpers/drizzle-driver'
 import type { Pool } from '@neondatabase/serverless'
 import { getAddress } from 'viem'
 import { describe, expect, it, vi } from 'vitest'
@@ -31,9 +32,11 @@ describe('write-downs', () => {
 
   for (const route of ['spot', 'exact', 'batch', 'range']) {
     it(`serves ${route} without consulting storage or sources`, async () => {
-      const query = vi.fn(() => {
-        throw new Error('Unexpected table lookup')
-      })
+      const query = driverQuery(
+        vi.fn(() => {
+          throw new Error('Unexpected table lookup')
+        })
+      )
       const pool = { query } as unknown as Pool
       const registry = new SpotSourceRegistry([])
       const response =
@@ -57,7 +60,7 @@ describe('write-downs', () => {
     for (const filtered of [false, true]) {
       it(`${route} preserves ${filtered ? 'explicit-source' : 'pre-cutoff'} lookup`, async () => {
         const time = filtered ? timestamp : 1690675199
-        const query = vi.fn(async () => ({ rows: [] }))
+        const query = driverQuery(vi.fn(async () => ({ rows: [] })))
         const pool = { query } as unknown as Pool
         const upstream = { current: async () => new Map(), historical: async () => ({ prices: [], failed: false }) }
         const req = request(route, { [key]: route === 'range' ? [time, time] : [time] })
@@ -141,7 +144,9 @@ for (const scenario of ['empty', 'absurd', 'rpc-error']) {
       ],
       guard
     )
-    const pool = { query: async () => ({ rows: [{ chain: 'ethereum', token: lpToken }] }) } as unknown as Pool
+    const pool = {
+      query: driverQuery(async () => ({ rows: [{ chain: 'ethereum', token: lpToken }] }))
+    } as unknown as Pool
     const response = await handleSpot(request('spot', [lpKeyName]), env, registry, pool)
     const body = (await response.json()) as { coins: Record<string, unknown> }
     expect(body.coins[lpKeyName]).toMatchObject(
@@ -157,7 +162,7 @@ it('chunks maximum range queries into exact timestamp lookups', async () => {
       [timestamp - 365 * 86400, timestamp]
     ])
   )
-  const query = vi.fn(async () => ({ rows: [] }))
+  const query = driverQuery(vi.fn(async () => ({ rows: [] })))
   await handleRangeHistorical(request('rangeHistorical', coins), env, { query } as unknown as Pool, {
     current: async () => new Map(),
     historical: async () => ({ prices: [], failed: false })
@@ -181,7 +186,7 @@ it('guards spot quotes only for known Curve LPs', async () => {
   )
   const coins = Array.from({ length: 50 }, (_, index) => `ethereum:0x${(index + 2).toString(16).padStart(40, '0')}`)
   const known = coins.slice(0, 10).map((coin) => coin.slice('ethereum:'.length))
-  const query = vi.fn(async () => ({ rows: known.map((lp) => ({ chain: 'ethereum', token: lp })) }))
+  const query = driverQuery(vi.fn(async () => ({ rows: known.map((lp) => ({ chain: 'ethereum', token: lp })) })))
   const response = await handleSpot(request('spot', coins), env, registry, { query } as unknown as Pool)
   const body = (await response.json()) as { coins: Record<string, { prices?: unknown[] }> }
   expect(query).toHaveBeenCalledTimes(1)
@@ -205,7 +210,7 @@ it('serves unguarded spot prices when the known-LP lookup hangs', async () => {
       ],
       guard
     )
-    const pool = { query: () => new Promise(() => {}) } as unknown as Pool
+    const pool = { query: driverQuery(() => new Promise(() => {})) } as unknown as Pool
     const pending = handleSpot(request('spot', [lpKeyName]), env, registry, pool)
     await vi.advanceTimersByTimeAsync(1_000)
     expect(await (await pending).json()).toMatchObject({ coins: { [lpKeyName]: { prices: [{ price: 1 }] } } })
@@ -225,19 +230,21 @@ it('withholds written-down child tokens from derived prices', async () => {
 
 it('trims a range straddling a write-down cutoff and merges both halves', async () => {
   const before = 1690675199
-  const query = vi.fn(async () => ({
-    rows: [
-      {
-        chain: 'ethereum',
-        token,
-        timestamp: new Date(before * 1000),
-        price: '2',
-        symbol: null,
-        confidence: null,
-        source: 'curve'
-      }
-    ]
-  }))
+  const query = driverQuery(
+    vi.fn(async () => ({
+      rows: [
+        {
+          chain: 'ethereum',
+          token,
+          timestamp: new Date(before * 1000),
+          price: '2',
+          symbol: null,
+          confidence: null,
+          source: 'curve'
+        }
+      ]
+    }))
+  )
   const response = await handleRangeHistorical(
     request('rangeHistorical', { [key]: [before, timestamp] }),
     env,

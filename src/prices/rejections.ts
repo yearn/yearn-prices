@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm'
 import october from './rejected-observations-2026-10.json'
 import november from './rejected-observations-2026-11.json'
 
@@ -16,18 +17,18 @@ export function isRejectedPrice(chain: string, token: string, timestamp: number,
 }
 
 /** Fixed SQL identifiers only; never interpolate request data here. */
-export const NOT_REJECTED_PRICE_SQL = `NOT EXISTS (
+export const NOT_REJECTED_PRICE_SQL = sql`NOT EXISTS (
   SELECT 1 FROM rejected_price_observations rejected
   WHERE rejected.chain = tp.chain AND rejected.token = lower(tp.token)
     AND rejected.timestamp = tp.timestamp AND rejected.source = tp.source
 )`
 
-export const SERVED_PRICE_SQL = `${NOT_REJECTED_PRICE_SQL} AND (
+export const SERVED_PRICE_SQL = sql`${NOT_REJECTED_PRICE_SQL} AND (
   tp.finalized = TRUE
   OR tp.timestamp >= to_timestamp(floor(extract(epoch from now()) / 86400)::bigint * 86400 - 1)
 )`
 
-export const ACCEPTED_PRICE_SQL = `${NOT_REJECTED_PRICE_SQL} AND (
+export const ACCEPTED_PRICE_SQL = sql`${NOT_REJECTED_PRICE_SQL} AND (
   tp.finalized = TRUE
   OR tp.timestamp = to_timestamp(floor(extract(epoch from now()) / 86400)::bigint * 86400 + 86399)
 )`

@@ -1,3 +1,4 @@
+import { driverQuery } from './helpers/drizzle-driver'
 import type { Pool } from '@neondatabase/serverless'
 import * as Sentry from '@sentry/cloudflare'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -15,7 +16,7 @@ vi.mock('@sentry/cloudflare', async (importOriginal) => ({
 
 vi.mock('../src/db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/db')>()),
-  createPool: () => ({ query: async () => ({ rows: [] }), end: async () => {} })
+  createPool: () => ({ query: driverQuery(async () => ({ rows: [] })), end: async () => {} })
 }))
 
 const RAW_ADDR = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
@@ -30,7 +31,7 @@ function request(source?: string) {
 }
 
 function pool(rows: unknown[]): Pool {
-  return { query: vi.fn(async () => ({ rows })) } as unknown as Pool
+  return { query: driverQuery(vi.fn(async () => ({ rows }))) } as unknown as Pool
 }
 
 describe('handleHistorical', () => {
@@ -157,10 +158,12 @@ describe('handleHistorical', () => {
     })
     const lpPool = (rows: unknown[], isCurveLp: boolean): Pool =>
       ({
-        query: vi.fn(async (sql: string) =>
-          String(sql).includes("tp.source = 'curve'")
-            ? { rows: isCurveLp ? [{ chain: 'ethereum', token: CHECKSUM_ADDR }] : [] }
-            : { rows }
+        query: driverQuery(
+          vi.fn(async (sql: string) =>
+            String(sql).includes("tp.source = 'curve'")
+              ? { rows: isCurveLp ? [{ chain: 'ethereum', token: CHECKSUM_ADDR }] : [] }
+              : { rows }
+          )
         )
       }) as unknown as Pool
     const insertCalls = (db: Pool) =>
@@ -604,10 +607,12 @@ describe('handleHistorical', () => {
     it('still serves the price when persisting the read-through fails', async () => {
       const error = vi.spyOn(console, 'error').mockImplementation(() => {})
       const db = {
-        query: vi.fn(async (sql: string) => {
-          if (sql.includes('INSERT INTO token_prices')) throw new Error('db down')
-          return { rows: [] }
-        })
+        query: driverQuery(
+          vi.fn(async (sql: string) => {
+            if (sql.includes('INSERT INTO token_prices')) throw new Error('db down')
+            return { rows: [] }
+          })
+        )
       } as unknown as Pool
       const response = await handleHistorical(
         request(),
@@ -644,7 +649,7 @@ describe('handleHistorical', () => {
 
     it('serves a stored closed-day row without admitting it to the repair queue', async () => {
       const db = {
-        query: vi.fn(async () => ({ rows: [tableRow(TIMESTAMP, '123.45')] }))
+        query: driverQuery(vi.fn(async () => ({ rows: [tableRow(TIMESTAMP, '123.45')] })))
       } as unknown as Pool
 
       const response = await handleHistorical(request(), ENV, db, String(TIMESTAMP), TOKEN_KEY, upstreamOf())
@@ -659,11 +664,13 @@ describe('handleHistorical', () => {
 
     it('serves a read-through price without admitting the provisional row to the repair queue', async () => {
       const db = {
-        query: vi.fn(async (sql: string) => {
-          if (sql.includes('tp.finalized = TRUE')) return { rows: [] }
-          if (sql.includes('INSERT INTO token_prices')) return { rows: [] }
-          return { rows: [] }
-        })
+        query: driverQuery(
+          vi.fn(async (sql: string) => {
+            if (sql.includes('tp.finalized = TRUE')) return { rows: [] }
+            if (sql.includes('INSERT INTO token_prices')) return { rows: [] }
+            return { rows: [] }
+          })
+        )
       } as unknown as Pool
 
       const response = await handleHistorical(

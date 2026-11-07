@@ -1,3 +1,4 @@
+import { driverQuery } from '../helpers/drizzle-driver'
 import type { Pool as NeonPool } from '@neondatabase/serverless'
 import { Pool as PgPool } from 'pg'
 import { afterAll, afterEach, beforeAll, describe, expect, inject, it, vi } from 'vitest'
@@ -167,10 +168,10 @@ describe('finalization writes', () => {
       connect: async () => {
         const client = (await pool.connect()) as unknown as BackfillClient
         return {
-          query: (sql: string, params?: unknown[]) => {
+          query: driverQuery((sql: string, params?: unknown[]) => {
             statements.push(sql.trim().split('\n')[0].trim())
             return client.query(sql, params)
-          },
+          }),
           release: () => client.release()
         }
       }
@@ -271,12 +272,12 @@ describe('transaction atomicity', () => {
       connect: async () => {
         const client = (await pool.connect()) as unknown as BackfillClient
         return {
-          query: (sql: string, params?: unknown[]) => {
+          query: driverQuery((sql: string, params?: unknown[]) => {
             if (sql.includes('INSERT INTO historical_price_gap_inventory')) {
               return Promise.reject(new Error('inventory sync failed'))
             }
             return client.query(sql, params)
-          },
+          }),
           release: () => client.release()
         }
       }
@@ -284,7 +285,7 @@ describe('transaction atomicity', () => {
 
     await expect(
       finalizeBackfillTargets(failing, [target(), target({ eodTimestamp: EOD - 86_400, resolution: null })])
-    ).rejects.toThrow('inventory sync failed')
+    ).rejects.toMatchObject({ cause: expect.objectContaining({ message: 'inventory sync failed' }) })
 
     expect(await priceRows()).toEqual([])
     expect(await inventoryRows()).toEqual([])

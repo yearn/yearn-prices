@@ -1,3 +1,5 @@
+import { sql } from 'drizzle-orm'
+import { executeSql } from './orm'
 import { NOT_REJECTED_PRICE_SQL } from '../prices/rejections'
 import { chainIdToName } from '../utils/chains'
 import { isClosedDay, pgTimestampToUnix, unixToIsoTimestamp } from '../utils/time'
@@ -63,26 +65,29 @@ function normalizeTarget(target: RepairTarget, now: number): RepairTarget {
   return { chainId: target.chainId, token: target.token.toLowerCase(), timestamp: target.timestamp }
 }
 
-function buildTargetValues(targets: RepairTarget[]): { sql: string; params: Array<string | number> } {
-  const params: Array<string | number> = []
-  const values = targets.map((target) => {
-    const offset = params.length
-    params.push(target.chainId, target.token, unixToIsoTimestamp(target.timestamp))
-    return `($${offset + 1}::bigint, $${offset + 2}::varchar, $${offset + 3}::timestamptz)`
-  })
-  return { sql: values.join(', '), params }
+function buildTargetValues(targets: RepairTarget[]) {
+  return {
+    sql: sql.join(
+      targets.map(
+        (target) =>
+          sql`(${target.chainId}::bigint, ${target.token}::varchar, ${unixToIsoTimestamp(target.timestamp)}::timestamptz)`
+      ),
+      sql`, `
+    )
+  }
 }
 
-function buildFinalizedValues(targets: RepairTarget[]): { sql: string; params: Array<string | number> } {
-  const params: Array<string | number> = []
-  const values = targets.map((target) => {
-    const chain = chainIdToName(target.chainId)
-    if (!chain) throw new Error(`Unsupported repair target chain: ${target.chainId}`)
-    const offset = params.length
-    params.push(target.chainId, chain, target.token, unixToIsoTimestamp(target.timestamp))
-    return `($${offset + 1}::bigint, $${offset + 2}::varchar, $${offset + 3}::varchar, $${offset + 4}::timestamptz)`
-  })
-  return { sql: values.join(', '), params }
+function buildFinalizedValues(targets: RepairTarget[]) {
+  return {
+    sql: sql.join(
+      targets.map((target) => {
+        const chain = chainIdToName(target.chainId)
+        if (!chain) throw new Error(`Unsupported repair target chain: ${target.chainId}`)
+        return sql`(${target.chainId}::bigint, ${chain}::varchar, ${target.token}::varchar, ${unixToIsoTimestamp(target.timestamp)}::timestamptz)`
+      }),
+      sql`, `
+    )
+  }
 }
 
 function rowToQueueItem(row: Record<string, unknown>): RepairQueueItem {
@@ -118,8 +123,9 @@ export async function readFinalizedRepairKeys(
   for (let offset = 0; offset < normalized.length; offset += MAX_QUEUE_KEYS_PER_QUERY) {
     const part = normalized.slice(offset, offset + MAX_QUEUE_KEYS_PER_QUERY)
     const values = buildFinalizedValues(part)
-    const queryResult = await db.query<{ chain_id: number; token: string; timestamp: string | Date }>(
-      `
+    const queryResult = await executeSql<{ chain_id: number; token: string; timestamp: string | Date }>(
+      db,
+      sql`
         WITH requested(chain_id, chain, token, timestamp) AS (VALUES ${values.sql})
         SELECT r.chain_id, tp.token, tp.timestamp
         FROM token_prices tp
@@ -131,8 +137,7 @@ export async function readFinalizedRepairKeys(
           AND tp.price > 0
           AND tp.price::text NOT IN ('NaN', 'Infinity', '-Infinity')
           AND ${NOT_REJECTED_PRICE_SQL}
-      `,
-      values.params
+      `
     )
     for (const row of queryResult.rows)
       result.add(`${row.chain_id}:${String(row.token).toLowerCase()}:${pgTimestampToUnix(row.timestamp)}`)
@@ -146,8 +151,9 @@ export async function readRepairTargetStates(db: RepairQueueDb, targets: RepairT
   const normalized = targets.map((target) => normalizeTarget(target, Math.floor(Date.now() / 1000)))
   for (let offset = 0; offset < normalized.length; offset += MAX_QUEUE_KEYS_PER_QUERY) {
     const values = buildTargetValues(normalized.slice(offset, offset + MAX_QUEUE_KEYS_PER_QUERY))
-    const result = await db.query<Record<string, unknown>>(
-      `WITH requested(chain_id, token, timestamp) AS (VALUES ${values.sql})
+    const result = await executeSql<Record<string, unknown>>(
+      db,
+      sql`WITH requested(chain_id, token, timestamp) AS (VALUES ${values.sql})
        SELECT r.chain_id, r.token, r.timestamp, q.attempts, q.last_outcome, q.next_attempt_at,
          CASE WHEN q.token IS NULL THEN 'not-queued'
            WHEN q.completed_at IS NOT NULL THEN 'parked-or-completed'
@@ -155,8 +161,7 @@ export async function readRepairTargetStates(db: RepairQueueDb, targets: RepairT
            WHEN q.next_attempt_at > NOW() THEN 'cooldown'
            ELSE 'due' END AS state
        FROM requested r LEFT JOIN historical_price_repair_queue q
-         ON q.chain_id = r.chain_id AND q.token = r.token AND q.timestamp = r.timestamp`,
-      values.params
+         ON q.chain_id = r.chain_id AND q.token = r.token AND q.timestamp = r.timestamp`
     )
     states.push(...result.rows)
   }
@@ -186,17 +191,17 @@ export async function enqueueRepairTargets(
   for (let offset = 0; offset < pending.length; offset += MAX_QUEUE_KEYS_PER_QUERY) {
     const part = pending.slice(offset, offset + MAX_QUEUE_KEYS_PER_QUERY)
     const values = buildTargetValues(part)
-    const result = await db.query(
-      `
+    const result = await executeSql(
+      db,
+      sql`
         INSERT INTO historical_price_repair_queue (chain_id, token, "timestamp")
         VALUES ${values.sql}
         ON CONFLICT (token, "timestamp", chain_id) DO UPDATE SET
           completed_at = NULL, attempts = 0, next_attempt_at = NOW(),
           lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
           last_outcome = NULL, last_error = NULL, updated_at = NOW()
-        WHERE ${REOPENABLE_SQL}
-      `,
-      values.params
+        WHERE ${sql.raw(REOPENABLE_SQL)}
+      `
     )
     affected += result.rowCount ?? part.length
   }
@@ -237,14 +242,24 @@ export async function claimRepairQueue(
   if (options.targets?.length === 0) return []
   const requested = options.targets?.map((target) => normalizeTarget(target, Math.floor(Date.now() / 1000)))
   const token = options.leaseToken ?? randomLeaseToken()
-  const result = await db.query<Record<string, unknown>>(
-    `
+  const requestedJson = requested
+    ? JSON.stringify(
+        requested.map((target) => ({
+          chain_id: target.chainId,
+          token: target.token,
+          timestamp: unixToIsoTimestamp(target.timestamp)
+        }))
+      )
+    : null
+  const result = await executeSql<Record<string, unknown>>(
+    db,
+    sql`
       WITH due AS (
         SELECT chain_id, token, "timestamp"
         FROM historical_price_repair_queue
         WHERE completed_at IS NULL
-          AND ($7::jsonb IS NULL OR EXISTS (
-            SELECT 1 FROM jsonb_to_recordset($7::jsonb) AS requested(chain_id bigint, token text, timestamp timestamptz)
+          AND (${requestedJson}::jsonb IS NULL OR EXISTS (
+            SELECT 1 FROM jsonb_to_recordset(${requestedJson}::jsonb) AS requested(chain_id bigint, token text, timestamp timestamptz)
             WHERE requested.chain_id = historical_price_repair_queue.chain_id
               AND requested.token = historical_price_repair_queue.token
               AND requested.timestamp = historical_price_repair_queue.timestamp
@@ -252,40 +267,23 @@ export async function claimRepairQueue(
           AND "timestamp" < to_timestamp(floor(extract(epoch FROM NOW()) / 86400)::bigint * 86400 + 86399)
           AND next_attempt_at <= NOW()
           AND (lease_expires_at IS NULL OR lease_expires_at <= NOW())
-          AND (NOT $6::boolean OR "timestamp" >= to_timestamp(
-            floor(extract(epoch FROM NOW()) / 86400)::bigint * 86400 - $5::bigint * 86400))
+          AND (NOT ${options.recentOnly ?? false}::boolean OR "timestamp" >= to_timestamp(
+            floor(extract(epoch FROM NOW()) / 86400)::bigint * 86400 - ${recentDays}::bigint * 86400))
         ORDER BY ("timestamp" >= to_timestamp(
-          floor(extract(epoch FROM NOW()) / 86400)::bigint * 86400 - $5::bigint * 86400)) DESC,
+          floor(extract(epoch FROM NOW()) / 86400)::bigint * 86400 - ${recentDays}::bigint * 86400)) DESC,
           next_attempt_at, updated_at, chain_id, token, "timestamp"
         FOR UPDATE SKIP LOCKED
-        LIMIT $1
+        LIMIT ${options.limit}
       )
       UPDATE historical_price_repair_queue queue
-      SET lease_owner = $2,
-          lease_token = $3,
-          lease_expires_at = NOW() + ($4::double precision * INTERVAL '1 second'),
+      SET lease_owner = ${options.owner},
+          lease_token = ${token},
+          lease_expires_at = NOW() + (${options.leaseSeconds}::double precision * INTERVAL '1 second'),
           updated_at = NOW()
       FROM due
       WHERE queue.chain_id = due.chain_id AND queue.token = due.token AND queue."timestamp" = due."timestamp"
       RETURNING queue.*
-    `,
-    [
-      options.limit,
-      options.owner,
-      token,
-      options.leaseSeconds,
-      recentDays,
-      options.recentOnly ?? false,
-      requested
-        ? JSON.stringify(
-            requested.map((target) => ({
-              chain_id: target.chainId,
-              token: target.token,
-              timestamp: unixToIsoTimestamp(target.timestamp)
-            }))
-          )
-        : null
-    ]
+    `
   )
   return result.rows.map((row) => ({ ...rowToQueueItem(row), leaseOwner: options.owner, leaseToken: token }))
 }
@@ -293,24 +291,24 @@ export async function claimRepairQueue(
 export async function settleRepairSuccess(db: RepairQueueDb, lease: RepairLease): Promise<boolean> {
   const chain = chainIdToName(lease.chainId)
   if (!chain) return false
-  const result = await db.query(
-    `
+  const result = await executeSql(
+    db,
+    sql`
       UPDATE historical_price_repair_queue
       SET completed_at = NOW(), lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
           last_outcome = NULL, last_error = NULL, updated_at = NOW()
-      WHERE chain_id = $1 AND token = $2 AND "timestamp" = $3::timestamptz
-        AND completed_at IS NULL AND lease_owner = $4 AND lease_token = $5
+      WHERE chain_id = ${lease.chainId} AND token = ${lease.token} AND "timestamp" = ${unixToIsoTimestamp(lease.timestamp)}::timestamptz
+        AND completed_at IS NULL AND lease_owner = ${lease.leaseOwner} AND lease_token = ${lease.leaseToken}
         AND EXISTS (
           SELECT 1 FROM token_prices tp
-          WHERE tp.chain = $6 AND lower(tp.token) = historical_price_repair_queue.token
+          WHERE tp.chain = ${chain} AND lower(tp.token) = historical_price_repair_queue.token
             AND tp.timestamp = historical_price_repair_queue."timestamp"
             AND tp.finalized = TRUE
             AND tp.price > 0
             AND tp.price::text NOT IN ('NaN', 'Infinity', '-Infinity')
             AND ${NOT_REJECTED_PRICE_SQL}
         )
-    `,
-    [lease.chainId, lease.token, unixToIsoTimestamp(lease.timestamp), lease.leaseOwner, lease.leaseToken, chain]
+    `
   )
   return (result.rowCount ?? 0) === 1
 }
@@ -324,42 +322,32 @@ export async function settleRepairFailure(
   if (!['missing', 'retryable', 'invalid'].includes(outcome)) throw new Error(`Invalid repair outcome: ${outcome}`)
   const delaySeconds = repairRetryDelaySeconds(outcome, lease.attempts)
   const parked = outcome === 'invalid' && lease.attempts + 1 >= MAX_INVALID_ATTEMPTS
-  const result = await db.query(
-    `
+  const result = await executeSql(
+    db,
+    sql`
       UPDATE historical_price_repair_queue
       SET attempts = attempts + 1,
-          next_attempt_at = NOW() + ($6::double precision * INTERVAL '1 second'),
-          completed_at = CASE WHEN $9::boolean THEN NOW() ELSE NULL END,
+          next_attempt_at = NOW() + (${delaySeconds}::double precision * INTERVAL '1 second'),
+          completed_at = CASE WHEN ${parked}::boolean THEN NOW() ELSE NULL END,
           lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
-          last_outcome = $4, last_error = $5, updated_at = NOW()
-      WHERE chain_id = $1 AND token = $2 AND "timestamp" = $3::timestamptz
-        AND completed_at IS NULL AND lease_owner = $7 AND lease_token = $8
-    `,
-    [
-      lease.chainId,
-      lease.token,
-      unixToIsoTimestamp(lease.timestamp),
-      outcome,
-      error,
-      delaySeconds,
-      lease.leaseOwner,
-      lease.leaseToken,
-      parked
-    ]
+          last_outcome = ${outcome}, last_error = ${error}, updated_at = NOW()
+      WHERE chain_id = ${lease.chainId} AND token = ${lease.token} AND "timestamp" = ${unixToIsoTimestamp(lease.timestamp)}::timestamptz
+        AND completed_at IS NULL AND lease_owner = ${lease.leaseOwner} AND lease_token = ${lease.leaseToken}
+    `
   )
   return (result.rowCount ?? 0) === 1
 }
 
 /** Return an owned claim to the due queue without charging an attempt. */
 export async function releaseRepairLease(db: RepairQueueDb, lease: RepairLease): Promise<boolean> {
-  const result = await db.query(
-    `
+  const result = await executeSql(
+    db,
+    sql`
       UPDATE historical_price_repair_queue
       SET lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL, updated_at = NOW()
-      WHERE chain_id = $1 AND token = $2 AND "timestamp" = $3::timestamptz
-        AND completed_at IS NULL AND lease_owner = $4 AND lease_token = $5
-    `,
-    [lease.chainId, lease.token, unixToIsoTimestamp(lease.timestamp), lease.leaseOwner, lease.leaseToken]
+      WHERE chain_id = ${lease.chainId} AND token = ${lease.token} AND "timestamp" = ${unixToIsoTimestamp(lease.timestamp)}::timestamptz
+        AND completed_at IS NULL AND lease_owner = ${lease.leaseOwner} AND lease_token = ${lease.leaseToken}
+    `
   )
   return (result.rowCount ?? 0) === 1
 }

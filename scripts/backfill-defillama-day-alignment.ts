@@ -1,3 +1,5 @@
+import { sql } from 'drizzle-orm'
+import { executeSql } from '../src/db/orm'
 /**
  * One-off repair of DeFiLlama prices stored against the wrong day.
  *
@@ -128,13 +130,18 @@ function isNotFound(error: unknown): boolean {
 const SCRATCH_TABLES = ['backfill_progress', 'defillama_repair_ratio', 'backfill_missing', 'vault_underlying_map']
 
 async function ensureTables(): Promise<void> {
-  await pool.query(`
+  await executeSql(
+    pool,
+    sql`
     CREATE TABLE IF NOT EXISTS backfill_progress (
       token_key TEXT PRIMARY KEY,
       done_at   TIMESTAMPTZ DEFAULT NOW()
     )
-  `)
-  await pool.query(`
+  `
+  )
+  await executeSql(
+    pool,
+    sql`
     CREATE TABLE IF NOT EXISTS defillama_repair_ratio (
       chain     TEXT NOT NULL,
       token     TEXT NOT NULL,
@@ -143,9 +150,12 @@ async function ensureTables(): Promise<void> {
       applied   BOOLEAN NOT NULL DEFAULT FALSE,
       PRIMARY KEY (chain, token, timestamp)
     )
-  `)
-  await pool.query('ALTER TABLE defillama_repair_ratio ADD COLUMN IF NOT EXISTS repaired_at TIMESTAMPTZ')
-  await pool.query(`
+  `
+  )
+  await executeSql(pool, sql`ALTER TABLE defillama_repair_ratio ADD COLUMN IF NOT EXISTS repaired_at TIMESTAMPTZ`)
+  await executeSql(
+    pool,
+    sql`
     CREATE TABLE IF NOT EXISTS backfill_missing (
       chain     TEXT NOT NULL,
       token     TEXT NOT NULL,
@@ -153,24 +163,28 @@ async function ensureTables(): Promise<void> {
       kind      TEXT NOT NULL,
       PRIMARY KEY (chain, token, timestamp)
     )
-  `)
+  `
+  )
 }
 
 async function dropScratchTables(): Promise<void> {
   for (const table of SCRATCH_TABLES) {
-    await pool.query(`DROP TABLE IF EXISTS ${table}`)
+    await executeSql(pool, sql`DROP TABLE IF EXISTS ${sql.identifier(table)}`)
   }
   console.log(`dropped ${SCRATCH_TABLES.join(', ')}`)
 }
 
 async function stampRepairedAt(): Promise<void> {
-  const { rowCount } = await pool.query(`
+  const { rowCount } = await executeSql(
+    pool,
+    sql`
     UPDATE defillama_repair_ratio r
     SET repaired_at = bp.done_at
     FROM backfill_progress bp
     WHERE bp.token_key = r.chain || ':' || r.token
       AND r.repaired_at IS NULL
-  `)
+  `
+  )
   if (rowCount) {
     console.log(`stamped repaired_at on ${rowCount} legacy ratios`)
   }
@@ -189,14 +203,14 @@ async function persistBatch(
 
   const client = await pool.connect()
   try {
-    await client.query('BEGIN')
+    await executeSql(client, sql`BEGIN`)
     await insertTokenPrices(client, writes, true)
     await recordRatios(client, chain, token, writes, storedPrices)
     await recordMissing(client, missing)
     await clearMissing(client, chain, token, writes)
-    await client.query('COMMIT')
+    await executeSql(client, sql`COMMIT`)
   } catch (error) {
-    await client.query('ROLLBACK').catch(() => undefined)
+    await executeSql(client, sql`ROLLBACK`).catch(() => undefined)
     throw error
   } finally {
     client.release()
@@ -210,10 +224,10 @@ async function clearMissing(client: Queryable, chain: string, token: string, wri
     return
   }
 
-  await client.query(
-    `DELETE FROM backfill_missing
-     WHERE chain = $1 AND token = $2 AND timestamp = ANY($3::timestamptz[])`,
-    [chain, token, writes.map((write) => unixToIsoTimestamp(write.timestamp))]
+  await executeSql(
+    client,
+    sql`DELETE FROM backfill_missing
+     WHERE chain = ${chain} AND token = ${token} AND timestamp = ANY(${sql.param(writes.map((write) => unixToIsoTimestamp(write.timestamp)))}::timestamptz[])`
   )
 }
 
@@ -222,19 +236,15 @@ async function recordMissing(client: Queryable, missing: MissingDay[]): Promise<
     return
   }
 
-  const valuesSql: string[] = []
-  const params: Array<string | number> = []
-  for (const entry of missing) {
-    const offset = params.length
-    valuesSql.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}::timestamptz, $${offset + 4})`)
-    params.push(entry.chain, entry.token, unixToIsoTimestamp(entry.timestamp), entry.kind)
-  }
+  const valuesSql = missing.map(
+    (entry) => sql`(${entry.chain}, ${entry.token}, ${unixToIsoTimestamp(entry.timestamp)}::timestamptz, ${entry.kind})`
+  )
 
-  await client.query(
-    `INSERT INTO backfill_missing (chain, token, timestamp, kind)
-     VALUES ${valuesSql.join(', ')}
-     ON CONFLICT (chain, token, timestamp) DO UPDATE SET kind = EXCLUDED.kind`,
-    params
+  await executeSql(
+    client,
+    sql`INSERT INTO backfill_missing (chain, token, timestamp, kind)
+     VALUES ${sql.join(valuesSql, sql`, `)}
+     ON CONFLICT (chain, token, timestamp) DO UPDATE SET kind = EXCLUDED.kind`
   )
 }
 
@@ -256,9 +266,9 @@ async function repairPrices(): Promise<boolean> {
     const coinKey = `${chain}:${token.toLowerCase()}`
 
     try {
-      const { rows: days } = await pool.query<{ timestamp: string; price: string }>(
-        `SELECT timestamp, price FROM token_prices WHERE chain = $1 AND token = $2 AND source = 'defillama' ORDER BY 1`,
-        [chain, token]
+      const { rows: days } = await executeSql<{ timestamp: string; price: string }>(
+        pool,
+        sql`SELECT timestamp, price FROM token_prices WHERE chain = ${chain} AND token = ${token} AND source = 'defillama' ORDER BY 1`
       )
       const storedTimestamps = days.map((day) => pgTimestampToUnix(day.timestamp))
       const storedPrices = new Map(days.map((day) => [pgTimestampToUnix(day.timestamp), Number(day.price)]))
@@ -325,9 +335,10 @@ async function repairPrices(): Promise<boolean> {
       if (transientFailure) {
         failedTokens.push(coinKey)
       } else {
-        await pool.query('INSERT INTO backfill_progress (token_key) VALUES ($1) ON CONFLICT DO NOTHING', [
-          `${chain}:${token}`
-        ])
+        await executeSql(
+          pool,
+          sql`INSERT INTO backfill_progress (token_key) VALUES (${`${chain}:${token}`}) ON CONFLICT DO NOTHING`
+        )
       }
     } catch (error) {
       failedTokens.push(coinKey)
@@ -360,7 +371,9 @@ function describeMissing(chain: string, token: string, fetchTimestamp: number, k
 
 async function selectTokens(): Promise<TokenRow[]> {
   if (!RETRY_PATH) {
-    const { rows } = await pool.query<TokenRow>(`
+    const { rows } = await executeSql<TokenRow>(
+      pool,
+      sql`
       SELECT DISTINCT tp.chain, tp.token
       FROM token_prices tp
       WHERE tp.source = 'defillama'
@@ -368,18 +381,23 @@ async function selectTokens(): Promise<TokenRow[]> {
           SELECT 1 FROM backfill_progress bp WHERE bp.token_key = tp.chain || ':' || tp.token
         )
       ORDER BY 1, 2
-    `)
+    `
+    )
     return rows
   }
 
   if (RETRY_PATH === 'db') {
-    const { rows } = await pool.query<TokenRow>(`
+    const { rows } = await executeSql<TokenRow>(
+      pool,
+      sql`
       SELECT DISTINCT chain, token FROM backfill_missing WHERE kind <> 'implausible' ORDER BY 1, 2
-    `)
+    `
+    )
     if (rows.length > 0) {
-      await pool.query('DELETE FROM backfill_progress WHERE token_key = ANY($1::text[])', [
-        rows.map((entry) => `${entry.chain}:${entry.token}`)
-      ])
+      await executeSql(
+        pool,
+        sql`DELETE FROM backfill_progress WHERE token_key = ANY(${sql.param(rows.map((entry) => `${entry.chain}:${entry.token}`))}::text[])`
+      )
     }
     console.log(`retrying ${rows.length} tokens from backfill_missing`)
     return rows
@@ -406,9 +424,10 @@ async function selectTokens(): Promise<TokenRow[]> {
 
   const tokens = [...keyed.values()]
   if (tokens.length > 0) {
-    await pool.query('DELETE FROM backfill_progress WHERE token_key = ANY($1::text[])', [
-      tokens.map((entry) => `${entry.chain}:${entry.token}`)
-    ])
+    await executeSql(
+      pool,
+      sql`DELETE FROM backfill_progress WHERE token_key = ANY(${sql.param(tokens.map((entry) => `${entry.chain}:${entry.token}`))}::text[])`
+    )
   }
   console.log(`retrying ${tokens.length} tokens from ${RETRY_PATH}`)
   return tokens
@@ -426,25 +445,21 @@ async function recordRatios(
     return
   }
 
-  const valuesSql: string[] = []
-  const params: Array<string | number> = []
-  for (const { timestamp, ratio } of ratios) {
-    const offset = params.length
-    valuesSql.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}::timestamptz, $${offset + 4}, NOW())`)
-    params.push(chain, token, unixToIsoTimestamp(timestamp), ratio)
-  }
+  const valuesSql = ratios.map(
+    ({ timestamp, ratio }) => sql`(${chain}, ${token}, ${unixToIsoTimestamp(timestamp)}::timestamptz, ${ratio}, NOW())`
+  )
 
-  await client.query(
-    `INSERT INTO defillama_repair_ratio (chain, token, timestamp, ratio, repaired_at)
-     VALUES ${valuesSql.join(', ')}
+  await executeSql(
+    client,
+    sql`INSERT INTO defillama_repair_ratio (chain, token, timestamp, ratio, repaired_at)
+     VALUES ${sql.join(valuesSql, sql`, `)}
      ON CONFLICT (chain, token, timestamp) DO UPDATE
        SET ratio = CASE
              WHEN defillama_repair_ratio.applied THEN EXCLUDED.ratio
              ELSE defillama_repair_ratio.ratio * EXCLUDED.ratio
            END,
            applied = FALSE,
-           repaired_at = EXCLUDED.repaired_at`,
-    params
+           repaired_at = EXCLUDED.repaired_at`
   )
 }
 
@@ -468,21 +483,27 @@ async function loadVaultUnderlyings(): Promise<void> {
     pairs.push([chain, item.address.toLowerCase(), item.asset.address.toLowerCase()])
   }
 
-  await pool.query('DROP TABLE IF EXISTS vault_underlying_map')
-  await pool.query(`
+  await executeSql(pool, sql`DROP TABLE IF EXISTS vault_underlying_map`)
+  await executeSql(
+    pool,
+    sql`
     CREATE TABLE vault_underlying_map (
       chain      TEXT NOT NULL,
       vault      TEXT NOT NULL,
       underlying TEXT NOT NULL,
       PRIMARY KEY (chain, vault)
     )
-  `)
+  `
+  )
 
   for (const group of chunk(pairs, 500)) {
-    const valuesSql = group.map((_, index) => `($${index * 3 + 1}, $${index * 3 + 2}, $${index * 3 + 3})`).join(', ')
-    await pool.query(
-      `INSERT INTO vault_underlying_map (chain, vault, underlying) VALUES ${valuesSql} ON CONFLICT DO NOTHING`,
-      group.flat()
+    const valuesSql = sql.join(
+      group.map(([chain, vault, underlying]) => sql`(${chain}, ${vault}, ${underlying})`),
+      sql`, `
+    )
+    await executeSql(
+      pool,
+      sql`INSERT INTO vault_underlying_map (chain, vault, underlying) VALUES ${valuesSql} ON CONFLICT DO NOTHING`
     )
   }
 
@@ -494,14 +515,16 @@ async function rescaleDerived(): Promise<void> {
   await stampRepairedAt()
   await loadVaultUnderlyings()
 
-  const { rows: chains } = await pool.query<{ chain: string }>(
-    `SELECT DISTINCT chain FROM token_prices WHERE source = 'derived' ORDER BY 1`
+  const { rows: chains } = await executeSql<{ chain: string }>(
+    pool,
+    sql`SELECT DISTINCT chain FROM token_prices WHERE source = 'derived' ORDER BY 1`
   )
 
   let total = 0
   for (const { chain } of chains) {
-    const result = await pool.query(
-      `
+    const result = await executeSql(
+      pool,
+      sql`
       WITH targets AS (
         SELECT d.chain, d.token, d.timestamp, r.token AS ratio_token, d.price * r.ratio AS new_price
         FROM token_prices d
@@ -513,7 +536,7 @@ async function rescaleDerived(): Promise<void> {
          AND NOT r.applied
          AND r.repaired_at IS NOT NULL
          AND COALESCE(d.updated_at, '-infinity'::timestamp) AT TIME ZONE 'UTC' < r.repaired_at
-        WHERE d.source = 'derived' AND d.chain = $1
+        WHERE d.source = 'derived' AND d.chain = ${chain}
       ), rescaled AS (
         UPDATE token_prices d
         SET price = t.new_price, updated_at = NOW() AT TIME ZONE 'UTC'
@@ -531,8 +554,7 @@ async function rescaleDerived(): Promise<void> {
         RETURNING 1
       )
       SELECT (SELECT count(*) FROM rescaled) AS updated, (SELECT count(*) FROM marked) AS marked
-      `,
-      [chain]
+      `
     )
     const updated = Number(result.rows[0]?.updated ?? 0)
     const marked = Number(result.rows[0]?.marked ?? 0)
@@ -540,14 +562,19 @@ async function rescaleDerived(): Promise<void> {
     console.log(`derived ${chain} updated=${updated} ratios-marked=${marked}`)
   }
 
-  const { rows: orphans } = await pool.query<{ count: string }>(`
+  const { rows: orphans } = await executeSql<{ count: string }>(
+    pool,
+    sql`
     SELECT count(*) count
     FROM (SELECT DISTINCT chain, token FROM token_prices WHERE source = 'derived') d
     WHERE NOT EXISTS (
       SELECT 1 FROM vault_underlying_map m WHERE m.chain = d.chain AND m.vault = lower(d.token)
     )
-  `)
-  const { rows: ambiguous } = await pool.query<{ count: string }>(`
+  `
+  )
+  const { rows: ambiguous } = await executeSql<{ count: string }>(
+    pool,
+    sql`
     SELECT count(*) count
     FROM token_prices d
     JOIN vault_underlying_map m ON m.chain = d.chain AND m.vault = lower(d.token)
@@ -559,14 +586,17 @@ async function rescaleDerived(): Promise<void> {
         WHERE u.chain = d.chain AND lower(u.token) = m.underlying AND u.timestamp = d.timestamp
           AND u.source NOT IN ('defillama', 'derived')
       )
-  `)
+  `
+  )
   console.log(
     `derived done updated=${total} vaults-not-in-kong=${orphans[0].count} ambiguous-underlying-source=${ambiguous[0].count}`
   )
 }
 
 async function verify(): Promise<boolean> {
-  const { rows } = await pool.query<{ chain: string; token: string; timestamp: string; price: string }>(`
+  const { rows } = await executeSql<{ chain: string; token: string; timestamp: string; price: string }>(
+    pool,
+    sql`
     SELECT chain, token, timestamp, price
     FROM token_prices
     WHERE source = 'defillama'
@@ -578,7 +608,8 @@ async function verify(): Promise<boolean> {
       AND timestamp >= '2025-08-16T23:59:59Z'
       AND timestamp <= '2025-08-21T23:59:59Z'
     ORDER BY token, timestamp
-  `)
+  `
+  )
 
   const grouped: Record<string, number[]> = {}
   for (const row of rows) {

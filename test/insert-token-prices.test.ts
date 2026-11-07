@@ -1,3 +1,4 @@
+import { driverQuery } from './helpers/drizzle-driver'
 import { describe, expect, it } from 'vitest'
 import { finalizeTokenPrices, insertProvisionalTokenPrices, insertTokenPrices, type Queryable } from '../src/db/queries'
 import type { TokenPriceWrite } from '../src/types'
@@ -6,10 +7,10 @@ import { currentUtcDayEnd, normalizeToEndOfDay } from '../src/utils'
 function recorder(): { calls: Array<{ text: string; values: unknown[] }>; client: Queryable } {
   const calls: Array<{ text: string; values: unknown[] }> = []
   const client = {
-    query: async (text: string, values?: unknown[]) => {
+    query: driverQuery(async (text: string, values?: unknown[]) => {
       calls.push({ text, values: values ?? [] })
       return { rows: [], rowCount: 0 }
-    }
+    })
   } as unknown as Queryable
   return { calls, client }
 }
@@ -75,8 +76,9 @@ describe('insertTokenPrices', () => {
     await finalizeTokenPrices(client, [row(HISTORICAL, { price: 2 })])
 
     expect(calls).toHaveLength(1)
-    expect(calls[0].text).toContain('finalized = EXCLUDED.finalized')
-    expect(calls[0].text).toContain('WHERE token_prices.finalized = FALSE')
+    expect(calls[0].text).toContain('finalized = excluded.finalized')
+    expect(calls[0].text).toMatch(/WHERE token_prices\.finalized = \$\d+/)
+    expect(calls[0].values.at(-1)).toBe(false)
     expect(calls[0].values).toContain(true)
   })
 
@@ -86,7 +88,8 @@ describe('insertTokenPrices', () => {
 
     expect(calls).toHaveLength(1)
     expect(calls[0].values).toContain(false)
-    expect(calls[0].text).toContain('WHERE token_prices.finalized = FALSE')
+    expect(calls[0].text).toMatch(/WHERE token_prices\.finalized = \$\d+/)
+    expect(calls[0].values.at(-1)).toBe(false)
   })
 
   it('does not mark a current UTC day as finalized', async () => {

@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm'
 import { neonConfig, Pool } from '@neondatabase/serverless'
 
 const LOCAL_NEON_HOSTS = new Set(['db.localtest.me', 'localhost', '127.0.0.1'])
@@ -33,3 +34,5 @@ export function createPool(connectionString: string): Pool {
 
 export * from './queries'
 export * from './repair-queue'
+
+export { database, executeSql, type DatabaseConnection } from './orm'

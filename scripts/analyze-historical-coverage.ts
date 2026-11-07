@@ -1,3 +1,5 @@
+import { sql } from 'drizzle-orm'
+import { executeSql } from '../src/db/orm'
 import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -83,17 +85,17 @@ for (const asset of assets) {
 try {
   // One read per asset returns aggregated dates, not full price rows.
   for (const item of state.values()) {
-    const result = await pool.query(
-      `
+    const result = await executeSql<{ first: string | null; last: string | null; rows: string; days: string[] | null }>(
+      pool,
+      sql`
       SELECT min(extract(epoch from tp.timestamp)) AS first,
              max(extract(epoch from tp.timestamp)) AS last, count(*) AS rows,
              array_agg(DISTINCT extract(epoch from tp.timestamp)::bigint)
                FILTER (WHERE mod(extract(epoch from tp.timestamp)::bigint, 86400) = 86399) AS days
-      FROM token_prices tp WHERE tp.chain = $1 AND lower(tp.token) = $2
-        AND tp.price > 0 AND tp.timestamp <= to_timestamp($3)
+      FROM token_prices tp WHERE tp.chain = ${chainIdToName(item.asset.chainId)} AND lower(tp.token) = ${item.asset.token.toLowerCase()}
+        AND tp.price > 0 AND tp.timestamp <= to_timestamp(${end})
         AND ${ACCEPTED_PRICE_SQL}
-    `,
-      [chainIdToName(item.asset.chainId), item.asset.token.toLowerCase(), end]
+    `
     )
     const row = result.rows[0]
     item.stored = (row.days ?? []).map(Number)

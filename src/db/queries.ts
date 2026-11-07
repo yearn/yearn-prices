@@ -1,4 +1,8 @@
+import { and, eq, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 import type { Pool } from '@neondatabase/serverless'
+import { database, type DatabaseConnection } from './orm'
+import { tokenPrices } from './schema'
 import { isRejectedPrice, NOT_REJECTED_PRICE_SQL, SERVED_PRICE_SQL } from '../prices/rejections'
 import type {
   DbPriceRow,
@@ -13,21 +17,34 @@ import { chunk } from '../utils/collections'
 import { optionalResponseNumber, toResponseNumber } from '../utils/format'
 import { isTodayNormalized, pgTimestampToUnix, unixToIsoTimestamp } from '../utils/time'
 
-/**
- * Minimal read surface shared by the Neon pool and the backfill's checked-out
- * client. Keeps the source-agnostic gap read decoupled from the concrete driver
- * without erasing types through an `as unknown as Pool` cast.
- */
-export interface QueryExecutor {
-  query<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<{ rows: R[] }>
-}
+export type QueryExecutor = DatabaseConnection
+export type Queryable = DatabaseConnection
 
-export interface Queryable {
-  query(text: string, values?: unknown[]): Promise<{ rows: unknown[]; rowCount: number | null }>
+const tp = alias(tokenPrices, 'tp')
+const priceSelection = {
+  chain: tp.chain,
+  token: tp.token,
+  timestamp: tp.timestamp,
+  price: tp.price,
+  symbol: tp.symbol,
+  confidence: tp.confidence,
+  source: tp.source,
+  observed_at: tp.observedAt,
+  observation_endpoint: tp.observationEndpoint
 }
+const sourcePriority = sql`CASE ${tp.source} ${sql.join(
+  SOURCE_PRIORITY.map((source, index) => sql`WHEN ${source} THEN ${sql.raw(String(index + 1))}`),
+  sql` `
+)} ELSE 999 END`
 
-function buildSourceCaseExpression(column = 'tp.source'): string {
-  return `CASE ${column} ${SOURCE_PRIORITY.map((source, index) => `WHEN '${source}' THEN ${index + 1}`).join(' ')} ELSE 999 END`
+function requestedValues(requests: HistoricalRequestTuple[]) {
+  return sql`(VALUES ${sql.join(
+    requests.map(
+      (request) =>
+        sql`(${request.chain}::varchar, ${request.token}::varchar, ${unixToIsoTimestamp(request.timestamp)}::timestamptz)`
+    ),
+    sql`, `
+  )}) AS r(chain, token, timestamp)`
 }
 
 export async function getExactHistoricalPrice(
@@ -58,53 +75,28 @@ export async function getBatchHistoricalPrices(
     return rows
   }
 
-  const valuesSql: string[] = []
-  const params: Array<string | number> = []
-  for (const request of requests) {
-    const offset = params.length
-    valuesSql.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}::timestamptz)`)
-    params.push(request.chain, request.token, unixToIsoTimestamp(request.timestamp))
-  }
-
-  const requestedSql = `(VALUES ${valuesSql.join(', ')}) AS r(chain, token, timestamp)`
-  let sql: string
-  const acceptedSql = options.finalizedOnly ? `tp.finalized = TRUE AND ${NOT_REJECTED_PRICE_SQL}` : SERVED_PRICE_SQL
-  // Repair targets are normalized independently of legacy row casing. Return
-  // the caller's token spelling so existence keys still match its manifest.
-  const tokenColumn = options.finalizedOnly ? 'r.token' : 'tp.token'
-  const tokenMatch = options.finalizedOnly ? 'lower(tp.token) = lower(r.token)' : 'tp.token = r.token'
-
-  if (source) {
-    params.push(source)
-    const sourceIndex = params.length
-    sql = `
-      SELECT tp.chain, ${tokenColumn} AS token, tp.timestamp, tp.price, tp.symbol, tp.confidence, tp.source,
-        tp.observed_at, tp.observation_endpoint
-      FROM token_prices tp
-      INNER JOIN ${requestedSql}
-        ON tp.chain = r.chain
-       AND ${tokenMatch}
-       AND tp.timestamp = r.timestamp
-      WHERE tp.source = $${sourceIndex} AND ${acceptedSql}
-      ORDER BY tp.chain, ${tokenColumn}, tp.timestamp
-    `
-  } else {
-    sql = `
-      SELECT DISTINCT ON (tp.chain, ${tokenColumn}, tp.timestamp)
-        tp.chain, ${tokenColumn} AS token, tp.timestamp, tp.price, tp.symbol, tp.confidence, tp.source,
-        tp.observed_at, tp.observation_endpoint
-      FROM token_prices tp
-      INNER JOIN ${requestedSql}
-        ON tp.chain = r.chain
-       AND ${tokenMatch}
-       AND tp.timestamp = r.timestamp
-      WHERE ${acceptedSql}
-      ORDER BY tp.chain, ${tokenColumn}, tp.timestamp, ${buildSourceCaseExpression()}
-    `
-  }
-
-  const result = await pool.query<DbPriceRow>(sql, params)
-  return result.rows.map(mapDbRowToExactRecord)
+  const db = database(pool)
+  const token = options.finalizedOnly ? sql<string>`r.token` : tp.token
+  const selection = { ...priceSelection, token }
+  const query = source ? db.select(selection) : db.selectDistinctOn([tp.chain, token, tp.timestamp], selection)
+  const rows = await query
+    .from(tp)
+    .innerJoin(
+      requestedValues(requests),
+      and(
+        sql`${tp.chain} = r.chain`,
+        sql`${tp.timestamp} = r.timestamp`,
+        options.finalizedOnly ? sql`lower(${tp.token}) = lower(r.token)` : sql`${tp.token} = r.token`
+      )
+    )
+    .where(
+      and(
+        source ? eq(tp.source, source) : undefined,
+        options.finalizedOnly ? sql`${tp.finalized} = TRUE AND ${NOT_REJECTED_PRICE_SQL}` : SERVED_PRICE_SQL
+      )
+    )
+    .orderBy(tp.chain, token, tp.timestamp, sourcePriority)
+  return rows.map(mapDbRowToExactRecord)
 }
 
 export async function getRangeHistoricalPrices(
@@ -116,56 +108,26 @@ export async function getRangeHistoricalPrices(
     return []
   }
 
-  const valuesSql: string[] = []
-  const params: Array<string | number> = []
-  for (const request of requests) {
-    const offset = params.length
-    valuesSql.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}::timestamptz, $${offset + 4}::timestamptz)`)
-    params.push(
-      request.chain,
-      request.token,
-      unixToIsoTimestamp(request.startTimestamp),
-      unixToIsoTimestamp(request.endTimestamp)
+  const requested = sql`(VALUES ${sql.join(
+    requests.map(
+      (request) =>
+        sql`(${request.chain}::varchar, ${request.token}::varchar, ${unixToIsoTimestamp(request.startTimestamp)}::timestamptz, ${unixToIsoTimestamp(request.endTimestamp)}::timestamptz)`
+    ),
+    sql`, `
+  )}) AS r(chain, token, start_timestamp, end_timestamp)`
+  const db = database(pool)
+  const query = source
+    ? db.select(priceSelection)
+    : db.selectDistinctOn([tp.chain, tp.token, tp.timestamp], priceSelection)
+  const rows = await query
+    .from(tp)
+    .innerJoin(
+      requested,
+      sql`${tp.chain} = r.chain AND ${tp.token} = r.token AND ${tp.timestamp} BETWEEN r.start_timestamp AND r.end_timestamp`
     )
-  }
-
-  let sql = `
-    WITH requested(chain, token, start_timestamp, end_timestamp) AS (
-      VALUES ${valuesSql.join(', ')}
-    )
-  `
-
-  if (source) {
-    params.push(source)
-    const sourceIndex = params.length
-    sql += `
-      SELECT tp.chain, tp.token, tp.timestamp, tp.price, tp.symbol, tp.confidence, tp.source,
-        tp.observed_at, tp.observation_endpoint
-      FROM token_prices tp
-      INNER JOIN requested r
-        ON tp.chain = r.chain
-       AND tp.token = r.token
-       AND tp.timestamp BETWEEN r.start_timestamp AND r.end_timestamp
-      WHERE tp.source = $${sourceIndex} AND ${SERVED_PRICE_SQL}
-      ORDER BY tp.chain, tp.token, tp.timestamp
-    `
-  } else {
-    sql += `
-      SELECT DISTINCT ON (tp.chain, tp.token, tp.timestamp)
-        tp.chain, tp.token, tp.timestamp, tp.price, tp.symbol, tp.confidence, tp.source,
-        tp.observed_at, tp.observation_endpoint
-      FROM token_prices tp
-      INNER JOIN requested r
-        ON tp.chain = r.chain
-       AND tp.token = r.token
-       AND tp.timestamp BETWEEN r.start_timestamp AND r.end_timestamp
-      WHERE ${SERVED_PRICE_SQL}
-      ORDER BY tp.chain, tp.token, tp.timestamp, ${buildSourceCaseExpression()}
-    `
-  }
-
-  const result = await pool.query<DbPriceRow>(sql, params)
-  return result.rows.map(mapDbRowToExactRecord)
+    .where(and(source ? eq(tp.source, source) : undefined, SERVED_PRICE_SQL))
+    .orderBy(tp.chain, tp.token, tp.timestamp, sourcePriority)
+  return rows.map(mapDbRowToExactRecord)
 }
 
 export async function getExistingExactTimestamps(
@@ -197,29 +159,15 @@ export async function getUnfinalizedExactTimestamps(
     return rows
   }
 
-  const valuesSql: string[] = []
-  const params: Array<string | number> = []
-  for (const request of requests) {
-    const offset = params.length
-    valuesSql.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}::timestamptz)`)
-    params.push(request.chain, request.token, unixToIsoTimestamp(request.timestamp))
-  }
-  params.push(source)
-
-  const result = await pool.query<DbPriceRow>(
-    `
-      SELECT tp.chain, tp.token, tp.timestamp, tp.price, tp.symbol, tp.confidence, tp.source,
-        tp.observed_at, tp.observation_endpoint
-      FROM token_prices tp
-      INNER JOIN (VALUES ${valuesSql.join(', ')}) AS r(chain, token, timestamp)
-        ON tp.chain = r.chain AND tp.token = r.token AND tp.timestamp = r.timestamp
-      WHERE tp.source = $${params.length}
-        AND tp.finalized = FALSE
-        AND ${NOT_REJECTED_PRICE_SQL}
-    `,
-    params
-  )
-  return new Set(result.rows.map((row) => `${row.chain}:${row.token}:${pgTimestampToUnix(row.timestamp)}`))
+  const rows = await database(pool)
+    .select(priceSelection)
+    .from(tp)
+    .innerJoin(
+      requestedValues(requests),
+      sql`${tp.chain} = r.chain AND ${tp.token} = r.token AND ${tp.timestamp} = r.timestamp`
+    )
+    .where(and(eq(tp.source, source), eq(tp.finalized, false), NOT_REJECTED_PRICE_SQL))
+  return new Set(rows.map((row) => `${row.chain}:${row.token}:${pgTimestampToUnix(row.timestamp)}`))
 }
 
 export async function insertTokenPrices(pool: Queryable, rows: TokenPriceWrite[], forceUpdate = false): Promise<void> {
@@ -293,56 +241,44 @@ async function insertRows(pool: Queryable, rows: TokenPriceWrite[], mode: Insert
     return
   }
 
-  const valuesSql: string[] = []
-  const params: Array<string | number | boolean | null> = []
-
-  for (const row of rows) {
-    const offset = params.length
-    valuesSql.push(
-      `($${offset + 1}, $${offset + 2}, $${offset + 3}::timestamptz, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, $${offset + 8}, $${offset + 9}::timestamptz, $${offset + 10})`
-    )
-    params.push(
-      row.chain,
-      row.token,
-      unixToIsoTimestamp(row.timestamp),
-      row.price,
-      row.symbol,
-      row.confidence,
-      row.source,
-      mode === 'finalize-provisional' ||
-        (mode !== 'write-provisional' && !isTodayNormalized(row.timestamp) && mode !== 'mutable-current-day'),
-      row.observedTimestamp == null ? null : unixToIsoTimestamp(row.observedTimestamp),
-      row.observationEndpoint ?? null
-    )
-  }
-
-  const conflictSql =
-    mode === 'insert-only'
-      ? `ON CONFLICT (chain, token, timestamp, source) DO NOTHING`
-      : `
-      ON CONFLICT (chain, token, timestamp, source)
-      DO UPDATE SET
-        price = EXCLUDED.price,
-        symbol = COALESCE(EXCLUDED.symbol, token_prices.symbol),
-        confidence = EXCLUDED.confidence,
-        finalized = EXCLUDED.finalized,
-        observed_at = EXCLUDED.observed_at,
-        observation_endpoint = EXCLUDED.observation_endpoint,
-        updated_at = NOW()
-      ${mode === 'force' ? '' : 'WHERE token_prices.finalized = FALSE'}
-    `
-
-  await pool.query(
-    `
-      INSERT INTO token_prices (
-        chain, token, timestamp, price, symbol, confidence, source,
-        finalized, observed_at, observation_endpoint
+  // Ten bound columns per row; leave headroom below PostgreSQL's parameter limit.
+  for (const batch of chunk(rows, 5_000)) {
+    const query = database(pool)
+      .insert(tokenPrices)
+      .values(
+        batch.map((row) => ({
+          chain: row.chain,
+          token: row.token,
+          timestamp: unixToIsoTimestamp(row.timestamp),
+          price: String(row.price),
+          symbol: row.symbol,
+          confidence: row.confidence == null ? null : String(row.confidence),
+          source: row.source,
+          finalized:
+            mode === 'finalize-provisional' ||
+            (mode !== 'write-provisional' && !isTodayNormalized(row.timestamp) && mode !== 'mutable-current-day'),
+          observedAt: row.observedTimestamp == null ? null : unixToIsoTimestamp(row.observedTimestamp),
+          observationEndpoint: row.observationEndpoint ?? null
+        }))
       )
-      VALUES ${valuesSql.join(', ')}
-      ${conflictSql}
-    `,
-    params
-  )
+    if (mode === 'insert-only') {
+      await query.onConflictDoNothing()
+    } else {
+      await query.onConflictDoUpdate({
+        target: [tokenPrices.chain, tokenPrices.token, tokenPrices.timestamp, tokenPrices.source],
+        set: {
+          price: sql`excluded.price`,
+          symbol: sql`coalesce(excluded.symbol, ${tokenPrices.symbol})`,
+          confidence: sql`excluded.confidence`,
+          finalized: sql`excluded.finalized`,
+          observedAt: sql`excluded.observed_at`,
+          observationEndpoint: sql`excluded.observation_endpoint`,
+          updatedAt: sql`now()`
+        },
+        setWhere: mode === 'force' ? undefined : eq(tokenPrices.finalized, false)
+      })
+    }
+  }
 }
 
 function mapDbRowToExactRecord(row: DbPriceRow): ExactPriceRecord {

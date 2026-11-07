@@ -1,3 +1,6 @@
+import { sql, eq } from 'drizzle-orm'
+import { database, executeSql } from '../db/orm'
+import { tokenPrices } from '../db/schema'
 import { isRejectedPrice } from '../prices/rejections'
 import { isDefiLlamaSource, type PriceSource } from '../types'
 import { chunk } from '../utils/collections'
@@ -106,7 +109,9 @@ function timeoutLiteral(value: string): string {
 }
 
 function isLockTimeout(error: unknown): boolean {
-  return (error as { code?: string } | null)?.code === LOCK_NOT_AVAILABLE
+  if (!error || typeof error !== 'object') return false
+  if ('code' in error && error.code === LOCK_NOT_AVAILABLE) return true
+  return 'cause' in error && error.cause !== error && isLockTimeout(error.cause)
 }
 
 function inventoryKey(target: FinalizationTarget): InventoryKey {
@@ -133,50 +138,42 @@ async function insertResolvedTargets(client: BackfillClient, targets: Finalizati
     return new Set()
   }
 
-  const valuesSql: string[] = []
-  const params: Array<string | number | null> = []
-  for (const target of targets) {
-    const resolution = target.resolution as FinalizationResolution
-    const offset = params.length
-    valuesSql.push(
-      `($${offset + 1}, $${offset + 2}, $${offset + 3}::timestamptz, $${offset + 4}, $${offset + 5}, $${offset + 6}, $${offset + 7}, TRUE, $${offset + 8}::timestamptz, $${offset + 9})`
+  const rows = await database(client)
+    .insert(tokenPrices)
+    .values(
+      targets.map((target) => {
+        const resolution = target.resolution as FinalizationResolution
+        return {
+          chain: target.chain,
+          token: target.token,
+          timestamp: unixToIsoTimestamp(target.eodTimestamp),
+          price: String(resolution.price),
+          symbol: resolution.symbol,
+          confidence: resolution.confidence == null ? null : String(resolution.confidence),
+          source: resolution.source,
+          finalized: true,
+          observedAt: resolution.observedTimestamp == null ? null : unixToIsoTimestamp(resolution.observedTimestamp),
+          observationEndpoint: resolution.observationEndpoint ?? null
+        }
+      })
     )
-    params.push(
-      target.chain,
-      target.token,
-      unixToIsoTimestamp(target.eodTimestamp),
-      resolution.price,
-      resolution.symbol,
-      resolution.confidence,
-      resolution.source,
-      resolution.observedTimestamp == null ? null : unixToIsoTimestamp(resolution.observedTimestamp),
-      resolution.observationEndpoint ?? null
-    )
-  }
-
-  const result = await client.query(
-    `
-      INSERT INTO token_prices (
-        chain, token, timestamp, price, symbol, confidence, source,
-        finalized, observed_at, observation_endpoint
-      )
-      VALUES ${valuesSql.join(', ')}
-      ON CONFLICT (chain, token, timestamp, source) DO UPDATE SET
-        price = EXCLUDED.price,
-        symbol = COALESCE(EXCLUDED.symbol, token_prices.symbol),
-        confidence = EXCLUDED.confidence,
-        finalized = TRUE,
-        observed_at = EXCLUDED.observed_at,
-        observation_endpoint = EXCLUDED.observation_endpoint,
-        updated_at = NOW()
-      WHERE token_prices.finalized = FALSE
-      RETURNING chain, token, timestamp
-    `,
-    params
-  )
+    .onConflictDoUpdate({
+      target: [tokenPrices.chain, tokenPrices.token, tokenPrices.timestamp, tokenPrices.source],
+      set: {
+        price: sql`excluded.price`,
+        symbol: sql`coalesce(excluded.symbol, ${tokenPrices.symbol})`,
+        confidence: sql`excluded.confidence`,
+        finalized: true,
+        observedAt: sql`excluded.observed_at`,
+        observationEndpoint: sql`excluded.observation_endpoint`,
+        updatedAt: sql`now()`
+      },
+      setWhere: eq(tokenPrices.finalized, false)
+    })
+    .returning({ chain: tokenPrices.chain, token: tokenPrices.token, timestamp: tokenPrices.timestamp })
 
   const inserted = new Set<string>()
-  for (const row of result.rows) {
+  for (const row of rows) {
     inserted.add(priceKey(row.chain as string, row.token as string, pgTimestampToUnix(row.timestamp as string | Date)))
   }
   return inserted
@@ -266,14 +263,14 @@ async function finalizeBatch(
     let committed = false
     let releaseError: unknown
     try {
-      await client.query('BEGIN')
-      await client.query(`SET LOCAL lock_timeout = '${lockTimeout}'`)
-      await client.query(`SET LOCAL statement_timeout = '${statementTimeout}'`)
+      await executeSql(client, sql`BEGIN`)
+      await executeSql(client, sql`SET LOCAL lock_timeout = '${sql.raw(lockTimeout)}'`)
+      await executeSql(client, sql`SET LOCAL statement_timeout = '${sql.raw(statementTimeout)}'`)
       const lockRequestedAt = Date.now()
-      await client.query('LOCK TABLE token_prices IN SHARE ROW EXCLUSIVE MODE')
+      await executeSql(client, sql`LOCK TABLE token_prices IN SHARE ROW EXCLUSIVE MODE`)
       const lockAcquiredAt = Date.now()
       const results = await applyBatch(client, batch, options.readChunkSize, true, options.finalizedOnly)
-      await client.query('COMMIT')
+      await executeSql(client, sql`COMMIT`)
       committed = true
       return {
         results,
@@ -284,7 +281,7 @@ async function finalizeBatch(
     } catch (error) {
       if (!committed) {
         try {
-          await client.query('ROLLBACK')
+          await executeSql(client, sql`ROLLBACK`)
         } catch (rollbackError) {
           releaseError = rollbackError
         }

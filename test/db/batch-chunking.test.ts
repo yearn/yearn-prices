@@ -1,13 +1,14 @@
+import { driverQuery } from '../helpers/drizzle-driver'
 import { expect, it } from 'vitest'
 import { getBatchHistoricalPrices } from '../../src/db/queries'
 
 it('splits large exact reads below the Postgres bind parameter limit', async () => {
   const paramCounts: number[] = []
   const pool = {
-    async query(_sql: string, params?: unknown[]) {
+    query: driverQuery(async function (_sql: string, params?: unknown[]) {
       paramCounts.push(params?.length ?? 0)
       return { rows: [] }
-    }
+    })
   }
   const requests = Array.from({ length: 25_000 }, (_, index) => ({
     chain: 'optimism',

@@ -1,3 +1,4 @@
+import { driverQuery } from '../helpers/drizzle-driver'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -35,7 +36,7 @@ function lease(token: string): RepairLease {
 }
 
 function db(): RepairQueueDb & { query: ReturnType<typeof vi.fn> } {
-  const query = vi.fn(async () => ({ rows: [], rowCount: 1 }))
+  const query = driverQuery(vi.fn(async () => ({ rows: [], rowCount: 1 })))
   return { query } as RepairQueueDb & { query: ReturnType<typeof vi.fn> }
 }
 

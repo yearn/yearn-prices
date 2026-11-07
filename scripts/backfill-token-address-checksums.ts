@@ -1,3 +1,5 @@
+import { sql } from 'drizzle-orm'
+import { executeSql } from '../src/db/orm'
 import { config as loadEnv } from 'dotenv'
 
 loadEnv()
@@ -66,7 +68,7 @@ try {
     deleted: 0
   }
 
-  const result = await pool.query<{ token: string }>('SELECT DISTINCT token FROM token_prices ORDER BY token')
+  const result = await executeSql<{ token: string }>(pool, sql`SELECT DISTINCT token FROM token_prices ORDER BY token`)
   stats.addresses = result.rows.length
   console.info(`Fetched ${stats.addresses} unique token addresses`)
 
@@ -100,24 +102,18 @@ try {
     console.info(`Starting backfill for ${mappings.size} address mappings in ${mappingBatches.length} batches`)
 
     for (const [batchIndex, mappingBatch] of mappingBatches.entries()) {
-      const valuesSql: string[] = []
-      const params: string[] = []
-
-      for (const [oldToken, newToken] of mappingBatch) {
-        const offset = params.length
-        valuesSql.push(`($${offset + 1}, $${offset + 2})`)
-        params.push(oldToken, newToken)
-      }
-
-      await pool.query('BEGIN')
+      const valuesSql = mappingBatch.map(([oldToken, newToken]) => sql`(${oldToken}::varchar, ${newToken}::varchar)`)
+      const client = await pool.connect()
       try {
+        await executeSql(client, sql`BEGIN`)
         console.info(
           `Batch ${batchIndex + 1}/${mappingBatches.length}: updating ${mappingBatch.length} address mappings`
         )
-        const backfill = await pool.query<{ copied: string; deleted: string }>(
-          `
+        const backfill = await executeSql<{ copied: string; deleted: string }>(
+          client,
+          sql`
             WITH mappings(old_token, new_token) AS (
-              VALUES ${valuesSql.join(', ')}
+              VALUES ${sql.join(valuesSql, sql`, `)}
             ),
             copied AS (
               INSERT INTO token_prices (
@@ -153,11 +149,10 @@ try {
             SELECT
               (SELECT COUNT(*) FROM copied) AS copied,
               (SELECT COUNT(*) FROM deleted) AS deleted
-          `,
-          params
+          `
         )
 
-        await pool.query('COMMIT')
+        await executeSql(client, sql`COMMIT`)
         const copied = Number(backfill.rows[0]?.copied ?? 0)
         const deleted = Number(backfill.rows[0]?.deleted ?? 0)
         stats.copied += copied
@@ -166,9 +161,11 @@ try {
           `Batch ${batchIndex + 1}/${mappingBatches.length} complete: copied ${copied}, deleted ${deleted}, cumulative copied ${stats.copied}, deleted ${stats.deleted}`
         )
       } catch (error) {
-        await pool.query('ROLLBACK')
+        await executeSql(client, sql`ROLLBACK`)
         console.error(`Batch ${batchIndex + 1}/${mappingBatches.length} failed; transaction rolled back`)
         throw error
+      } finally {
+        client.release()
       }
     }
 

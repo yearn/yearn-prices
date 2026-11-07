@@ -1,3 +1,4 @@
+import { driverQuery } from './helpers/drizzle-driver'
 import type { Pool } from '@neondatabase/serverless'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -73,15 +74,17 @@ function inserts(queryPool: Pool) {
 }
 
 function pool(rows: unknown[]): Pool {
-  return { query: vi.fn(async () => ({ rows, rowCount: rows.length })) } as unknown as Pool
+  return { query: driverQuery(vi.fn(async () => ({ rows, rowCount: rows.length }))) } as unknown as Pool
 }
 
 function curveLpPool(rows: unknown[], lpTokens: string[]): Pool {
   return {
-    query: vi.fn(async (sql: string) =>
-      String(sql).includes("tp.source = 'curve'")
-        ? { rows: lpTokens.map((token) => ({ chain: 'ethereum', token })) }
-        : { rows, rowCount: rows.length }
+    query: driverQuery(
+      vi.fn(async (sql: string) =>
+        String(sql).includes("tp.source = 'curve'")
+          ? { rows: lpTokens.map((token) => ({ chain: 'ethereum', token })) }
+          : { rows, rowCount: rows.length }
+      )
     )
   } as unknown as Pool
 }

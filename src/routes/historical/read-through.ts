@@ -1,3 +1,5 @@
+import { sql } from 'drizzle-orm'
+import { executeSql } from '../../db/orm'
 import type { Pool } from '@neondatabase/serverless'
 import { DefiLlamaClient } from '../../clients/defillama'
 import { finalizeTokenPrices, insertProvisionalTokenPrices } from '../../db'
@@ -70,13 +72,13 @@ function logFailure(stage: 'current' | 'historical' | 'current-fallback', error:
 export async function knownCurveLps(pool: Pool, records: { chain: string; token: string }[]): Promise<Set<string>> {
   if (records.length === 0) return new Set()
   const pairs = new Map(records.map((record) => [lpKey(record.chain, record.token), record]))
-  const { rows } = await pool.query<{ chain: string; token: string }>(
-    `SELECT p.chain, p.token FROM unnest($1::text[], $2::text[]) AS p(chain, token)
+  const { rows } = await executeSql<{ chain: string; token: string }>(
+    pool,
+    sql`SELECT p.chain, p.token FROM unnest(${sql.param([...pairs.values()].map((record) => record.chain))}::text[], ${sql.param([...pairs.values()].map((record) => record.token))}::text[]) AS p(chain, token)
      WHERE EXISTS (
        SELECT 1 FROM token_prices tp
        WHERE tp.chain = p.chain AND tp.token = p.token AND tp.source = 'curve' AND ${ACCEPTED_PRICE_SQL}
-     )`,
-    [[...pairs.values()].map((record) => record.chain), [...pairs.values()].map((record) => record.token)]
+     )`
   )
   return new Set(rows.map((row) => lpKey(row.chain, row.token)))
 }
