@@ -10,6 +10,7 @@ import {
   RetryablePricingError
 } from './errors'
 import type { PriceDependency } from './plan'
+import { RunCache } from './run-cache'
 import { signalKey, throwIfAborted } from './signal'
 import type { RecursivePriceContext, RecursivePriceInput, RecursivePriceTarget, ResolvedPricePath } from './types'
 
@@ -35,6 +36,13 @@ export interface OnchainAdapterOptions {
   blockTimestampForTarget?: BlockTimestampForTarget
   pendleTwapSeconds?: number
   blockContextCache?: Map<string, Promise<ContractContext>>
+  historicalBlocks?: HistoricalBlockCache
+}
+
+/** Block facts only: never share an address, client, or read budget between tokens. */
+export class HistoricalBlockCache {
+  readonly numbers = new RunCache<bigint>()
+  readonly timestamps = new RunCache<number>()
 }
 
 export interface ContractContext {
@@ -188,15 +196,31 @@ async function loadContractContext(
     throw new Error(`RPC_URL_${target.chainId} is not configured`)
   }
   const client = clientForSignal(unguardedClient, target.signal)
-  const blockNumber = await (options.blockForTarget ?? defaultBlockForTarget)(client, target.chainId, target)
+  const blocks = target.timestamp == null ? undefined : options.historicalBlocks
+  const contextKey = `${target.chainId}:${target.timestamp}:signal:${signalKey(target.signal)}`
+  const loadNumber = () => (options.blockForTarget ?? defaultBlockForTarget)(client, target.chainId, target)
+  const blockNumber =
+    blocks && target.blockNumber != null
+      ? BigInt(target.blockNumber)
+      : blocks
+        ? await blocks.numbers.get(contextKey, loadNumber)
+        : await loadNumber()
   throwIfAborted(target.signal)
   const numericBlockNumber = Number(blockNumber)
   if (!Number.isSafeInteger(numericBlockNumber) || numericBlockNumber < 0) {
     throw new Error(`Block ${blockNumber} is outside the supported numeric range`)
   }
-  const blockTimestamp = options.blockTimestampForTarget
-    ? await options.blockTimestampForTarget(client, blockNumber, target)
-    : Number((await client.getBlock({ blockNumber })).timestamp)
+  const loadTimestamp = async () => {
+    const timestamp = options.blockTimestampForTarget
+      ? await options.blockTimestampForTarget(client, blockNumber, target)
+      : Number((await client.getBlock({ blockNumber })).timestamp)
+    if (!Number.isSafeInteger(timestamp) || timestamp < 0)
+      throw new InvalidPricingError('Block has an invalid timestamp')
+    return timestamp
+  }
+  const blockTimestamp = blocks
+    ? await blocks.timestamps.get(`${target.chainId}:${blockNumber}:signal:${signalKey(target.signal)}`, loadTimestamp)
+    : await loadTimestamp()
   throwIfAborted(target.signal)
   if (!Number.isSafeInteger(blockTimestamp) || blockTimestamp < 0) {
     throw new InvalidPricingError('Block has an invalid timestamp')
@@ -230,6 +254,9 @@ export async function contractContext(
   }
   const pending = loadContractContext(target, options)
   cache.set(key, pending)
+  void pending.catch(() => {
+    if (cache.get(key) === pending) cache.delete(key)
+  })
   return pending
 }
 

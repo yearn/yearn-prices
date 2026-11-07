@@ -17,9 +17,17 @@ import {
 import type { GraphNode } from '../../src/sources/onchain/graph'
 import { preflightTokenCasings } from '../backfill-historical-gaps'
 import { storedTargetGuard } from './curve-lp-guard'
-import { replayGraph } from './graph-replay'
+import { createGraphReplaySession, replayGraph } from './graph-replay'
 import { offlineProvider } from './offline-provider'
 import { storedHistoricalPrices } from './stored-historical-prices'
+
+export function createGraphBackfillRun(pool: ReturnType<typeof createPool>, finalizedOnly = false) {
+  return {
+    session: createGraphReplaySession(),
+    stored: storedHistoricalPrices(pool, { finalizedOnly })
+  }
+}
+export type GraphBackfillRun = ReturnType<typeof createGraphBackfillRun>
 
 export interface GraphBackfillSummary {
   inserted: number
@@ -43,8 +51,10 @@ export async function runGraphBackfill(options: {
   provider?: ReturnType<typeof offlineProvider>
   finalizedOnly?: boolean
   signal?: AbortSignal
+  run?: GraphBackfillRun
 }): Promise<GraphBackfillSummary> {
   const { pool, manifest, out, write } = options
+  const run = options.run ?? createGraphBackfillRun(pool, options.finalizedOnly)
   throwIfAborted(options.signal)
   const emit = (record: unknown) => appendFileSync(out, JSON.stringify(record) + '\n')
   const log = (stage: string, detail: Record<string, unknown> = {}) => console.log(JSON.stringify({ stage, ...detail }))
@@ -105,7 +115,8 @@ export async function runGraphBackfill(options: {
           ...(bobs ? [bobs] : []),
           createDefiLlamaAliasHistoricalSource(provider)
         ],
-        stored: storedHistoricalPrices(pool, { finalizedOnly: options.finalizedOnly }),
+        stored: run.stored,
+        session: run.session,
         provider,
         out: replayFile,
         concurrency: options.concurrency,

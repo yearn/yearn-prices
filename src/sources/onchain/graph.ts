@@ -1,4 +1,6 @@
 import { buildAdapterPath, classifyError, validatePath } from './engine'
+import { RunCache } from './run-cache'
+import { signalKey, throwIfAborted } from './signal'
 import { derivePlan, evaluatePlan, type PlannedPriceAdapter, type PricePlan } from './plan'
 import type {
   MarketPriceResolver,
@@ -10,6 +12,18 @@ import type {
 export function graphKey(target: RecursivePriceTarget): string {
   return `${target.chainId}:${target.token.toLowerCase()}:${target.timestamp}:${target.blockNumber ?? 'none'}`
 }
+/** Immutable discoveries and successful market evidence, shared only within one run.
+ * Paths derived from dependencies are deliberately re-evaluated in each graph. */
+export class HistoricalGraphCache {
+  readonly market = new RunCache<ResolvedPricePath | null>()
+  readonly plans = new RunCache<PricePlan | null>()
+  readonly derivations = new RunCache<Awaited<ReturnType<NonNullable<PricePlan['derive']>>>>()
+}
+
+export function graphCacheKey(target: RecursivePriceTarget): string {
+  return `${graphKey(target)}:signal:${signalKey(target.signal)}`
+}
+
 interface Issue {
   adapter: string
   reason: PriceResolutionFailureReason
@@ -68,6 +82,7 @@ export async function resolveHistoricalGraph(options: {
   concurrency?: number
   maxDepth?: number
   maxNodes?: number
+  cache?: HistoricalGraphCache
   onFrontier?: (depth: number, nodes: GraphNode[]) => void
   onProgress?: (depth: number, stage: 'prefetched' | 'resolved', done: number, total: number) => void
 }) {
@@ -109,7 +124,11 @@ export async function resolveHistoricalGraph(options: {
   let frontier = [...new Set(roots.map((root) => add(root, 0)))]
   while (frontier.length) {
     const depth = frontier[0].depth
-    await prefetch(frontier.map((node) => node.target))
+    await prefetch(
+      frontier
+        .filter((node) => node.target.timestamp == null || !options.cache?.market.has(graphCacheKey(node.target)))
+        .map((node) => node.target)
+    )
     onProgress?.(depth, 'prefetched', 0, frontier.length)
     let done = 0
     await each(frontier, concurrency, async (node) => {
@@ -120,8 +139,16 @@ export async function resolveHistoricalGraph(options: {
       }
     })
     async function resolveNode(node: GraphNode) {
+      throwIfAborted(node.target.signal)
+      const cache = node.target.timestamp == null ? undefined : options.cache
+      const cacheKey = graphCacheKey(node.target)
       try {
-        const path = await market(node.target)
+        const loadMarket = async () => {
+          const path = await market(node.target)
+          throwIfAborted(node.target.signal)
+          return path ? validatePath(path, node.target) : null
+        }
+        const path = cache ? await cache.market.get(cacheKey, loadMarket, (path) => path !== null) : await loadMarket()
         node.market = path ? 'price' : 'missing'
         if (path) {
           node.path = validatePath(path, node.target)
@@ -142,7 +169,24 @@ export async function resolveHistoricalGraph(options: {
       }
       for (const adapter of candidates) {
         try {
-          const plan = await adapter.discover(node.target)
+          const planKey = `${cacheKey}:${adapter.name}`
+          const discover = async () => {
+            const plan = await adapter.discover(node.target)
+            throwIfAborted(node.target.signal)
+            if (!plan?.derive || !cache) return plan
+            const derive = plan.derive.bind(plan)
+            return {
+              ...plan,
+              evaluate: plan.evaluate.bind(plan),
+              derive: (inputs: Array<ResolvedPricePath | null>) =>
+                cache.derivations.get(
+                  `${planKey}:${JSON.stringify(inputs, (_, value) => (typeof value === 'bigint' ? value.toString() : value))}`,
+                  () => derive(inputs)
+                )
+            }
+          }
+          const plan = cache ? await cache.plans.get(planKey, discover) : await discover()
+          throwIfAborted(node.target.signal)
           if (!plan) {
             node.notApplicable.push(adapter.name)
             continue

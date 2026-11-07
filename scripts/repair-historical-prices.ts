@@ -16,10 +16,11 @@ import {
   settleRepairFailure,
   settleRepairSuccess
 } from '../src/db/repair-queue'
-import { runGraphBackfill } from './lib/graph-backfill'
+import { createGraphBackfillRun, type GraphBackfillRun, runGraphBackfill } from './lib/graph-backfill'
 import { discoverRepairTargets, finalizedRepairKeys } from './lib/historical-repair'
 import { fetchYearnVaults } from './lib/kong-vaults'
 import { offlineProvider } from './lib/offline-provider'
+import { repairGraphBatches } from './lib/repair-batches'
 
 config({ quiet: true })
 
@@ -115,6 +116,8 @@ export async function processClaims(
     evidenceDir: string
     signal: AbortSignal
     provider?: ReturnType<typeof offlineProvider>
+    graphRun?: GraphBackfillRun
+    graphBatchSize?: number
   }
 ): Promise<RepairWorkerMetrics> {
   const metrics: RepairWorkerMetrics = { completed: 0, missing: 0, unresolved: 0, invalid: 0, errors: 0, deferred: 0 }
@@ -127,7 +130,8 @@ export async function processClaims(
       timeoutMs: 5_000,
       signal: options.signal
     })
-  const groupSize = Math.max(1, Math.min(25, options.concurrency * 5))
+  const groupSize = options.graphBatchSize ?? 50
+  if (!Number.isInteger(groupSize) || groupSize < 1 || groupSize > 100) throw new Error('Invalid graph batch size')
   const groups: RepairLease[][] = []
   for (let offset = 0; offset < claims.length; offset += groupSize)
     groups.push(claims.slice(offset, offset + groupSize))
@@ -159,6 +163,7 @@ export async function processClaims(
         concurrency: options.concurrency,
         providerRps: options.providerRps,
         provider,
+        run: options.graphRun,
         finalizedOnly: true,
         signal: options.signal
       })
@@ -260,6 +265,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       'lease-seconds': { type: 'string', default: '1800' },
       concurrency: { type: 'string', default: '2' },
       'provider-rps': { type: 'string', default: '1' },
+      'graph-batch-size': { type: 'string', default: '50' },
       owner: { type: 'string', default: `historical-repair-${process.pid}` },
       out: { type: 'string' },
       manifest: { type: 'string' }
@@ -278,6 +284,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
   const recentDays = positiveInteger(values['recent-days'], '--recent-days', 365)
   const budgetSeconds = positiveInteger(values['budget-seconds'], '--budget-seconds', 86_400)
   const concurrency = positiveInteger(values.concurrency, '--concurrency', 32)
+  const graphBatchSize = positiveInteger(values['graph-batch-size'], '--graph-batch-size', 100)
   const providerRps = positiveInteger(values['provider-rps'], '--provider-rps', 10)
   const leaseSeconds = positiveInteger(values['lease-seconds'], '--lease-seconds', 86_400)
   if (leaseSeconds < budgetSeconds + 300)
@@ -362,12 +369,9 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       report.claimed = 0
       report.workerResult = totals
       if (targets) report.enqueued = await enqueueRepairTargets(pool, targets)
-      const batchSize = Math.max(1, Math.min(25, concurrency * 5))
-      const batches = targets
-        ? Array.from({ length: Math.ceil(targets.length / batchSize) }, (_, index) =>
-            targets.slice(index * batchSize, (index + 1) * batchSize)
-          )
-        : [undefined]
+      const graphRun = createGraphBackfillRun(pool, true)
+      const batchSize = graphBatchSize
+      const batches = targets ? repairGraphBatches(targets, batchSize) : [undefined]
       let visited = 0
       let longestBatchMs = 0
       for (const batch of batches) {
@@ -399,6 +403,8 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
           concurrency,
           providerRps,
           provider,
+          graphRun,
+          graphBatchSize,
           evidenceDir: outputDir,
           signal: controller.signal
         })

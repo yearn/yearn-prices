@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../../../src/http/errors'
-import { graphKey, resolveHistoricalGraph } from '../../../src/sources/onchain/graph'
+import { graphKey, HistoricalGraphCache, resolveHistoricalGraph } from '../../../src/sources/onchain/graph'
 import { type PricePlan, plannedAdapter } from '../../../src/sources/onchain/plan'
 import type { RecursivePriceTarget, ResolvedPricePath } from '../../../src/sources/onchain/types'
 
@@ -166,4 +166,110 @@ describe('historical price graph', () => {
     expect(result.nodes.find((n) => n.key === graphKey(t(1)))?.path?.priceUsd).toBe(3)
     expect(result.nodes.find((n) => n.key === graphKey(t(2)))?.path?.adapter).toBe('anchor')
   })
+})
+
+it('reuses dependency discoveries across graph batches and batches shared frontier leaves', async () => {
+  const { adapter, discover } = fixture({ 1: [3, 4], 2: [3, 4], 3: [5], 4: [6] })
+  const cache = new HistoricalGraphCache()
+  const market = vi.fn(async (target: RecursivePriceTarget) => (id(target) >= 5 ? price(target) : null))
+  const frontiers: number[][] = []
+  const run = (root: number) =>
+    resolveHistoricalGraph({
+      roots: [t(root)],
+      cache,
+      market,
+      adapters: () => [adapter],
+      prefetch: async (targets) => {
+        frontiers.push(targets.map(id))
+      }
+    })
+  const first = await run(1)
+  const second = await run(2)
+  expect(first.nodes[0].path?.priceUsd).toBe(4)
+  expect(second.nodes[0].path?.priceUsd).toBe(4)
+  expect(discover.mock.calls.filter(([target]) => id(target) === 3)).toHaveLength(1)
+  expect(discover.mock.calls.filter(([target]) => id(target) === 4)).toHaveLength(1)
+  expect(market.mock.calls.filter(([target]) => id(target) === 5)).toHaveLength(1)
+  expect(frontiers).toContainEqual([5, 6])
+  expect(frontiers.filter((frontier) => frontier.includes(5))).toHaveLength(1)
+})
+
+it('never caches traversal cutoffs as a failed dependency', async () => {
+  const { adapter, discover } = fixture({ 1: [2], 2: [3] })
+  const cache = new HistoricalGraphCache()
+  const options = {
+    roots: [t(1)],
+    cache,
+    market: async (target: RecursivePriceTarget) => (id(target) === 3 ? price(target) : null),
+    adapters: () => [adapter],
+    prefetch: async () => {}
+  }
+  expect((await resolveHistoricalGraph({ ...options, maxDepth: 1 })).nodes[0].path).toBeNull()
+  expect((await resolveHistoricalGraph({ ...options, maxDepth: 8 })).nodes[0].path?.priceUsd).toBe(2)
+  expect(discover.mock.calls.filter(([target]) => id(target) === 1)).toHaveLength(1)
+})
+
+it('keeps cached dependencies separate by historical date, block and cancellation context', async () => {
+  const { adapter, discover } = fixture({ 1: [] })
+  const cache = new HistoricalGraphCache()
+  for (const root of [
+    t(1),
+    { ...t(1), timestamp: t(1).timestamp! - 86400 },
+    t(1, 20),
+    { ...t(1), signal: new AbortController().signal }
+  ]) {
+    await resolveHistoricalGraph({
+      roots: [root],
+      cache,
+      market: async () => null,
+      prefetch: async () => {},
+      adapters: () => [adapter]
+    })
+  }
+  expect(discover).toHaveBeenCalledTimes(4)
+})
+
+it('retries rejected plan discovery rather than preserving a transient missing leaf', async () => {
+  const cache = new HistoricalGraphCache()
+  const discover = vi
+    .fn()
+    .mockRejectedValueOnce(new ApiError('UNAVAILABLE', '503'))
+    .mockResolvedValue({
+      dependencies: [],
+      metadata: {},
+      evaluate: () => ({ priceUsd: 7, inputs: [], metadata: {} })
+    })
+  const adapter = plannedAdapter('recovering', discover)
+  const run = () =>
+    resolveHistoricalGraph({
+      roots: [t(1)],
+      cache,
+      market: async () => null,
+      prefetch: async () => {},
+      adapters: () => [adapter]
+    })
+  expect((await run()).nodes[0].reason).toBe('retryable')
+  expect((await run()).nodes[0].path?.priceUsd).toBe(7)
+  expect(discover).toHaveBeenCalledTimes(2)
+})
+
+it('reuses successful derived inputs while rebuilding complete dependency evidence', async () => {
+  const derive = vi.fn(async () => ({ priceUsd: 9, inputs: [], metadata: {} }))
+  const { adapter, discover } = fixture({ 1: [2, 3] }, derive)
+  const cache = new HistoricalGraphCache()
+  const run = () =>
+    resolveHistoricalGraph({
+      roots: [t(1)],
+      cache,
+      market: async (target: RecursivePriceTarget) => (id(target) === 2 ? price(target) : null),
+      prefetch: async () => {},
+      adapters: () => [adapter]
+    })
+  await run()
+  const again = await run()
+  expect(again.nodes[0].path?.priceUsd).toBe(9)
+  expect(again.nodes).toHaveLength(3)
+  expect(again.nodes[0].routes[0].dependencies).toHaveLength(2)
+  expect(derive).toHaveBeenCalledTimes(1)
+  expect(discover.mock.calls.filter(([target]) => id(target) === 1)).toHaveLength(1)
 })

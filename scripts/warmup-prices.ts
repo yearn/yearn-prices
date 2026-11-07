@@ -42,7 +42,7 @@ import {
   runInGroups,
   toFetchTimestamp
 } from '../src/utils'
-import { runGraphBackfill } from './lib/graph-backfill'
+import { createGraphBackfillRun, runGraphBackfill } from './lib/graph-backfill'
 import { fetchYearnVaults, type NormalizedVault } from './lib/kong-vaults'
 import { offlineProvider } from './lib/offline-provider'
 
@@ -529,6 +529,7 @@ async function warmGraphFallbackPrices(
   const underlyings = [...collectUnderlyings(vaults).values()]
   const days = timestamps.filter((timestamp) => isClosedDay(timestamp)).sort((a, b) => b - a)
   const directory = mkdtempSync(join(tmpdir(), 'warmup-graph-'))
+  const graphRun = createGraphBackfillRun(pool)
   for (const eodTimestamp of days) {
     if (Date.now() > deadline) {
       stats.failures += 1
@@ -549,7 +550,8 @@ async function warmGraphFallbackPrices(
         write: true,
         concurrency: 8,
         providerRps: 1,
-        provider: defiLlama
+        provider: defiLlama,
+        run: graphRun
       })
       stats.insertedGraph += summary.inserted
       stats.rejectedImplausible += summary.rejectedImplausible
