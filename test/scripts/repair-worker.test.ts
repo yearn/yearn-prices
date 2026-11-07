@@ -178,3 +178,22 @@ describe('historical repair worker', () => {
     expect(database.query).toHaveBeenCalledTimes(3)
   })
 })
+
+it('leaves attempts unchanged when the drain deadline is reached before new graph work', async () => {
+  const database = db()
+  mocks.runGraphBackfill.mockClear()
+  const result = await processClaims(database, [lease(TOKEN_A), lease(TOKEN_B)], {
+    write: true,
+    deadline: Date.now() - 1,
+    concurrency: 1,
+    providerRps: 1,
+    evidenceDir: '/tmp/repair-worker-test',
+    signal: new AbortController().signal
+  })
+  expect(mocks.runGraphBackfill).not.toHaveBeenCalled()
+  expect(result.deferred).toBe(2)
+  for (const [sql] of database.query.mock.calls) {
+    expect(sql).toContain('lease_owner = NULL')
+    expect(sql).not.toContain('attempts = attempts + 1')
+  }
+})
