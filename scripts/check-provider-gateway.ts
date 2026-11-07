@@ -10,29 +10,42 @@ async function main(): Promise<void> {
     throw new Error('Gateway health requires an HTTPS URL without credentials, query, or fragment')
   }
   endpoint.pathname = '/readyz'
-  const deadline = Date.now() + 300_000
+  // Replacement provisioning has taken about eight minutes in production.
+  // Leave room inside the CI job for image build, deploy and this bounded wait.
+  const started = Date.now()
+  const deadline = started + 15 * 60_000
+  let lastObservation = 'no response'
+  let attempts = 0
   while (Date.now() < deadline) {
+    attempts += 1
     try {
       const response = await fetch(endpoint, {
         headers: { authorization: `Bearer ${token}` },
         redirect: 'error',
         signal: AbortSignal.timeout(10_000)
       })
+      lastObservation = `HTTP ${response.status}`
       if (response.ok) {
         const body = (await response.json()) as { ok?: boolean; revision?: string }
         if (body.ok === true && body.revision === revision) {
           console.log('Provider gateway container is healthy and serving the requested revision')
           return
         }
+        lastObservation = body.ok === true ? 'container revision does not match deployment' : 'container is not ready'
       }
       await response.body?.cancel().catch(() => undefined)
     } catch {
-      // Containers can take several minutes to provision on their first deploy.
+      lastObservation = 'request timed out, failed, or returned invalid JSON'
+      // Both first deployments and replacements can take several minutes.
       // Do not log URLs, authorization, or proxy configuration from errors.
     }
-    await new Promise((resolve) => setTimeout(resolve, 10_000))
+    console.log(
+      `Gateway readiness attempt ${attempts}: ${lastObservation}; elapsed ${Math.round((Date.now() - started) / 1000)}s`
+    )
+    await new Promise((resolve) => setTimeout(resolve, Math.min(10_000, Math.max(0, deadline - Date.now()))))
   }
-  throw new Error('Provider gateway container did not become healthy within five minutes')
+  console.error(`Gateway did not become ready within 15 minutes; last observation: ${lastObservation}`)
+  throw new Error('Provider gateway readiness deadline exceeded')
 }
 
 void main().catch(() => {
