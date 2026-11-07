@@ -15,7 +15,7 @@ export function safePricingFailure(message: string): string | null {
     /^Curve (?:LP has zero total supply|pool has zero reserves) at the requested block$/,
     /^Curve pool has no positive priced anchor reserve$/,
     /^Stable pool anchor liquidity \$[\deE.+-]+ is below \$\d+$/,
-    /^Stable pool (?:factory registration mismatch|reserves exceed token holdings|swap quote has no executable output|derived reserve fails executable-value bound)$/,
+    /^Stable pool (?:factory registration mismatch|reserves exceed token holdings|swap quote has no executable output|derived reserve fails executable-value bound|swaps are paused at the requested block)$/,
     /^Curve oracle pool 0x[a-fA-F0-9]{40} (?:holds \$\d+ of the quote coin, below \$\d+|reads at the stableswap EMA cap|balance is unreadable)$/,
     /^Pool NAV (?:denominator must be positive|produced an invalid price)$/,
     /^Plan could not derive missing inputs$/
@@ -64,7 +64,14 @@ export function graphGapReport(graph: { roots: string[]; nodes: GraphNode[] }, m
         }
       }
     }
-    const blockers: Array<typeof identity & { reason: string; adapter: string; detail: string }> = []
+    const blockers: Array<{
+      chainId: number
+      token: string
+      timestamp: number
+      reason: string
+      adapter: string
+      detail: string
+    }> = []
     const seen = new Set<string>()
     const visit = (node: GraphNode) => {
       if (seen.has(node.key) || node.path) return

@@ -27,6 +27,7 @@ vi.mock('../../scripts/lib/graph-replay', () => ({
       target,
       market: 'price',
       routes: [],
+      attempts: [],
       reason: i === 1 ? 'unsupported' : null,
       path:
         i === 1

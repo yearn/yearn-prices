@@ -25,7 +25,10 @@ const pairAbi = parseAbi([
   'function getAmountOut(uint256 amountIn, address tokenIn) view returns (uint256)'
 ])
 
-const factoryAbi = parseAbi(['function getPool(address,address,bool) view returns (address)'])
+const factoryAbi = parseAbi([
+  'function getPool(address,address,bool) view returns (address)',
+  'function isPaused() view returns (bool)'
+])
 // Official Velodrome V2 and Aerodrome factories. The factory must attest the
 // pool at the requested block before we trust its stable-swap quote interface.
 export const STABLE_PAIR_FACTORIES: Readonly<Record<number, Address>> = {
@@ -176,15 +179,24 @@ export function pairAdapter(options: OnchainAdapterOptions): PlannedPriceAdapter
             })
           )
           if (reportedFactory?.toLowerCase() !== factory) return null
-          const registered = await state.client.readContract({
-            address: factory,
-            abi: factoryAbi,
-            functionName: 'getPool',
-            args: [token0 as Address, token1 as Address, true],
-            blockNumber: state.blockNumber
-          })
+          const [registered, paused] = await Promise.all([
+            state.client.readContract({
+              address: factory,
+              abi: factoryAbi,
+              functionName: 'getPool',
+              args: [token0 as Address, token1 as Address, true],
+              blockNumber: state.blockNumber
+            }),
+            state.client.readContract({
+              address: factory,
+              abi: factoryAbi,
+              functionName: 'isPaused',
+              blockNumber: state.blockNumber
+            })
+          ])
           if (registered.toLowerCase() !== target.token.toLowerCase())
             throw new InvalidPricingError('Stable pool factory registration mismatch')
+          if (paused) throw new InvalidPricingError('Stable pool swaps are paused at the requested block')
           if (pricedValue < MIN_STABLE_ANCHOR_USD)
             throw new InvalidPricingError(
               `Stable pool anchor liquidity $${pricedValue} is below $${MIN_STABLE_ANCHOR_USD}`

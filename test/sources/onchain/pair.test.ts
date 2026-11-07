@@ -151,7 +151,7 @@ describe('canonical stable-pool missing-leg quotes', () => {
       getReserves: [reserveA, reserveB, 0n],
       getAmountOut: (amount: bigint) => (amount === reserveB ? 15_000n * 10n ** 6n : amount / (2n * 10n ** 12n))
     },
-    [factory]: { getPool: LP },
+    [factory]: { getPool: LP, isPaused: false },
     [TOKEN_A]: { decimals: 6, balanceOf: reserveA },
     [TOKEN_B]: { decimals: 18, balanceOf: reserveB }
   })
@@ -185,6 +185,32 @@ describe('canonical stable-pool missing-leg quotes', () => {
     const result = await priceWith(pairAdapter(adapterOptions(data)), { [TOKEN_A]: 1 }, LP, 10)
     expect(result.path).toBeNull()
     expect(result.failure?.reason).toBe('invalid')
+  })
+
+  it('rejects paused swaps even if the quote function returns a value', async () => {
+    const data = stableReads()
+    data[factory].isPaused = true
+    const result = await priceWith(pairAdapter(adapterOptions(data)), { [TOKEN_A]: 1 }, LP, 10)
+    expect(result.path).toBeNull()
+    expect(result.failure?.reason).toBe('invalid')
+  })
+
+  it('pins factory, backing and swap reads to the requested historical block', async () => {
+    const client = fakeClient(stableReads())
+    const calls: { blockNumber?: bigint; functionName: string }[] = []
+    const recording = {
+      ...client,
+      readContract: (args: { blockNumber?: bigint; functionName: string }) => {
+        calls.push(args)
+        return client.readContract(args as never)
+      }
+    } as typeof client
+    const result = await new RecursivePriceEngine(marketFor({ [TOKEN_A]: 1 }), [
+      pairAdapter({ clientForChain: () => recording })
+    ]).resolve({ chainId: 10, token: LP, timestamp: BLOCK_TIMESTAMP + 30, blockNumber: 19_000_000 })
+    expect(result.path?.priceUsd).toBeCloseTo(500)
+    expect(calls.filter((call) => call.functionName === 'getAmountOut')).toHaveLength(2)
+    expect(new Set(calls.map((call) => call.blockNumber))).toEqual(new Set([19_000_000n]))
   })
 
   it('rejects a thin independently priced reserve', async () => {
