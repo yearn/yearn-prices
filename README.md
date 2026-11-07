@@ -222,3 +222,11 @@ TTL (`s-maxage=2592000`) and a one-hour browser TTL (`max-age=3600`). Partial
 and missing results use five-minute TTLs. A cache revision bump makes repaired
 data visible at the edge; it cannot evict responses already stored by browsers
 or downstream caches.
+
+Provider and RPC cooldowns honor Retry-After up to a one-hour operational ceiling,
+including numeric and HTTP-date headers. This bounds recovery from accidentally
+millisecond-valued or otherwise implausibly long headers. Shorter request/job
+wait budgets still fail promptly without resetting the shared cooldown. Invalid
+RPC configuration disables only RPC-backed sources. Empty or failed proxy lists
+leave direct fetch available; headerless offline 502/503/504 responses use normal
+request retries without imposing a provider-wide cooldown.

@@ -9,7 +9,7 @@
  * Run locally with:
  *   PRICE_GATEWAY_TOKEN=... bun run scripts/provider-gateway.ts
  */
-import { parseRetryAfter } from '../src/clients/http-client'
+import { MAX_PROVIDER_COOLDOWN_MS, parseRetryAfter } from '../src/clients/http-client'
 import {
   createProviderTransport,
   DEFAULT_ALLOWED_HOSTS,
@@ -117,7 +117,7 @@ function constantTimeEqual(left: string, right: string): boolean {
 
 function retryAfterMs(response: Response): number {
   const value = response.headers.get('retry-after')
-  return parseRetryAfter(value, Number.MAX_SAFE_INTEGER) ?? (response.status === 429 ? 60_000 : 5_000)
+  return parseRetryAfter(value, MAX_PROVIDER_COOLDOWN_MS) ?? (response.status === 429 ? 60_000 : 5_000)
 }
 
 async function readBoundedBody(response: Response, maxBytes: number): Promise<Uint8Array> {

@@ -249,7 +249,13 @@ export class ProxyPool implements ProxyPoolLike {
 
   next(): string | null {
     const routes: Array<string | null> = [null, ...this.proxies]
-    if (!routes.length) return null
+    if (this.proxies.length === 0) {
+      // An unavailable optional list must not disable the only usable route.
+      // Provider-level cooldowns still govern when direct requests may retry.
+      this.currentRoute = null
+      this.rotateCurrentRoute = false
+      return null
+    }
     const now = this.now()
     let currentIndex = routes.indexOf(this.currentRoute)
     if (currentIndex < 0) {

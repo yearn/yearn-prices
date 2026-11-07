@@ -7,6 +7,18 @@ import {
 } from '../../src/clients/proxy-pool'
 
 describe('proxy pool', () => {
+  it.each([503, 200])('keeps direct available when list status %s yields no proxies', async (status) => {
+    const pool = new ProxyPool({
+      listUrls: ['https://list.example/proxies.txt'],
+      fetchImpl: vi.fn(async () => new Response('invalid proxy', { status })) as typeof fetch
+    })
+    await pool.refresh(true)
+    for (let i = 0; i < 10; i += 1) {
+      pool.reportFailure(null)
+      expect(pool.next()).toBeNull()
+    }
+  })
+
   afterEach(() => vi.restoreAllMocks())
 
   it('normalizes public entries and rejects private routes', () => {

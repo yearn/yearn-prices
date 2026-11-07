@@ -26,7 +26,10 @@ export function createOfflineDefiLlamaClient(rps: number, options: OfflineProvid
     signal: options.signal,
     transport: options.transport,
     onRateLimit: (retryAfterMs) => rateLimiter.extendCooldown(retryAfterMs ?? 60_000),
-    onCooldown: (retryAfterMs) => rateLimiter.extendCooldown(retryAfterMs ?? 60_000)
+    onCooldown: (retryAfterMs, _url, status) => {
+      if (retryAfterMs !== null) rateLimiter.extendCooldown(retryAfterMs)
+      else if (status === 429) rateLimiter.extendCooldown(60_000)
+    }
   })
 }
 

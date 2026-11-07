@@ -1,5 +1,5 @@
 import type { PublicClient } from 'viem'
-import { parseRetryAfter, SharedCooldownRateLimiter } from '../../clients/http-client'
+import { MAX_PROVIDER_COOLDOWN_MS, parseRetryAfter, SharedCooldownRateLimiter } from '../../clients/http-client'
 import { estimateBlockByTimestamp, getChainClient } from '../../clients/rpc'
 import { ApiError } from '../../http/errors'
 import type { Env } from '../../types'
@@ -319,7 +319,7 @@ export class BobsHistoricalSource extends HistoricalPriceSourceBase {
     }
 
     if (response.status === 429 || response.status === 503 || response.status >= 500) {
-      const retryAfter = parseRetryAfter(response.headers?.get?.('retry-after') ?? null, Number.MAX_SAFE_INTEGER)
+      const retryAfter = parseRetryAfter(response.headers?.get?.('retry-after') ?? null, MAX_PROVIDER_COOLDOWN_MS)
       this.gate.extendCooldown(retryAfter ?? 60_000)
       void response.body?.cancel().catch(() => undefined)
       throw unavailable(`Bobs API returned status ${response.status}`)

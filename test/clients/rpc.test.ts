@@ -191,15 +191,24 @@ describe('estimateBlockByTimestamp', () => {
 })
 
 describe('getChainClient', () => {
+  it.each(['ftp://bad.test', 'not a url'])('disables RPC sources for invalid configuration: %s', (url) => {
+    expect(getChainClient(1, { RPC_URL_1: url })).toBeNull()
+  })
+
+  it('disables RPC sources when too many endpoints are configured', () => {
+    const urls = Array.from({ length: 17 }, (_, i) => `https://rpc${i}.test`)
+    expect(getChainClient(1, { RPC_URLS_1: JSON.stringify(urls) })).toBeNull()
+  })
+
   afterEach(() => vi.unstubAllGlobals())
 
-  it('honors the full Retry-After for transient RPC responses', () => {
+  it('honors Retry-After up to the one-hour operational ceiling', () => {
     const now = 1_700_000_000_000
 
     expect(rpcCooldownDelay(429, '7', now)).toBe(7_000)
     expect(rpcCooldownDelay(503, new Date(now + 12_000).toUTCString(), now)).toBe(12_000)
     expect(rpcCooldownDelay(500, '60', now)).toBe(0)
-    expect(rpcCooldownDelay(429, '999999999', now)).toBe(999999999000)
+    expect(rpcCooldownDelay(429, '999999999', now)).toBe(3_600_000)
   })
 
   it('skips a rate-limited primary on subsequent reads while the backup works', async () => {

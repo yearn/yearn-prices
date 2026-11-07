@@ -137,3 +137,20 @@ it('opts into today-compatible lookup and exposes batch endpoint and observation
   const requestUrl = new URL(fetchMock.mock.calls[0][0] as string)
   expect(JSON.parse(requestUrl.searchParams.get('coins')!)).toEqual({ [coin]: [now] })
 })
+
+it.each([502, 503, 504])('does not gate siblings after headerless %s', async (status) => {
+  vi.useFakeTimers()
+  vi.spyOn(console, 'warn').mockImplementation(() => {})
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(new Response('{}', { status }))
+    .mockImplementation(async () => Response.json({ coins: {} }))
+  vi.stubGlobal('fetch', fetchMock)
+  const client = createOfflineDefiLlamaClient(10)
+  const first = client.getHistorical(1704067199, ['ethereum:0x1'])
+  await vi.advanceTimersByTimeAsync(0)
+  await expect(client.getHistorical(1704067199, ['ethereum:0x2'])).resolves.toEqual({ coins: {} })
+  expect(fetchMock).toHaveBeenCalledTimes(2)
+  await vi.advanceTimersByTimeAsync(1000)
+  await first
+})

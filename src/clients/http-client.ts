@@ -1,6 +1,9 @@
 import { ApiError, type ErrorCode } from '../http/errors'
 import type { ProviderTransport } from './provider-transport'
 
+// Operational ceiling: retry implausibly long provider lockouts after one hour.
+export const MAX_PROVIDER_COOLDOWN_MS = 60 * 60 * 1000
+
 const MAX_TIMER_DELAY_MS = 2_147_483_647
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -83,7 +86,7 @@ export class SharedCooldownRateLimiter extends SlidingWindowRateLimiter {
 
   extendCooldown(delayMs: number): void {
     if (!Number.isFinite(delayMs) || delayMs <= 0) return
-    this.cooldownUntil = Math.max(this.cooldownUntil, Date.now() + delayMs)
+    this.cooldownUntil = Math.max(this.cooldownUntil, Date.now() + Math.min(delayMs, MAX_PROVIDER_COOLDOWN_MS))
   }
 
   /** Whether waiting for the provider gate still fits this limiter's budget. */
@@ -171,9 +174,9 @@ const RETRY_DELAYS = [1000, 2000, 4000]
 export const DEFAULT_RETRY_AFTER_CAP_MS = 60_000
 
 /** A finite upper bound used only to avoid numeric overflow while retaining
- * provider-supplied waits. Per-attempt retry delays still use retryAfterCapMs.
+ * provider-supplied waits up to the one-hour operational ceiling. Per-attempt retry delays still use retryAfterCapMs.
  */
-const MAX_RETRY_AFTER_MS = Number.MAX_SAFE_INTEGER
+const MAX_RETRY_AFTER_MS = MAX_PROVIDER_COOLDOWN_MS
 
 export function parseRetryAfter(value: string | null, capMs: number, now = Date.now()): number | null {
   if (value === null) {
@@ -338,7 +341,7 @@ export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig
     if (response.status === 429 || response.status === 502 || response.status === 503 || response.status === 504) {
       // A shared limiter is the provider-wide gate even when a caller did not
       // install an explicit callback. This intentionally uses the uncapped
-      // delay; retryAfterCapMs only bounds one request's retry sleep.
+      // delay (up to the one-hour ceiling); retryAfterCapMs only bounds one retry sleep.
       const sharedCooldown = cooldown ?? (response.status === 429 ? (config.defaultCooldownMs ?? null) : null)
       if (sharedCooldown !== null && config.rateLimiter instanceof SharedCooldownRateLimiter) {
         config.rateLimiter.extendCooldown(sharedCooldown)

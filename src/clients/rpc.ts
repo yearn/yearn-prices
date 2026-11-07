@@ -1,6 +1,6 @@
 import { BlockNotFoundError, createPublicClient, defineChain, fallback, http, type PublicClient, parseAbi } from 'viem'
 import { CHAIN_ID_TO_NAME } from '../utils/chains'
-import { parseRetryAfter } from './http-client'
+import { MAX_PROVIDER_COOLDOWN_MS, parseRetryAfter } from './http-client'
 
 const SHARE_PRICE_ABI_V2 = parseAbi(['function pricePerShare() view returns (uint256)'])
 const SHARE_PRICE_ABI_V3 = parseAbi(['function convertToAssets(uint256) view returns (uint256)'])
@@ -10,7 +10,7 @@ const MAX_SAMPLES_PER_CHAIN = 64
 const MAX_CLIENT_CACHE = 64
 const MAX_RPC_ENDPOINTS = 16
 const RPC_REQUEST_TIMEOUT_MS = 8_000
-const RPC_MAX_COOLDOWN_MS = Number.MAX_SAFE_INTEGER
+const RPC_MAX_COOLDOWN_MS = MAX_PROVIDER_COOLDOWN_MS
 const RPC_RATE_LIMIT_COOLDOWN_MS = 60_000
 const RPC_SERVER_FAILURE_COOLDOWN_MS = 30_000
 const RPC_NETWORK_FAILURE_COOLDOWN_MS = 5_000
@@ -173,7 +173,7 @@ function isTransientRpcStatus(status: number | undefined): boolean {
 
 /**
  * Computes the endpoint quarantine duration for a response status. Provider
- * Retry-After is retained in full. Cooling endpoints fail fast rather than
+ * Retry-After is retained up to the one-hour operational ceiling. Cooling endpoints fail fast rather than
  * sleeping, so even a distant date cannot keep a request pending indefinitely.
  * Absent headers use short defaults to avoid retrying a bad node on every read.
  */
@@ -376,10 +376,17 @@ export function rpcUrlsForChain(chainId: number, env?: Record<string, string | u
 
 /**
  * Returns a memoized client for `chainId`, or null when neither RPC setting
- * is configured. Callers decide how to surface the missing-RPC gap.
+ * is configured or the configuration is invalid. Callers decide how to surface the missing-RPC gap.
  */
 export function getChainClient(chainId: number, env?: Record<string, string | undefined>): PublicClient | null {
-  const rpcUrls = rpcUrlsForChain(chainId, env)
+  let rpcUrls: string[]
+  try {
+    rpcUrls = rpcUrlsForChain(chainId, env)
+  } catch {
+    // Invalid operator configuration disables RPC-backed sources only. Keep
+    // the strict parser available to diagnostics without breaking market feeds.
+    return null
+  }
   if (rpcUrls.length === 0) return null
 
   // Keyed by the complete ordered URL set as well as chain: one isolate serves
