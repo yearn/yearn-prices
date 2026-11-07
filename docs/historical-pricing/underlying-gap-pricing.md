@@ -13,9 +13,17 @@ validation, finalization and a database readback are separate steps.
   EMA, stored rates, decimals and the existing $20,000 quote-liquidity floor
   are checked. No ETH peg is assumed. The pool is listed by the
   [Curve pool API](https://api.curve.fi/api/getPools/all/ethereum).
+- lvlUSD can use the reviewed lvlUSD/USDC Curve pool
+  `0x1220868672D5B10F3E1cB9Ab519E4d0B08545ea4` with the same historical
+  membership, EMA, rate and liquidity checks. This anchors its nested slvlUSD LP.
+- Reserve's static Compound v3 wrapper uses `convertStaticToDynamic`, principal
+  backing, pause checks and base redemption liquidity at the historical block.
+  The base USDC price remains an independent dependency. This repairs the
+  missing leaf in hyUSDe's redemption basket. See the
+  [reviewed wrapper source](https://github.com/reserve-protocol/protocol/blob/9ee60f142f9f5c1fe8bc50eef915cf33124a534f/contracts/plugins/assets/compoundv3/CusdcV3Wrapper.sol).
 - Stable Velodrome V2 / Aerodrome LPs can derive one genuinely missing
-  constituent from the pool's historical `getAmountOut` quote. Both missing
-  constituents still require an independent priced anchor. Factory registration,
+  constituent from the pool's historical `getAmountOut` quote. Pools with both
+  constituents missing remain unresolved. Factory registration,
   actual token holdings, a $20,000 independently priced reserve and the
   full-reserve payout are required. Transport failures never become missing
   inputs. These are pool-implied valuations, not independent token oracle prices.

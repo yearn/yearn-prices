@@ -18,6 +18,7 @@ export function safePricingFailure(message: string): string | null {
     /^Stable pool (?:factory registration mismatch|reserves exceed token holdings|swap quote has no executable output|derived reserve fails executable-value bound|swaps are paused at the requested block)$/,
     /^Curve oracle pool 0x[a-fA-F0-9]{40} (?:holds \$\d+ of the quote coin, below \$\d+|reads at the stableswap EMA cap|balance is unreadable)$/,
     /^Pool NAV (?:denominator must be positive|produced an invalid price)$/,
+    /^Compound v3 wrapper (?:identity or decimals mismatch|redemption is paused|has insufficient principal backing|has insufficient base redemption liquidity)$/,
     /^Plan could not derive missing inputs$/
   ]
   return patterns.some((pattern) => pattern.test(value)) ? value : null

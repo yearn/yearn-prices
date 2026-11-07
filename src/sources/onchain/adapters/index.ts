@@ -4,6 +4,7 @@ import { aaveAdapter } from './aave'
 import { balancerAdapter } from './balancer'
 import { beetsBarAdapter } from './beets-bar'
 import { compoundAdapter } from './compound'
+import { compoundV3WrapperAdapter } from './compound-v3-wrapper'
 import { curveAdapter } from './curve'
 import { curveOracleAdapter } from './curve-oracle'
 import { erc4626Adapter } from './erc4626'
@@ -24,6 +25,7 @@ export function createOnchainPriceAdapters(options: OnchainAdapterOptions): Plan
     yip88LiquidLockerAdapter(options),
     curveOracleAdapter(options),
     nativeShareAdapter(options),
+    compoundV3WrapperAdapter(options),
     reserveRTokenAdapter(options),
     beetsBarAdapter(options),
     erc4626Adapter(options),
