@@ -48,16 +48,23 @@ describe('createDefiLlamaSpotSource', () => {
   })
 
   it('rejects stale and future observations as misses', async () => {
-    const getCurrent = vi.fn(async () => ({
-      coins: {
-        [`ethereum:${WETH}`]: { price: 1, timestamp: NOW - CURRENT_MAX_AGE_SECONDS - 1 },
-        [`ethereum:${OTHER}`]: { price: 1, timestamp: NOW + CURRENT_MAX_FUTURE_SKEW_SECONDS + 1 }
-      }
-    }))
-    const source = createDefiLlamaSpotSource({ getCurrent })
+    // A wall-clock second ticking between module import and the second lookup
+    // would move the future observation back inside the accepted skew window.
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(NOW * 1000)
+    try {
+      const getCurrent = vi.fn(async () => ({
+        coins: {
+          [`ethereum:${WETH}`]: { price: 1, timestamp: NOW - CURRENT_MAX_AGE_SECONDS - 1 },
+          [`ethereum:${OTHER}`]: { price: 1, timestamp: NOW + CURRENT_MAX_FUTURE_SKEW_SECONDS + 1 }
+        }
+      }))
+      const source = createDefiLlamaSpotSource({ getCurrent })
 
-    await expect(source.getSpotPrice(1, WETH)).resolves.toBeNull()
-    await expect(source.getSpotPrice(1, OTHER)).resolves.toBeNull()
+      await expect(source.getSpotPrice(1, WETH)).resolves.toBeNull()
+      await expect(source.getSpotPrice(1, OTHER)).resolves.toBeNull()
+    } finally {
+      clock.mockRestore()
+    }
   })
 
   it('coalesces concurrent lookups and splits large batches', async () => {
