@@ -52,7 +52,16 @@ export function compoundV3WrapperAdapter(options: OnchainAdapterOptions): Planne
     if (comet.toLowerCase() !== COMET || base.toLowerCase() !== USDC || shareDecimals !== 6 || baseDecimals !== 6)
       throw new InvalidPricingError('Compound v3 wrapper identity or decimals mismatch')
     if (transferPaused || withdrawPaused) throw new InvalidPricingError('Compound v3 wrapper redemption is paused')
-    if (totalSupplyRaw <= 0n || backing[0] < totalSupplyRaw)
+    // The reviewed withdraw path documents principal rounding. Allow at most
+    // one part per billion of accumulated rounding, and still deduct it from
+    // NAV. Material deficits never inherit the nominal conversion rate.
+    const backingPrincipalRaw = backing[0] < totalSupplyRaw ? backing[0] : totalSupplyRaw
+    if (
+      totalSupplyRaw <= 0n ||
+      backingPrincipalRaw <= 0n ||
+      backingPrincipalRaw >= 2n ** 104n ||
+      totalSupplyRaw - backingPrincipalRaw > totalSupplyRaw / 1_000_000_000n
+    )
       throw new InvalidPricingError('Compound v3 wrapper has insufficient principal backing')
     const oneShareRaw = 10n ** BigInt(shareDecimals)
     const convertedAssetsRaw = await client.readContract({
@@ -64,6 +73,13 @@ export function compoundV3WrapperAdapter(options: OnchainAdapterOptions): Planne
     })
     if (convertedAssetsRaw <= 0n || cashRaw < convertedAssetsRaw)
       throw new InvalidPricingError('Compound v3 wrapper has insufficient base redemption liquidity')
+    const convertedBackingRaw = await client.readContract({
+      address,
+      abi: wrapperAbi,
+      functionName: 'convertStaticToDynamic',
+      args: [backingPrincipalRaw],
+      blockNumber
+    })
     const metadata = {
       ...blockEvidence(state, target),
       method: 'convertStaticToDynamic',
@@ -72,6 +88,8 @@ export function compoundV3WrapperAdapter(options: OnchainAdapterOptions): Planne
       valuationRule: 'principal-backed-static-comet-conversion',
       oneShareRaw: rawState(oneShareRaw),
       convertedAssetsRaw: rawState(convertedAssetsRaw),
+      convertedBackingRaw: rawState(convertedBackingRaw),
+      principalRoundingShortfallRaw: rawState(totalSupplyRaw - backingPrincipalRaw),
       totalSupplyRaw: rawState(totalSupplyRaw),
       backingPrincipalRaw: rawState(backing[0]),
       cashRaw: rawState(cashRaw),
@@ -83,7 +101,13 @@ export function compoundV3WrapperAdapter(options: OnchainAdapterOptions): Planne
       metadata,
       evaluate([input]) {
         return {
-          priceUsd: calculateWrapperPrice(convertedAssetsRaw, baseDecimals, oneShareRaw, shareDecimals, input.priceUsd),
+          priceUsd: calculateWrapperPrice(
+            convertedBackingRaw,
+            baseDecimals,
+            totalSupplyRaw,
+            shareDecimals,
+            input.priceUsd
+          ),
           blockNumber: state.numericBlockNumber,
           inputs: [recursiveInput(input, metadata)],
           metadata

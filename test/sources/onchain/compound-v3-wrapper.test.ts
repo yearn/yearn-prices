@@ -8,7 +8,12 @@ const wrapper = '0x27f2f159fe990ba83d57f39fd69661764bebf37a'
 const comet = '0xc3d688b66703497daa19211eedff47f25384cdc3'
 const usdc = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'
 const reads = () => ({
-  [wrapper]: { underlyingComet: comet, decimals: 6, totalSupply: 100_000_000n, convertStaticToDynamic: 1_200_000n },
+  [wrapper]: {
+    underlyingComet: comet,
+    decimals: 6,
+    totalSupply: 100_000_000n,
+    convertStaticToDynamic: (amount: bigint) => (amount * 6n) / 5n
+  },
   [comet]: {
     baseToken: usdc,
     userBasic: [100_000_000n, 0n, 0n, 0, 0],
@@ -35,6 +40,21 @@ describe('Reserve static Compound v3 wrapper', () => {
     const result = await priceWith(compoundV3WrapperAdapter(adapterOptions(data)), { [usdc]: 1 }, wrapper)
     expect(result.path).toBeNull()
     expect(result.failure?.reason).toBe('invalid')
+  })
+
+  it('deducts tiny principal rounding from NAV and rejects a material deficit', async () => {
+    const data = reads()
+    data[wrapper].totalSupply = 5_500_000_000_000n
+    data[comet].userBasic[0] = data[wrapper].totalSupply - 76n
+    const adapter = compoundV3WrapperAdapter(adapterOptions(data))
+    const result = await priceWith(adapter, { [usdc]: 1 }, wrapper)
+    expect(result.path?.priceUsd).toBeLessThan(1.2)
+    expect(result.path?.priceUsd).toBeGreaterThan(1.199999999)
+    expect(result.path?.metadata.principalRoundingShortfallRaw).toBe('76')
+    data[comet].userBasic[0] = data[wrapper].totalSupply - 10_000n
+    const rejected = await priceWith(compoundV3WrapperAdapter(adapterOptions(data)), { [usdc]: 1 }, wrapper)
+    expect(rejected.path).toBeNull()
+    expect(rejected.failure?.reason).toBe('invalid')
   })
 
   it('pins every read to the historical block and propagates transport failure', async () => {
