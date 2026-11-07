@@ -216,6 +216,17 @@ describe('curveAdapter', () => {
     expect(result.failure?.reason).toBe('invalid')
   })
 
+  it('refuses to price reserves the pool does not hold, and prices backed reserves', async () => {
+    const drained = { ...reads, [TOKEN_A]: { decimals: 6, balanceOf: 0n } }
+    const result = await priceWith(curveAdapter(adapterOptions(drained)), { [TOKEN_A]: 1 }, LP)
+    expect(result.path).toBeNull()
+    expect(result.failure?.reason).toBe('invalid')
+
+    const backed = { ...reads, [TOKEN_A]: { decimals: 6, balanceOf: 100n * 10n ** 6n } }
+    const priced = await priceWith(curveAdapter(adapterOptions(backed)), { [TOKEN_A]: 1 }, LP)
+    expect(priced.path?.priceUsd).toBeCloseTo(2)
+  })
+
   it('returns no price when no coin count is authoritative', async () => {
     const result = await priceWith(curveAdapter(adapterOptions({ [LP]: { minter: CURVE_POOL, decimals: 18 } })), {}, LP)
 
