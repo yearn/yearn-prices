@@ -202,6 +202,16 @@ deploy waits for gateway success, or skips this dependency when the gateway is
 disabled. The flag controls CI deployment only: to return to direct pricing, clear `PRICE_GATEWAY_URL` in `yearn-price/prd` (and `warmup` if used), then deploy that configuration before retiring the gateway. Deleting a Doppler key alone does not remove an existing Worker secret. PR checks build the gateway Worker and Linux image without credentials.
 Enso credentials are forwarded per request and are not stored on the gateway.
 
+The pricing Worker's `global_fetch_strictly_public` compatibility flag is required
+when the gateway uses a `workers.dev` URL on the same account. Without it,
+Cloudflare rejects the Worker-to-gateway request with error 1042, even though
+gateway readiness and offline repair requests succeed. Stored historical prices
+still work, but historical cache misses return 503. Keep the flag in the pricing
+Worker configuration when deploying; see [Cloudflare's fetch documentation](https://developers.cloudflare.com/workers/runtime-apis/fetch/).
+Provider transport also uses `redirect: 'manual'` and rejects 3xx responses:
+Workers does not support `redirect: 'error'`. This keeps credentials from being
+forwarded to redirect destinations while allowing the initial request to run.
+
 `bun run gateway:build` bundles the gateway Worker without deploying;
 `bun run gateway:deploy` deploys it with the local pinned Wrangler and a running
 Docker engine. For an existing host, build `Dockerfile.gateway` and publish port

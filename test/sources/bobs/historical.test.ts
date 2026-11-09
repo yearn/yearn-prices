@@ -98,6 +98,18 @@ describe('BobsHistoricalSource', () => {
       'X-Signer': expect.any(String),
       'X-Signature': 'signature'
     })
+    expect(fetchMock.mock.calls[1][1]?.redirect).toBe('manual')
+  })
+
+  it('rejects redirects without forwarding signing credentials', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(response(302, undefined, { location: 'https://untrusted.example/collect' }))
+    await expect(source(fetchMock).getHistoricalPrice(CHAIN, TOKEN, BASE_TIMESTAMP + 50)).rejects.toMatchObject({
+      code: 'UNAVAILABLE'
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0][1]?.redirect).toBe('manual')
   })
 
   it('accepts a positive numeric response and caches the exact block result', async () => {

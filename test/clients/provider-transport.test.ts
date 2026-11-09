@@ -14,6 +14,7 @@ describe('provider transport', () => {
 
   it('uses a gateway and keeps provider authorization separate', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      expect(init?.redirect).toBe('manual')
       const headers = new Headers(init?.headers)
       expect(headers.get('authorization')).toBe('Bearer gateway')
       expect(headers.get('x-provider-authorization')).toBe('Bearer enso')
@@ -29,6 +30,31 @@ describe('provider transport', () => {
     })
     expect(String(fetchImpl.mock.calls[0]?.[0])).toContain('https://gateway.example/')
     expect(String(fetchImpl.mock.calls[0]?.[0])).toContain(encodeURIComponent('https://api.enso.build/'))
+  })
+
+  it.each([301, 302, 303, 307, 308])('rejects a %i redirect without forwarding gateway credentials', async (status) => {
+    const cancelled = vi.fn()
+    const response = new Response(new ReadableStream({ cancel: cancelled }), {
+      status,
+      headers: { location: 'https://untrusted.example/collect' }
+    })
+    const fetchImpl = vi.fn<typeof fetch>(async (_input, init) => {
+      // Cloudflare rejects "error" at request construction, before network I/O.
+      if (init?.redirect === 'error') throw new TypeError('Unsupported redirect mode')
+      expect(init?.redirect).toBe('manual')
+      return response
+    })
+    const transport = createProviderTransport({
+      gatewayUrl: 'https://gateway.example',
+      gatewayToken: 'gateway',
+      fetchImpl
+    })
+    await expect(transport.fetch('https://coins.llama.fi/batchHistorical', { redirect: 'follow' })).rejects.toThrow(
+      'Provider transport request failed'
+    )
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(new URL(String(fetchImpl.mock.calls[0]?.[0])).hostname).toBe('gateway.example')
+    expect(cancelled).toHaveBeenCalledTimes(1)
   })
 
   it('quarantines a timed-out route while preserving timeout diagnostics', async () => {
