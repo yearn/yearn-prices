@@ -55,11 +55,11 @@ function urlFor(input: RequestInfo | URL): URL {
 }
 
 function copyInit(init: RequestInit | undefined): RequestInit | undefined {
-  if (!init) return { redirect: 'error' }
+  if (!init) return { redirect: 'manual' }
   const headers = init.headers === undefined ? undefined : new Headers(init.headers)
-  // Provider clients never follow redirects, including redirects returned by
-  // a malicious proxy or a compromised list endpoint.
-  return { ...init, redirect: 'error', ...(headers ? { headers } : {}) }
+  // Workers rejects redirect: 'error' before sending the request. Inspect
+  // redirects ourselves so relay/provider credentials never follow Location.
+  return { ...init, redirect: 'manual', ...(headers ? { headers } : {}) }
 }
 
 function isBunRuntime(): boolean {
@@ -138,6 +138,10 @@ export function createProviderTransport(options: ProviderTransportOptions = {}):
 
       try {
         const response = await fetchImpl(requestInput, requestInit)
+        if (response.status >= 300 && response.status < 400) {
+          void response.body?.cancel().catch(() => {})
+          throw new Error('Provider redirects are not allowed')
+        }
         responseRoutes.set(response, proxy)
         if (response.status === 429 || response.status === 502 || response.status === 503 || response.status === 504) {
           options.pool?.reportFailure(proxy)

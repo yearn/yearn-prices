@@ -301,7 +301,9 @@ export class BobsHistoricalSource extends HistoricalPriceSourceBase {
     try {
       const signal = this.timeoutMs > 0 ? AbortSignal.timeout(this.timeoutMs) : undefined
       response = await this.fetchImpl(`${this.baseUrl}${path}`, {
-        redirect: 'error',
+        // Workers supports manual redirect handling; the non-2xx check below
+        // rejects redirects without forwarding the signing credentials.
+        redirect: 'manual',
         headers: {
           accept: 'application/json',
           'X-Signer': this.signer,
