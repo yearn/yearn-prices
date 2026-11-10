@@ -224,11 +224,23 @@ describe('curveAdapter', () => {
     expect(result.failure?.reason).toBe('invalid')
   })
 
-  it('refuses to price reserves the pool does not hold, and prices backed reserves', async () => {
+  it('values only the reserves the pool holds', async () => {
     const drained = { ...reads, [TOKEN_A]: { decimals: 6, balanceOf: 0n } }
     const result = await priceWith(curveAdapter(adapterOptions(drained)), { [TOKEN_A]: 1 }, LP)
     expect(result.path).toBeNull()
     expect(result.failure?.reason).toBe('invalid')
+
+    const partial = {
+      [LP]: reads[LP],
+      [CURVE_POOL]: { token: LP, N_COINS: 2n, coins: [TOKEN_A, TOKEN_B], balances: [100n * 10n ** 6n, 10n ** 27n] },
+      [TOKEN_A]: { decimals: 6, balanceOf: 100n * 10n ** 6n },
+      [TOKEN_B]: { decimals: 18, balanceOf: 0n }
+    }
+    const held = await priceWith(curveAdapter(adapterOptions(partial)), { [TOKEN_A]: 1, [TOKEN_B]: 0.35 }, LP)
+    expect(held.path?.priceUsd).toBeCloseTo(1)
+    expect(held.path?.metadata.coins).toContainEqual(
+      expect.objectContaining({ balanceRaw: '0', recordedBalanceRaw: (10n ** 27n).toString() })
+    )
 
     const backed = { ...reads, [TOKEN_A]: { decimals: 6, balanceOf: 100n * 10n ** 6n } }
     const priced = await priceWith(curveAdapter(adapterOptions(backed)), { [TOKEN_A]: 1 }, LP)

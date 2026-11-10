@@ -69,6 +69,7 @@ interface CurveCoin {
   onchainAddress: string
   decimals: number
   balanceRaw: bigint
+  recordedBalanceRaw?: bigint
 }
 
 interface CurveCoinCount {
@@ -490,7 +491,7 @@ export function curveAdapter(options: OnchainAdapterOptions): PlannedPriceAdapte
         throw new Error(`No wrapped native asset is configured for Curve on chain ${state.chainId}`)
       }
       const decimals = isNative ? 18 : await tokenDecimals(state.client, coin.address, state.blockNumber)
-      const balanceRaw = await state.client.readContract({
+      const recordedRaw = await state.client.readContract({
         address: poolAddress as Address,
         abi: coin.indexType === 'uint256' ? coinUintAbi : coinIntAbi,
         functionName: 'balances',
@@ -508,10 +509,14 @@ export function curveAdapter(options: OnchainAdapterOptions): PlannedPriceAdapte
               blockNumber: state.blockNumber
             })
       )
-      if (backingRaw != null && backingRaw * 1000n < balanceRaw * 999n) {
-        throw new InvalidPricingError(`Curve coin ${index} balance ${balanceRaw} exceeds pool holdings ${backingRaw}`)
-      }
-      coins.push({ address: pricingAddress, onchainAddress: coin.address, decimals, balanceRaw })
+      const unbacked = backingRaw != null && backingRaw < recordedRaw
+      coins.push({
+        address: pricingAddress,
+        onchainAddress: coin.address,
+        decimals,
+        balanceRaw: unbacked ? backingRaw : recordedRaw,
+        ...(unbacked ? { recordedBalanceRaw: recordedRaw } : {})
+      })
     }
     if (coins.length === 0) {
       return null
@@ -542,7 +547,8 @@ export function curveAdapter(options: OnchainAdapterOptions): PlannedPriceAdapte
         address: coin.address,
         onchainAddress: coin.onchainAddress,
         decimals: coin.decimals,
-        balanceRaw: rawState(coin.balanceRaw)
+        balanceRaw: rawState(coin.balanceRaw),
+        ...(coin.recordedBalanceRaw == null ? {} : { recordedBalanceRaw: rawState(coin.recordedBalanceRaw) })
       }))
     }
     function quote(inputs: Array<ResolvedPricePath | null>, prices: number[], derivedCoins: Record<string, unknown>[]) {
