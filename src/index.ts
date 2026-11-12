@@ -44,21 +44,7 @@ function logRequest(request: Request, clientId: string | null, extra?: Record<st
 }
 
 async function routePriceRequest(request: Request, env: Env, pathname: string): Promise<Response> {
-  // Spot can serve live prices without storage; LP guarding is best-effort.
-  if (pathname === '/api/prices/spot' && request.method === 'GET') {
-    if (!env.DATABASE_URL) return handleSpot(request, env)
-    let spotPool: ReturnType<typeof createPool>
-    try {
-      spotPool = createPool(env.DATABASE_URL)
-    } catch {
-      return handleSpot(request, env)
-    }
-    try {
-      return await handleSpot(request, env, undefined, spotPool)
-    } finally {
-      void spotPool.end().catch(() => {})
-    }
-  }
+  if (pathname === '/api/prices/spot' && request.method === 'GET') return handleSpot(request, env)
   if (!env.DATABASE_URL) {
     throw new ApiError('INTERNAL_ERROR', 'DATABASE_URL is not configured')
   }

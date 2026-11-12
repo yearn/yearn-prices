@@ -13,19 +13,9 @@ describe('source wiring', () => {
     spy.mockClear()
   })
 
-  it('never lets the spot child resolver see the on-chain source', () => {
-    const sources = createSpotSources(env)
-
-    expect(sources.map((source) => source.name)).toEqual(['enso', 'defillama', 'chainlink', 'derived'])
-    expect(spy).toHaveBeenCalledTimes(1)
-    expect(spy.mock.calls[0][0].map((source) => source.name)).toEqual(['enso', 'defillama', 'chainlink'])
-  })
-
-  it('keeps independent spot sources available without an Enso key', () => {
-    const sources = createSpotSources({} as Env)
-
-    expect(sources.map((source) => source.name)).toEqual(['defillama', 'chainlink', 'derived'])
-    expect(spy.mock.calls[0][0].map((source) => source.name)).toEqual(['defillama', 'chainlink'])
+  it('reaches only Enso for spot', () => {
+    expect(createSpotSources(env).map((source) => source.name)).toEqual(['enso'])
+    expect(createSpotSources({} as Env)).toEqual([])
   })
 
   it('exposes chainlink in the historical registry and to the child resolver', () => {
