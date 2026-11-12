@@ -1,41 +1,15 @@
 import { getChainClient } from '../clients/rpc'
-import { createChainlinkSpotSource, createDefiLlamaSpotSource, createEnsoSpotSource } from '../sources'
+import { createEnsoSpotSource } from '../sources'
 import { createCurveLpGuard, type PlausibleQuote } from '../sources/defillama/lp-guard'
-import { createOnchainSpotSource } from '../sources/onchain'
 import type { SpotPrice, SpotPriceSource } from '../sources/types'
 import type { Env } from '../types'
 
-import { createMarketPriceResolver } from './market-price'
 import { SourceRegistry } from './source-registry'
 
 const isGuardedSource = (source: SpotPriceSource) => source.name === 'enso' || source.name === 'defillama'
 
-/**
- * Prices an on-chain adapter's child tokens with the market sources only. It
- * never sees the on-chain source, so recursion cannot loop back into itself.
- */
-function marketPriceResolver(marketSources: SpotPriceSource[], env: Env) {
-  const registry = new SpotSourceRegistry(marketSources, async () => true, env)
-  return createMarketPriceResolver(marketSources, (chainId, token, _timestamp, signal) =>
-    registry.resolve(chainId, token, signal)
-  )
-}
-
 export function createSpotSources(env: Env): SpotPriceSource[] {
-  const marketSources: SpotPriceSource[] = []
-  // Enso is an accelerator, not a prerequisite for the independent sources.
-  // A missing key must leave DeFiLlama, Chainlink and on-chain derivation usable.
-  if (env.ENSO_API_KEY) marketSources.push(createEnsoSpotSource(env.ENSO_API_KEY, env))
-  marketSources.push(createDefiLlamaSpotSource(undefined, env), createChainlinkSpotSource({ env }))
-
-  return [
-    ...marketSources,
-    createOnchainSpotSource({
-      marketPrice: marketPriceResolver(marketSources, env),
-      env,
-      clientForChain: (chainId) => getChainClient(chainId, env)
-    })
-  ]
+  return env.ENSO_API_KEY ? [createEnsoSpotSource(env.ENSO_API_KEY, env)] : []
 }
 
 export class SpotSourceRegistry extends SourceRegistry<SpotPriceSource, [signal?: AbortSignal, guarded?: boolean]> {
