@@ -8,6 +8,7 @@ import { compoundV3WrapperAdapter } from './compound-v3-wrapper'
 import { curveAdapter } from './curve'
 import { curveOracleAdapter } from './curve-oracle'
 import { erc4626Adapter } from './erc4626'
+import { gammaAdapter } from './gamma'
 import { nativeShareAdapter } from './native-share'
 import { pairAdapter } from './pair'
 import { DEFAULT_PENDLE_TWAP_SECONDS, pendleAdapter } from './pendle'
@@ -24,6 +25,7 @@ export function createOnchainPriceAdapters(options: OnchainAdapterOptions): Plan
   return [
     yip88LiquidLockerAdapter(options),
     curveOracleAdapter(options),
+    gammaAdapter(options),
     nativeShareAdapter(options),
     compoundV3WrapperAdapter(options),
     reserveRTokenAdapter(options),
