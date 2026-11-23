@@ -1,3 +1,4 @@
+import { withoutProviderGateway } from '../clients/provider-transport'
 import { getChainClient } from '../clients/rpc'
 import { createChainlinkSpotSource, createDefiLlamaSpotSource, createEnsoSpotSource } from '../sources'
 import { createCurveLpGuard, type PlausibleQuote } from '../sources/defillama/lp-guard'
@@ -22,13 +23,7 @@ function marketPriceResolver(marketSources: SpotPriceSource[], env: Env) {
 }
 
 export function createSpotSources(env: Env): SpotPriceSource[] {
-  const directEnv = {
-    ...env,
-    PRICE_GATEWAY_URL: undefined,
-    PRICE_PROXY_URLS: undefined,
-    PRICE_PROXY_LIST_URLS: undefined,
-    PRICE_PROXY_PUBLIC_LIST: undefined
-  } as Env
+  const directEnv = withoutProviderGateway(env)
   const marketSources: SpotPriceSource[] = []
   // Enso is an accelerator, not a prerequisite for the independent sources.
   // A missing key must leave DeFiLlama, Chainlink and on-chain derivation usable.
