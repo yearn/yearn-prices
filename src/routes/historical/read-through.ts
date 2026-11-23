@@ -1,6 +1,7 @@
 import type { Pool } from '@neondatabase/serverless'
 import { sql } from 'drizzle-orm'
 import { DefiLlamaClient } from '../../clients/defillama'
+import { withoutProviderGateway } from '../../clients/provider-transport'
 import { finalizeTokenPrices, insertProvisionalTokenPrices } from '../../db'
 import { executeSql } from '../../db/orm'
 import { plausibleWrites, storedCurveLpGuard } from '../../prices/curve-lp-guard'
@@ -40,7 +41,10 @@ export interface ReadThroughUpstream {
   guard?: PlausibleQuote
 }
 
-function createDefaultUpstream(env: Env): ReadThroughUpstream {
+function createDefaultUpstream(requestEnv: Env): ReadThroughUpstream {
+  // Like spot, live reads call providers directly: the gateway's public proxies
+  // time out and saturate it, and every miss behind it became a 503.
+  const env = withoutProviderGateway(requestEnv)
   const client = new DefiLlamaClient(undefined, undefined, {
     env,
     timeoutMs: UPSTREAM_TIMEOUT_MS,

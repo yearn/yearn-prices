@@ -184,6 +184,21 @@ export function createProviderTransport(options: ProviderTransportOptions = {}):
 }
 
 /**
+ * Copy of `env` without gateway or proxy settings, so provider clients built
+ * from it fetch directly. Request-path sources use this: the gateway's public
+ * proxies time out and saturate it, turning live reads into 503s.
+ */
+export function withoutProviderGateway<E extends ProviderTransportEnvironment>(env: E): E {
+  return {
+    ...env,
+    PRICE_GATEWAY_URL: undefined,
+    PRICE_PROXY_URLS: undefined,
+    PRICE_PROXY_LIST_URLS: undefined,
+    PRICE_PROXY_PUBLIC_LIST: undefined
+  }
+}
+
+/**
  * Build the optional transport from Worker/Bun bindings. Direct fetch remains
  * the default. In a Worker, a gateway is required because the runtime cannot
  * open arbitrary HTTP CONNECT tunnels; Bun can use the native proxy option.
