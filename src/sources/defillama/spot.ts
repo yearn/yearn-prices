@@ -1,7 +1,6 @@
 import { DefiLlamaClient } from '../../clients/defillama'
 import { ApiError } from '../../http/errors'
 import { isRejectedPrice } from '../../prices/rejections'
-import type { Env } from '../../types'
 import { chainIdToName } from '../../utils/chains'
 import { currentUtcDayEnd, nowUnix } from '../../utils/time'
 import { SpotPriceSourceBase } from '../base'
@@ -42,9 +41,8 @@ type Batch = {
 
 // All default clients share the same provider gate, including historical
 // read-through. A failed batch still settles every member without token retries.
-function currentClient(env?: Env): DefiLlamaClient {
+function currentClient(): DefiLlamaClient {
   return new DefiLlamaClient(undefined, undefined, {
-    env,
     timeoutMs: DEFI_LLAMA_SPOT_TIMEOUT_MS,
     retryRateLimits: false
   })
@@ -264,6 +262,6 @@ export class DefiLlamaSpotSource extends SpotPriceSourceBase {
   }
 }
 
-export function createDefiLlamaSpotSource(client?: CurrentClient, env?: Env): DefiLlamaSpotSource {
-  return new DefiLlamaSpotSource(client ?? currentClient(env))
+export function createDefiLlamaSpotSource(client?: CurrentClient): DefiLlamaSpotSource {
+  return new DefiLlamaSpotSource(client ?? currentClient())
 }

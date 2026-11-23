@@ -127,7 +127,7 @@ Chain 4663 (Robinhood) has no DefiLlama coverage. Warmup writes WETH/USDG/USDC/U
 
 Historical repair now runs through `scripts/repair-historical-prices.ts`: bounded due work every 15 minutes and daily discovery reconciliation. Existing warmup and backfill commands remain available for manual operations. See the [targeted repair runbook](docs/historical-pricing/targeted-repair.md).
 
-Provider cooldowns, proxy rotation, archive RPC failover, optional ypriceAPI
+Provider cooldowns, archive RPC failover, optional ypriceAPI
 configuration, and the research behind these choices are described in the
 [reliability review](docs/historical-pricing/provider-reliability-review.html).
 
@@ -170,55 +170,15 @@ Also update Doppler so the next deploy does not revert it. There is no Actions U
 
 ## Deployment
 
-### Optional proxy gateway
+### Provider requests
 
-The pricing Worker can use a separate Bun gateway for rotating HTTP CONNECT
-proxies. `gateway/wrangler.toml` deploys it as a Cloudflare Container on the same
-account, with one named instance so callers share provider cooldowns and proxy
-health. This requires Workers Paid, Containers enabled, and a deploy token with
-`Workers Scripts Edit` and `Containers Edit` permissions for the target account. Gateway state is in
-memory and resets on container replacement; multiple independent deployments do
-not share cooldowns. Leave the gateway disabled to keep using direct providers.
-
-1. Create Doppler config `yearn-price/prd_gateway` with a random
-   `PRICE_GATEWAY_TOKEN` of at least 32 characters, the intended HTTPS
-   `PRICE_GATEWAY_URL` (the gateway Worker's URL), and any of
-   `PRICE_PROXY_URLS`, `PRICE_PROXY_LIST_URLS`, `PRICE_PROXY_PUBLIC_LIST=true`.
-   Public lists are opt-in; operator-managed proxies can be supplied instead.
-2. Create a Doppler OIDC identity restricted to this repository's default-branch
-   pushes, with access to that config and
-   `webops-shared-prod/cloudflare-deploy-configs`. Set its ID as the Actions
-   variable `DOPPLER_GATEWAY_IDENTITY_ID` and set
-   `PRICE_GATEWAY_DEPLOY_ENABLED=true` when the account and config are ready.
-3. Put the same `PRICE_GATEWAY_URL` and `PRICE_GATEWAY_TOKEN` in
-   `yearn-price/prd` to route Worker provider requests through it. Keep proxy
-   lists on the gateway. Bun repair jobs can either use those two gateway
-   settings in `yearn-price/warmup` or use native proxies directly.
-
-On a push to `main`, CI builds the gateway image before loading credentials,
-syncs only its four runtime settings, deploys the gateway Worker and container,
-and waits up to five minutes for authenticated `/readyz` to confirm the image revision matches the deployed commit. Readiness checks the token inside the container as well as at the Worker edge. The pricing Worker
-deploy waits for gateway success, or skips this dependency when the gateway is
-disabled. The flag controls CI deployment only: to return to direct pricing, clear `PRICE_GATEWAY_URL` in `yearn-price/prd` (and `warmup` if used), then deploy that configuration before retiring the gateway. Deleting a Doppler key alone does not remove an existing Worker secret. PR checks build the gateway Worker and Linux image without credentials.
-Enso credentials are forwarded per request and are not stored on the gateway.
-
-The pricing Worker's `global_fetch_strictly_public` compatibility flag is required
-when the gateway uses a `workers.dev` URL on the same account. Without it,
-Cloudflare rejects the Worker-to-gateway request with error 1042, even though
-gateway readiness and offline repair requests succeed. Stored historical prices
-still work, but historical cache misses return 503. Keep the flag in the pricing
-Worker configuration when deploying; see [Cloudflare's fetch documentation](https://developers.cloudflare.com/workers/runtime-apis/fetch/).
-Provider transport also uses `redirect: 'manual'` and rejects 3xx responses:
-Workers does not support `redirect: 'error'`. This keeps credentials from being
-forwarded to redirect destinations while allowing the initial request to run.
-
-`bun run gateway:build` bundles the gateway Worker without deploying;
-`bun run gateway:deploy` deploys it with the local pinned Wrangler and a running
-Docker engine. For an existing host, build `Dockerfile.gateway` and publish port
-8788 behind HTTPS, or run `bun run gateway:start` behind a reverse proxy. The
-standalone process binds to localhost by default; set `PRICE_GATEWAY_BIND` only
-when needed. `/healthz` in the standalone process is local readiness; the
-Cloudflare entry point requires authentication even for health requests.
+The pricing Worker and every offline job call DeFiLlama and Enso directly.
+There is no proxy or gateway route. Provider rate limits are handled by the
+shared limiters in `src/clients/http-client.ts` (per-provider request rate,
+`Retry-After` cooldowns capped at one hour, and Enso's fail-fast 429), and by
+`--provider-rps` in the offline jobs. Provider requests use `redirect: 'manual'`
+(Workers does not support `redirect: 'error'`), so a 3xx is reported as a failed
+response and credentials are never forwarded to a redirect destination.
 
 ### Pricing Worker and repair jobs
 
@@ -252,6 +212,6 @@ Provider and RPC cooldowns honor Retry-After up to a one-hour operational ceilin
 including numeric and HTTP-date headers. This bounds recovery from accidentally
 millisecond-valued or otherwise implausibly long headers. Shorter request/job
 wait budgets still fail promptly without resetting the shared cooldown. Invalid
-RPC configuration disables only RPC-backed sources. Empty or failed proxy lists
-leave direct fetch available; headerless offline 502/503/504 responses use normal
+RPC configuration disables only RPC-backed sources. Headerless offline
+502/503/504 responses use normal
 request retries without imposing a provider-wide cooldown.

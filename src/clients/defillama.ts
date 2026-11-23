@@ -1,7 +1,6 @@
 import { ApiError } from '../http/errors'
 import type { DefiLlamaBatchResponse, DefiLlamaChartResponse, DefiLlamaHistoricalResponse } from '../types'
 import { fetchJsonWithRetry, SharedCooldownRateLimiter, type SlidingWindowRateLimiter } from './http-client'
-import { createProviderTransportFromEnv, type ProviderTransport } from './provider-transport'
 
 const BASE_URL = 'https://coins.llama.fi'
 
@@ -14,9 +13,6 @@ export interface DefiLlamaChartOptions {
 }
 
 export interface DefiLlamaRequestOptions {
-  /** Runtime bindings used by the caller to construct a transport. Kept here
-   * for source factories that pass their Worker environment through. */
-  env?: Record<string, string | undefined>
   timeoutMs?: number
   honorRetryAfter?: boolean
   retryAfterCapMs?: number
@@ -26,7 +22,6 @@ export interface DefiLlamaRequestOptions {
   onRateLimit?: (retryAfterMs: number | null, url: string, status: number) => void
   onCooldown?: (retryAfterMs: number | null, url: string, status: number) => void
   defaultCooldownMs?: number
-  transport?: ProviderTransport
   signal?: AbortSignal
 }
 
@@ -115,7 +110,6 @@ export class DefiLlamaClient {
       retryRateLimits: this.requestOptions.retryRateLimits ?? this.rateLimiter !== sharedRateLimiter,
       honorRetryAfter: this.requestOptions.honorRetryAfter ?? true,
       defaultCooldownMs: this.requestOptions.defaultCooldownMs ?? 60_000,
-      transport: this.requestOptions.transport ?? createProviderTransportFromEnv(this.requestOptions.env),
       ...(signal ? { signal } : {})
     })
   }

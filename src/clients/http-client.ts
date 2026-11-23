@@ -1,5 +1,4 @@
 import { ApiError, type ErrorCode } from '../http/errors'
-import type { ProviderTransport } from './provider-transport'
 
 // Operational ceiling: retry implausibly long provider lockouts after one hour.
 export const MAX_PROVIDER_COOLDOWN_MS = 60 * 60 * 1000
@@ -143,16 +142,13 @@ export interface FetchJsonConfig {
   // Called for every 429 response, including a terminal response that will not be retried.
   onRateLimit?: (retryAfterMs: number | null, url: string, status: number) => void
   // Called for provider responses that ask all callers to cool down. Unlike
-  // onRateLimit, this also includes 5xx gateway/provider responses and receives the operationally bounded
+  // onRateLimit, this also includes 502/503/504 provider responses and receives the operationally bounded
   // Retry-After delay so a shared gate can preserve the provider's full wait.
   onCooldown?: (retryAfterMs: number | null, url: string, status: number) => void
   // Default shared cooldown when a rate-limit response omits Retry-After.
   // Live provider clients set this to a conservative minute; generic callers
   // leave it unset to preserve the historical retry behavior.
   defaultCooldownMs?: number
-  // Optional runtime-specific transport (for example a Bun proxy or an
-  // authenticated relay in a Worker). It must preserve the upstream response.
-  transport?: ProviderTransport
   // When true, a 404 becomes a typed NOT_FOUND ApiError instead of a retryable/internal error.
   notFoundAsError?: boolean
   // Opt-in hardening. Every field below is off by default so existing callers keep identical behavior.
@@ -200,12 +196,14 @@ export function parseRetryAfter(value: string | null, capMs: number, now = Date.
   return Math.min(Math.max(parsed - now, 0), capMs)
 }
 
-function requestInit(config: FetchJsonConfig): RequestInit | undefined {
+function requestInit(config: FetchJsonConfig): RequestInit {
   const timeoutSignal = config.timeoutMs === undefined ? undefined : AbortSignal.timeout(config.timeoutMs)
   const signal =
     timeoutSignal && config.signal ? AbortSignal.any([timeoutSignal, config.signal]) : (timeoutSignal ?? config.signal)
-  if (signal === undefined && config.headers === undefined) return undefined
   return {
+    // Workers rejects redirect: 'error'. A 3xx is surfaced as a failed
+    // response below, so provider credentials never follow a Location.
+    redirect: 'manual',
     ...(config.headers ? { headers: config.headers } : {}),
     ...(signal ? { signal } : {})
   }
@@ -218,25 +216,6 @@ function sanitizeMessage(message: string): string {
 function isAbortError(error: unknown): boolean {
   const name = (error as { name?: string } | null)?.name
   return name === 'AbortError' || name === 'TimeoutError'
-}
-
-/**
- * A caller cancellation must not poison the route that another request may be
- * using. A timeout/deadline cancellation is different: it means the provider
- * route failed to deliver the body within its budget and should be reported
- * to the transport for quarantine. AbortSignal.timeout() exposes that
- * distinction through its TimeoutError reason.
- */
-function isCallerCancellation(signal: AbortSignal | undefined, error: unknown): boolean {
-  if (!signal?.aborted) return false
-  const reasonName = (signal.reason as { name?: string } | null | undefined)?.name
-  if (reasonName === 'TimeoutError') return false
-  if (reasonName === 'AbortError') return true
-  // An explicit non-timeout reason (including a caller's Error) is a caller
-  // cancellation. If a runtime supplies no reason, preserve the historical
-  // AbortError distinction and treat only non-timeout errors as cancellation.
-  if (signal.reason !== undefined) return true
-  return (error as { name?: string } | null)?.name !== 'TimeoutError'
 }
 
 function isJsonParseError(error: unknown): boolean {
@@ -280,12 +259,8 @@ export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig
     let response: Response
     try {
       throwIfAborted(config.signal)
-      response = config.transport
-        ? await config.transport.fetch(url, requestInit(config))
-        : await fetch(url, requestInit(config))
+      response = await fetch(url, requestInit(config))
     } catch (error) {
-      // The transport knows which proxy was selected and quarantines that
-      // route itself; reporting here would lose the route identity.
       await failOrRetryTransport(error)
       continue
     }
@@ -294,10 +269,8 @@ export async function fetchJsonWithRetry<T>(url: string, config: FetchJsonConfig
       try {
         const value = (await response.json()) as T
         throwIfAborted(config.signal)
-        config.transport?.report(response, 'success')
         return value
       } catch (error) {
-        if (!isCallerCancellation(config.signal, error)) config.transport?.report(response, 'failure')
         // A timeout or reset while the body streams rejects here, not at fetch.
         if (!isJsonParseError(error)) {
           await failOrRetryTransport(error)

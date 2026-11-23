@@ -28,15 +28,11 @@ describe('source wiring', () => {
     expect(spy.mock.calls[0][0].map((source) => source.name)).toEqual(['defillama', 'chainlink'])
   })
 
-  it('calls spot providers directly, never through the gateway', async () => {
+  it('calls spot providers directly', async () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockImplementation(async () => Response.json({ price: 1, symbol: 'X', timestamp: Date.now() }))
-    const sources = createSpotSources({
-      ...env,
-      PRICE_GATEWAY_URL: 'https://gateway.test',
-      PRICE_GATEWAY_TOKEN: 'gateway-token'
-    } as unknown as Env)
+    const sources = createSpotSources(env)
 
     try {
       await sources[0].getSpotPrice(1, '0xd533a949740bb3306d119cc777fa900ba034cd52')

@@ -6,10 +6,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit && tsc -p gateway/tsconfig.json --noEmit",
-    "gateway:start": "bun run scripts/provider-gateway.ts",
-    "gateway:build": "wrangler deploy --config gateway/wrangler.toml --dry-run",
-    "gateway:deploy": "wrangler deploy --config gateway/wrangler.toml",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:integration": "vitest run --config ./vitest.integration.config.ts",
@@ -35,7 +32,6 @@
     "migrate": "drizzle-kit migrate"
   },
   "dependencies": {
-    "@cloudflare/containers": "0.3.7",
     "@neondatabase/serverless": "0.10.4",
     "@sentry/cloudflare": "11.9.0",
     "dotenv": "16.6.1",
