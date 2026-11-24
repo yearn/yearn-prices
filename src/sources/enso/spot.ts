@@ -1,6 +1,5 @@
 import { EnsoClient } from '../../clients/enso'
 import { ApiError } from '../../http/errors'
-import type { Env } from '../../types'
 import { chainIdToName, nowUnix, toUnixSeconds } from '../../utils'
 import { SpotPriceSourceBase } from '../base'
 import type { SpotPriceResult } from '../types'
@@ -11,9 +10,9 @@ export class EnsoSpotSource extends SpotPriceSourceBase {
 
   private readonly client: EnsoClient
 
-  constructor(apiKey: string, env?: Env) {
+  constructor(apiKey: string) {
     super()
-    this.client = new EnsoClient(apiKey, undefined, undefined, { env })
+    this.client = new EnsoClient(apiKey)
   }
 
   supports(chainId: number): boolean {
@@ -43,6 +42,6 @@ export class EnsoSpotSource extends SpotPriceSourceBase {
   }
 }
 
-export function createEnsoSpotSource(apiKey: string, env?: Env): EnsoSpotSource {
-  return new EnsoSpotSource(apiKey, env)
+export function createEnsoSpotSource(apiKey: string): EnsoSpotSource {
+  return new EnsoSpotSource(apiKey)
 }

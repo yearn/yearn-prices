@@ -1,9 +1,7 @@
 name = "yearn-prices"
 main = "src/index.ts"
 compatibility_date = "2026-03-30"
-# The optional provider gateway is another Worker on this account. Public
-# Worker-to-Worker fetch requires this flag; otherwise Cloudflare returns 1042.
-compatibility_flags = ["nodejs_als", "global_fetch_strictly_public"]
+compatibility_flags = ["nodejs_als"]
 
 [observability.logs]
 enabled = true

@@ -5,7 +5,6 @@ import {
   SharedCooldownRateLimiter,
   type SlidingWindowRateLimiter
 } from './http-client'
-import { createProviderTransportFromEnv, type ProviderTransport } from './provider-transport'
 
 const BASE_URL = 'https://api.enso.build'
 const ENSO_ATTEMPT_TIMEOUT_MS = 4_000
@@ -15,8 +14,6 @@ const ENSO_ATTEMPT_TIMEOUT_MS = 4_000
 const sharedRateLimiter = new SharedCooldownRateLimiter(10, 1000, ENSO_ATTEMPT_TIMEOUT_MS)
 
 export interface EnsoRequestOptions {
-  /** Runtime bindings used by the caller to construct a transport. */
-  env?: Record<string, string | undefined>
   timeoutMs?: number
   honorRetryAfter?: boolean
   retryAfterCapMs?: number
@@ -26,7 +23,6 @@ export interface EnsoRequestOptions {
   onRateLimit?: FetchJsonConfig['onRateLimit']
   onCooldown?: FetchJsonConfig['onCooldown']
   defaultCooldownMs?: number
-  transport?: ProviderTransport
 }
 
 export class EnsoClient {
@@ -51,7 +47,6 @@ export class EnsoClient {
       retryRateLimits: this.requestOptions.retryRateLimits ?? false,
       honorRetryAfter: this.requestOptions.honorRetryAfter ?? true,
       defaultCooldownMs: this.requestOptions.defaultCooldownMs ?? 60_000,
-      transport: this.requestOptions.transport ?? createProviderTransportFromEnv(this.requestOptions.env),
       signal: options.signal,
       timeoutMs: this.requestOptions.timeoutMs ?? ENSO_ATTEMPT_TIMEOUT_MS
     })

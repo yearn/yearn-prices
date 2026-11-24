@@ -176,24 +176,22 @@ describe('handleHistorical', () => {
     it.each([
       ['today', () => today, () => todayRequest()],
       ['a closed day', () => TIMESTAMP, () => request()]
-    ])('calls providers directly for %s, never through the gateway', async (_, ts, req) => {
+    ])('calls providers directly for %s', async (_, ts, req) => {
       vi.spyOn(console, 'error').mockImplementation(() => {})
       fetchMock.mockImplementation(async () => Response.json({ coins: {} }))
-      const gatewayEnv = {
-        ...ENV,
-        ENSO_API_KEY: 'enso-key',
-        PRICE_GATEWAY_URL: 'https://gateway.test',
-        PRICE_GATEWAY_TOKEN: 'gateway-token',
-        PRICE_PROXY_PUBLIC_LIST: 'true'
-      } as Env
-
-      await handleHistorical(req(), gatewayEnv, pool([]), String(ts()), TOKEN_KEY).catch(() => undefined)
+      await handleHistorical(
+        req(),
+        { ...ENV, ENSO_API_KEY: 'enso-key' } as Env,
+        pool([]),
+        String(ts()),
+        TOKEN_KEY
+      ).catch(() => undefined)
 
       const hosts = new Set(
         fetchMock.mock.calls.map(([input]) => new URL(input instanceof Request ? input.url : String(input)).host)
       )
+      expect([...hosts].every((host) => host === 'coins.llama.fi' || host === 'api.enso.build')).toBe(true)
       expect(hosts).toContain('coins.llama.fi')
-      expect(hosts).not.toContain('gateway.test')
     })
 
     it('serves today live even when a table row exists, and persists it as provisional', async () => {

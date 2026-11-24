@@ -62,12 +62,23 @@ describe('fetchJsonWithRetry compatibility for callers passing no options', () =
     vi.useRealTimers()
   })
 
-  it('calls fetch with no init when there are no headers and no timeout', async () => {
+  it('calls fetch with only manual redirects when there are no headers and no timeout', async () => {
     const fetchMock = stubFetch(Response.json({ ok: true }))
 
     await fetchJsonWithRetry(URL_UNDER_TEST, { service: 'Test', rateLimiter: limiter() })
 
-    expect(fetchMock.mock.calls[0][1]).toBeUndefined()
+    expect(fetchMock.mock.calls[0][1]).toEqual({ redirect: 'manual' })
+  })
+
+  it('surfaces a redirect as a failed response instead of following it', async () => {
+    const fetchMock = stubFetch(
+      new Response(null, { status: 302, headers: { location: 'https://untrusted.example/' } })
+    )
+
+    await expect(
+      fetchJsonWithRetry(URL_UNDER_TEST, { service: 'Test', rateLimiter: limiter(), headers: { authorization: 'x' } })
+    ).rejects.toThrow('Test request failed with status 302')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it('keeps the fixed backoff and three-attempt bound for retryable statuses', async () => {

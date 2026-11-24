@@ -38,7 +38,7 @@ export function createHistoricalSources(env?: Env): HistoricalPriceSource[] {
   // member of a rate-limited batch in lockstep amplifies the provider burst;
   // offline jobs keep their retry policy. No route calls this registry today;
   // the budgets bound any future request-path caller.
-  const client = new DefiLlamaClient(undefined, undefined, { env, timeoutMs: 2_500, retryRateLimits: false })
+  const client = new DefiLlamaClient(undefined, undefined, { timeoutMs: 2_500, retryRateLimits: false })
   const bobs = createOptionalBobsHistoricalSource(env)
   const marketSources = [
     createDefiLlamaHistoricalSource(client),

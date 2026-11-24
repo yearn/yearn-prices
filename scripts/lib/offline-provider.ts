@@ -1,7 +1,6 @@
 import { CHART_RETRY_AFTER_CAP_MS } from '../../src/backfill/constants'
 import { DefiLlamaClient } from '../../src/clients/defillama'
 import { SharedCooldownRateLimiter } from '../../src/clients/http-client'
-import type { ProviderTransport } from '../../src/clients/provider-transport'
 import { BatchedHistoricalClient } from './batched-historical-client'
 
 export interface OfflineProviderOptions {
@@ -10,7 +9,6 @@ export interface OfflineProviderOptions {
   allowIntraday?: boolean
   retryRateLimits?: boolean
   signal?: AbortSignal
-  transport?: ProviderTransport
 }
 
 export function createOfflineDefiLlamaClient(rps: number, options: OfflineProviderOptions = {}) {
@@ -24,7 +22,6 @@ export function createOfflineDefiLlamaClient(rps: number, options: OfflineProvid
     retryRateLimits: options.retryRateLimits ?? true,
     retryAfterCapMs: CHART_RETRY_AFTER_CAP_MS,
     signal: options.signal,
-    transport: options.transport,
     onRateLimit: (retryAfterMs) => rateLimiter.extendCooldown(retryAfterMs ?? 60_000),
     onCooldown: (retryAfterMs, _url, status) => {
       if (retryAfterMs !== null) rateLimiter.extendCooldown(retryAfterMs)
